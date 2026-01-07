@@ -1,0 +1,250 @@
+/* ============================================
+   INTERCONECTION TREASURY - DESIGN TOKENS
+   Minimalista & Futurístico
+   ============================================ */
+
+:root {
+  /* ==========================================
+     BACKGROUND COLORS - DARK THEME (Principal)
+     Mais escuro para melhor contraste
+     ========================================== */
+  --bg-primary: #040406;
+  --bg-secondary: #060608;
+  --bg-tertiary: #08080c;
+  --bg-elevated: #0c0c12;
+  --bg-card: rgba(10, 10, 16, 0.95);
+  --bg-gradient-main: linear-gradient(145deg, #040406 0%, #060610 50%, #050508 100%);
+  --bg-gradient-radial: radial-gradient(ellipse at 20% 0%, rgba(59, 130, 246, 0.03) 0%, transparent 50%),
+                        radial-gradient(ellipse at 80% 100%, rgba(139, 92, 246, 0.02) 0%, transparent 50%);
+
+  /* ==========================================
+     FUTURISTIC CARD STYLES - Silver/Metallic
+     ========================================== */
+  --card-bg-gradient: linear-gradient(145deg,
+    rgba(30, 32, 42, 0.9) 0%,
+    rgba(20, 22, 30, 0.85) 50%,
+    rgba(26, 28, 38, 0.9) 100%);
+  --card-border-color: rgba(255, 255, 255, 0.08);
+  --card-shine: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.03) 50%,
+    rgba(255, 255, 255, 0.06) 100%);
+  --card-inner-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.07),
+                       inset 0 -1px 2px rgba(0, 0, 0, 0.4);
+  --card-outer-shadow: 0 4px 24px rgba(0, 0, 0, 0.5),
+                       0 1px 3px rgba(0, 0, 0, 0.4);
+
+  /* ==========================================
+     ACCENT COLORS (Brand) - Tons mais suaves
+     ========================================== */
+  --accent-purple: #8b5cf6;
+  --accent-purple-rgb: 139, 92, 246;
+  --accent-blue: #3b82f6;
+  --accent-blue-rgb: 59, 130, 246;
+  --accent-orange: #f97316;
+  --accent-orange-rgb: 249, 115, 22;
+  --accent-yellow: #eab308;
+  --accent-yellow-rgb: 234, 179, 8;
+  --accent-cyan: #06b6d4;
+  --accent-cyan-rgb: 6, 182, 212;
+
+  /* ==========================================
+     GRADIENTS - Mais sutis
+     ========================================== */
+  --gradient-brand: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+  --gradient-secondary: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
+  --gradient-highlight: linear-gradient(135deg, #f97316 0%, #eab308 100%);
+  --gradient-subtle: linear-gradient(135deg, rgba(139, 92, 246, 0.05) 0%, rgba(59, 130, 246, 0.05) 100%);
+  --gradient-glow: radial-gradient(ellipse at top, rgba(139, 92, 246, 0.15) 0%, transparent 50%);
+
+  /* ==========================================
+     STATUS COLORS
+     ========================================== */
+  --status-success: #22c55e;
+  --status-success-rgb: 34, 197, 94;
+  --status-error: #ef4444;
+  --status-error-rgb: 239, 68, 68;
+  --status-warning: #eab308;
+  --status-warning-rgb: 234, 179, 8;
+  --status-info: #3b82f6;
+  --status-info-rgb: 59, 130, 246;
+
+  /* ==========================================
+     TEXT COLORS
+     ========================================== */
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.7);
+  --text-tertiary: rgba(255, 255, 255, 0.5);
+  --text-muted: rgba(255, 255, 255, 0.3);
+
+  /* ==========================================
+     BORDER COLORS
+     ========================================== */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  /* ==========================================
+     SHADOWS
+     ========================================== */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.5);
+
+  /* Glow Effects */
+  --glow-purple: 0 0 20px rgba(168, 85, 247, 0.3);
+  --glow-blue: 0 0 20px rgba(59, 130, 246, 0.3);
+  --glow-orange: 0 0 20px rgba(249, 115, 22, 0.3);
+
+  /* ==========================================
+     SPACING
+     ========================================== */
+  --spacing-unit: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ==========================================
+     LAYOUT
+     ========================================== */
+  --container-max: 1440px;
+  --sidebar-width: 260px;
+  --sidebar-collapsed: 72px;
+  --header-height: 64px;
+  --grid-gap: 24px;
+  --card-gap: 16px;
+
+  /* ==========================================
+     BORDER RADIUS
+     ========================================== */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  /* ==========================================
+     TRANSITIONS
+     ========================================== */
+  --transition-fast: 150ms ease;
+  --transition-base: 200ms ease;
+  --transition-slow: 300ms ease;
+  --transition-slower: 500ms ease;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-expo: cubic-bezier(0.87, 0, 0.13, 1);
+}
+
+/* ==========================================
+   LIGHT THEME (Secundário)
+   ========================================== */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #f1f5f9;
+  --bg-elevated: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #64748b;
+  --text-muted: #94a3b8;
+  --border-subtle: #e2e8f0;
+  --border-default: #cbd5e1;
+  --border-strong: #94a3b8;
+}
+
+/* ==========================================
+   TYPOGRAPHY
+   ========================================== */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tabular numbers for financial data */
+.tabular-nums {
+  font-feature-settings: 'tnum' on, 'lnum' on;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================
+   CARD STYLES - MINIMALISTA
+   ========================================== */
+.glass-card {
+  background: var(--bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+}
+
+.glass-card-elevated {
+  background: var(--bg-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+}
+
+.card-futuristic {
+  background: var(--bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  position: relative;
+}
+
+.card-futuristic::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 40%;
+  background: var(--accent-orange);
+  border-radius: 0 2px 2px 0;
+}
+
+.card-glow {
+  background: var(--bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  box-shadow: 0 0 40px rgba(139, 92, 246, 0.03);
+}
+
+/* ==========================================
+   SCROLLBAR STYLING
+   ========================================== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+/* ==========================================
+   SELECTION
+   ========================================== */
+::selection {
+  background: rgba(168, 85, 247, 0.3);
+  color: var(--text-primary);
+}

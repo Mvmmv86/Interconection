@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(mkdir:*)",
+      "Bash(npx create-next-app@14:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run lint:*)",
+      "Bash(timeout 15 npm run dev:*)",
+      "Bash(npm run build:*)",
+      "Bash(timeout 20 npm run dev:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(powershell \"Get-NetTCPConnection -State Listen | Select-Object LocalPort | Sort-Object LocalPort\")",
+      "Bash(npm run dev:*)",
+      "Bash(powershell \"Get-NetTCPConnection -State Listen | Where-Object LocalPort -eq 3003 | Select-Object LocalPort, OwningProcess\")",
+      "Bash(powershell:*)",
+      "Bash(timeout /t 8 /nobreak)",
+      "Bash(curl:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
