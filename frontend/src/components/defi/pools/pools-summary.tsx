@@ -12,6 +12,7 @@ import {
   PieChart,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 import { PoolPosition, PROTOCOL_CONFIG, CHAIN_CONFIG } from './types';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
@@ -21,6 +22,9 @@ interface PoolsSummaryProps {
 }
 
 export function PoolsSummary({ positions }: PoolsSummaryProps) {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+
   // Calculate aggregate metrics
   const totalValue = positions.reduce((sum, p) => sum + p.totalValueUsd, 0);
   const totalFeesEarned = positions.reduce((sum, p) => sum + p.feesEarned.totalUsd, 0);
@@ -79,19 +83,19 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
           size: '70%',
           labels: {
             show: true,
-            name: { show: true, fontSize: '10px', color: 'rgba(255,255,255,0.5)' },
+            name: { show: true, fontSize: '10px', color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(107,114,128,1)' },
             value: {
               show: true,
               fontSize: '14px',
               fontWeight: 600,
-              color: '#fff',
+              color: isDark ? '#fff' : '#111827',
               formatter: (val) => `$${(Number(val) / 1000).toFixed(0)}K`,
             },
             total: {
               show: true,
               label: 'Total',
               fontSize: '10px',
-              color: 'rgba(255,255,255,0.5)',
+              color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(107,114,128,1)',
               formatter: () => `$${(totalValue / 1000).toFixed(0)}K`,
             },
           },
@@ -100,7 +104,7 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
     },
     stroke: { show: false },
     tooltip: {
-      theme: 'dark',
+      theme: isDark ? 'dark' : 'light',
       y: { formatter: (val) => `$${val.toLocaleString()}` },
     },
   };
@@ -125,33 +129,47 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
       {/* Main Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div
-          className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+          className={cn(
+            "backdrop-blur-md rounded-xl p-4",
+            isDark ? "border border-white/[0.06]" : "border border-gray-200/60"
+          )}
           style={{
-            background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+            background: isDark
+              ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+              : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+            boxShadow: isDark
+              ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+              : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
           }}
         >
           <div className="w-8 h-8 rounded-lg bg-accent-purple/10 flex items-center justify-center mb-2">
             <Droplets className="w-4 h-4 text-accent-purple" />
           </div>
-          <p className="text-[10px] text-text-muted uppercase tracking-wider">Total Liquidity</p>
-          <p className="text-[20px] font-semibold text-text-primary tabular-nums">
+          <p className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>Total Liquidity</p>
+          <p className={cn("text-[20px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
             {formatNumber(totalValue)}
           </p>
-          <p className="text-[10px] text-text-muted mt-0.5">{positions.length} positions</p>
+          <p className={cn("text-[10px] mt-0.5", isDark ? "text-white/30" : "text-gray-500")}>{positions.length} positions</p>
         </div>
 
         <div
-          className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+          className={cn(
+            "backdrop-blur-md rounded-xl p-4",
+            isDark ? "border border-white/[0.06]" : "border border-gray-200/60"
+          )}
           style={{
-            background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+            background: isDark
+              ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+              : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+            boxShadow: isDark
+              ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+              : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
           }}
         >
           <div className="w-8 h-8 rounded-lg bg-status-success/10 flex items-center justify-center mb-2">
             <DollarSign className="w-4 h-4 text-status-success" />
           </div>
-          <p className="text-[10px] text-text-muted uppercase tracking-wider">Total Fees Earned</p>
+          <p className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>Total Fees Earned</p>
           <p className="text-[20px] font-semibold text-status-success tabular-nums">
             {formatNumber(totalFeesEarned)}
           </p>
@@ -161,27 +179,41 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
         </div>
 
         <div
-          className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+          className={cn(
+            "backdrop-blur-md rounded-xl p-4",
+            isDark ? "border border-white/[0.06]" : "border border-gray-200/60"
+          )}
           style={{
-            background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+            background: isDark
+              ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+              : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+            boxShadow: isDark
+              ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+              : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
           }}
         >
           <div className="w-8 h-8 rounded-lg bg-accent-cyan/10 flex items-center justify-center mb-2">
             <Percent className="w-4 h-4 text-accent-cyan" />
           </div>
-          <p className="text-[10px] text-text-muted uppercase tracking-wider">Avg APR</p>
-          <p className="text-[20px] font-semibold text-text-primary tabular-nums">
+          <p className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>Avg APR</p>
+          <p className={cn("text-[20px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
             {avgApr.toFixed(1)}%
           </p>
-          <p className="text-[10px] text-text-muted mt-0.5">weighted by value</p>
+          <p className={cn("text-[10px] mt-0.5", isDark ? "text-white/30" : "text-gray-500")}>weighted by value</p>
         </div>
 
         <div
-          className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+          className={cn(
+            "backdrop-blur-md rounded-xl p-4",
+            isDark ? "border border-white/[0.06]" : "border border-gray-200/60"
+          )}
           style={{
-            background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+            background: isDark
+              ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+              : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+            boxShadow: isDark
+              ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+              : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
           }}
         >
           <div
@@ -196,7 +228,7 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
               <TrendingDown className="w-4 h-4 text-status-error" />
             )}
           </div>
-          <p className="text-[10px] text-text-muted uppercase tracking-wider">Total PnL</p>
+          <p className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>Total PnL</p>
           <p
             className={cn(
               'text-[20px] font-semibold tabular-nums',
@@ -216,26 +248,33 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         {/* Position Health */}
         <div
-          className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+          className={cn(
+            "backdrop-blur-md rounded-xl p-4",
+            isDark ? "border border-white/[0.06]" : "border border-gray-200/60"
+          )}
           style={{
-            background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+            background: isDark
+              ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+              : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+            boxShadow: isDark
+              ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+              : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
           }}
         >
-          <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
-            <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+          <div className={cn("flex items-center justify-between pb-3 mb-3 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+            <h3 className={cn("text-[12px] font-semibold uppercase tracking-wider", isDark ? "text-white" : "text-gray-900")}>
               Position Health
             </h3>
-            <Activity className="w-4 h-4 text-text-muted" />
+            <Activity className={cn("w-4 h-4", isDark ? "text-white/30" : "text-gray-500")} />
           </div>
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-status-success" />
-                <span className="text-[11px] text-text-secondary">In Range</span>
+                <span className={cn("text-[11px]", isDark ? "text-white/70" : "text-gray-600")}>In Range</span>
               </div>
-              <span className="text-[12px] font-medium text-text-primary tabular-nums">
+              <span className={cn("text-[12px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                 {inRangePositions} positions
               </span>
             </div>
@@ -243,30 +282,30 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-status-error" />
-                <span className="text-[11px] text-text-secondary">Out of Range</span>
+                <span className={cn("text-[11px]", isDark ? "text-white/70" : "text-gray-600")}>Out of Range</span>
               </div>
-              <span className="text-[12px] font-medium text-text-primary tabular-nums">
+              <span className={cn("text-[12px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                 {outOfRangePositions} positions
               </span>
             </div>
 
             {/* Network Distribution */}
-            <div className="pt-2 mt-2 border-t border-white/[0.03]">
-              <p className="text-[9px] text-text-muted uppercase tracking-wider mb-2">By Network</p>
+            <div className={cn("pt-2 mt-2 border-t", isDark ? "border-white/[0.03]" : "border-gray-100")}>
+              <p className={cn("text-[9px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>By Network</p>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full bg-[#627eea]" />
-                  <span className="text-[10px] text-text-secondary">EVM</span>
-                  <span className="text-[10px] font-medium text-text-primary">{evmPositions}</span>
+                  <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>EVM</span>
+                  <span className={cn("text-[10px] font-medium", isDark ? "text-white" : "text-gray-900")}>{evmPositions}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-2 h-2 rounded-full bg-[#9945ff]" />
-                  <span className="text-[10px] text-text-secondary">Solana</span>
-                  <span className="text-[10px] font-medium text-text-primary">{solanaPositions}</span>
+                  <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>Solana</span>
+                  <span className={cn("text-[10px] font-medium", isDark ? "text-white" : "text-gray-900")}>{solanaPositions}</span>
                 </div>
               </div>
               {/* Network Value Bar */}
-              <div className="flex h-1.5 rounded-full overflow-hidden mt-2 bg-white/[0.05]">
+              <div className={cn("flex h-1.5 rounded-full overflow-hidden mt-2", isDark ? "bg-white/[0.05]" : "bg-gray-100")}>
                 {networkDistribution['EVM'] && (
                   <div
                     className="bg-[#627eea]"
@@ -287,7 +326,7 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
                 <AlertTriangle className="w-4 h-4 text-status-error shrink-0 mt-0.5" />
                 <div>
                   <p className="text-[10px] font-medium text-status-error">Action Required</p>
-                  <p className="text-[9px] text-text-muted">
+                  <p className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                     {outOfRangePositions} position{outOfRangePositions > 1 ? 's' : ''} not earning
                     fees
                   </p>
@@ -296,15 +335,15 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
             )}
 
             {/* Unclaimed Summary */}
-            <div className="pt-2 border-t border-white/[0.03]">
+            <div className={cn("pt-2 border-t", isDark ? "border-white/[0.03]" : "border-gray-100")}>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] text-text-muted">Unclaimed Fees</span>
+                <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>Unclaimed Fees</span>
                 <span className="text-[11px] font-medium text-status-success tabular-nums">
                   {formatNumber(totalFeesUnclaimed)}
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-[10px] text-text-muted">Unclaimed Rewards</span>
+                <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>Unclaimed Rewards</span>
                 <span className="text-[11px] font-medium text-accent-purple tabular-nums">
                   {formatNumber(totalRewardsUnclaimed)}
                 </span>
@@ -315,17 +354,24 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
 
         {/* Protocol Distribution */}
         <div
-          className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+          className={cn(
+            "backdrop-blur-md rounded-xl p-4",
+            isDark ? "border border-white/[0.06]" : "border border-gray-200/60"
+          )}
           style={{
-            background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+            background: isDark
+              ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+              : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+            boxShadow: isDark
+              ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+              : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
           }}
         >
-          <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
-            <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+          <div className={cn("flex items-center justify-between pb-3 mb-3 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+            <h3 className={cn("text-[12px] font-semibold uppercase tracking-wider", isDark ? "text-white" : "text-gray-900")}>
               By Protocol
             </h3>
-            <PieChart className="w-4 h-4 text-text-muted" />
+            <PieChart className={cn("w-4 h-4", isDark ? "text-white/30" : "text-gray-500")} />
           </div>
 
           <div className="h-[120px]">
@@ -347,9 +393,9 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
                       backgroundColor: ['#ff007a', '#fa52a0', '#ff6b6b', '#1fc7d4', '#ffaf1d', '#0052ff'][idx % 6],
                     }}
                   />
-                  <span className="text-[10px] text-text-secondary">{protocol}</span>
+                  <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>{protocol}</span>
                 </div>
-                <span className="text-[10px] font-medium text-text-primary tabular-nums">
+                <span className={cn("text-[10px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                   {formatNumber(value)}
                 </span>
               </div>
@@ -359,17 +405,24 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
 
         {/* Chain Distribution */}
         <div
-          className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+          className={cn(
+            "backdrop-blur-md rounded-xl p-4",
+            isDark ? "border border-white/[0.06]" : "border border-gray-200/60"
+          )}
           style={{
-            background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+            background: isDark
+              ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+              : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+            boxShadow: isDark
+              ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+              : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
           }}
         >
-          <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
-            <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+          <div className={cn("flex items-center justify-between pb-3 mb-3 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+            <h3 className={cn("text-[12px] font-semibold uppercase tracking-wider", isDark ? "text-white" : "text-gray-900")}>
               By Chain
             </h3>
-            <PieChart className="w-4 h-4 text-text-muted" />
+            <PieChart className={cn("w-4 h-4", isDark ? "text-white/30" : "text-gray-500")} />
           </div>
 
           <div className="h-[120px]">
@@ -391,9 +444,9 @@ export function PoolsSummary({ positions }: PoolsSummaryProps) {
                       className="w-2 h-2 rounded-full"
                       style={{ backgroundColor: chainConfig?.color || '#627eea' }}
                     />
-                    <span className="text-[10px] text-text-secondary">{chain}</span>
+                    <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>{chain}</span>
                   </div>
-                  <span className="text-[10px] font-medium text-text-primary tabular-nums">
+                  <span className={cn("text-[10px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                     {formatNumber(value)}
                   </span>
                 </div>

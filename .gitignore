@@ -33,3 +33,4 @@ venv/
 *.pem
 *.tsbuildinfo
 nul
+.claude/settings.local.json

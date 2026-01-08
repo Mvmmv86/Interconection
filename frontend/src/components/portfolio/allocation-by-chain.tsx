@@ -1,6 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
@@ -22,6 +24,9 @@ const chainData: ChainData[] = [
 ];
 
 export function AllocationByChain() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+
   const chartOptions: ApexCharts.ApexOptions = {
     chart: {
       type: 'bar',
@@ -41,7 +46,11 @@ export function AllocationByChain() {
     xaxis: {
       categories: chainData.map((c) => c.chain),
       labels: {
-        style: { colors: 'rgba(255, 255, 255, 0.3)', fontSize: '10px', fontFamily: 'Inter' },
+        style: {
+          colors: isDark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.4)',
+          fontSize: '10px',
+          fontFamily: 'Inter'
+        },
         formatter: (val) => `$${(Number(val) / 1000000).toFixed(1)}M`,
       },
       axisBorder: { show: false },
@@ -49,17 +58,21 @@ export function AllocationByChain() {
     },
     yaxis: {
       labels: {
-        style: { colors: 'rgba(255, 255, 255, 0.5)', fontSize: '10px', fontFamily: 'Inter' },
+        style: {
+          colors: isDark ? 'rgba(255, 255, 255, 0.5)' : 'rgba(0, 0, 0, 0.6)',
+          fontSize: '10px',
+          fontFamily: 'Inter'
+        },
       },
     },
     grid: {
-      borderColor: 'rgba(255, 255, 255, 0.03)',
+      borderColor: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.06)',
       xaxis: { lines: { show: true } },
       yaxis: { lines: { show: false } },
     },
     legend: { show: false },
     tooltip: {
-      theme: 'dark',
+      theme: isDark ? 'dark' : 'light',
       y: { formatter: (val: number) => `$${val.toLocaleString()}` },
       style: { fontSize: '10px', fontFamily: 'Inter' },
     },
@@ -71,29 +84,42 @@ export function AllocationByChain() {
     <div
       className="backdrop-blur-sm rounded-xl p-4 relative overflow-hidden"
       style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
+        background: isDark
+          ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark
+          ? '1px solid rgba(255, 255, 255, 0.08)'
+          : '1px solid rgba(203, 213, 225, 0.6)',
+        boxShadow: isDark
+          ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
       }}
     >
       {/* Top shine effect */}
       <div
         className="absolute inset-x-0 top-0 h-[1px]"
         style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
+          background: isDark
+            ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+            : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
         }}
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06] relative z-10">
-        <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+      <div className={cn(
+        'flex items-center justify-between pb-3 mb-3 border-b relative z-10',
+        isDark ? 'border-white/[0.06]' : 'border-gray-200'
+      )}>
+        <h3 className={cn(
+          'text-[12px] font-semibold uppercase tracking-wider',
+          isDark ? 'text-white' : 'text-gray-900'
+        )}>
           Allocation by Chain
         </h3>
-        <span className="text-[10px] text-text-muted">6 networks</span>
+        <span className={cn(
+          'text-[10px]',
+          isDark ? 'text-white/30' : 'text-gray-500'
+        )}>6 networks</span>
       </div>
 
       <div className="h-[180px]">
@@ -101,18 +127,21 @@ export function AllocationByChain() {
       </div>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-white/[0.03]">
+      <div className={cn(
+        'grid grid-cols-3 gap-2 mt-3 pt-3 border-t',
+        isDark ? 'border-white/[0.03]' : 'border-gray-100'
+      )}>
         <div className="text-center">
-          <p className="text-[10px] text-text-muted">Main Chain</p>
-          <p className="text-[11px] font-medium text-text-primary">Ethereum</p>
+          <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>Main Chain</p>
+          <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>Ethereum</p>
         </div>
         <div className="text-center">
-          <p className="text-[10px] text-text-muted">L2 Exposure</p>
+          <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>L2 Exposure</p>
           <p className="text-[11px] font-medium text-accent-blue">12%</p>
         </div>
         <div className="text-center">
-          <p className="text-[10px] text-text-muted">Networks</p>
-          <p className="text-[11px] font-medium text-text-primary">6</p>
+          <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>Networks</p>
+          <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>6</p>
         </div>
       </div>
     </div>

@@ -13,6 +13,7 @@ import {
   Gift,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 import { PoolPosition, PROTOCOL_CONFIG, CHAIN_CONFIG } from './types';
 
 interface PoolPositionCardProps {
@@ -29,6 +30,8 @@ export function PoolPositionCard({
   onRemoveLiquidity,
 }: PoolPositionCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
 
   const protocol = PROTOCOL_CONFIG[position.protocol];
   const chain = CHAIN_CONFIG[position.chain];
@@ -55,12 +58,18 @@ export function PoolPositionCard({
 
   return (
     <div
-      className="backdrop-blur-md rounded-xl border border-white/[0.06] overflow-hidden"
+      className={cn(
+        "backdrop-blur-md rounded-xl overflow-hidden",
+        isDark ? "border-white/[0.06]" : "border-slate-200/60"
+      )}
       style={{
-        background:
-          'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-        boxShadow:
-          '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+        background: isDark
+          ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(203, 213, 225, 0.6)',
+        boxShadow: isDark
+          ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
       }}
     >
       {/* Header */}
@@ -69,20 +78,31 @@ export function PoolPositionCard({
           <div className="flex items-center gap-3">
             {/* Token Pair Icons */}
             <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-white/[0.08] flex items-center justify-center text-[10px] font-bold text-text-primary border border-white/[0.1]">
+              <div className={cn(
+                "w-10 h-10 rounded-full flex items-center justify-center text-[10px] font-bold border",
+                isDark ? "bg-white/[0.08] border-white/[0.1]" : "bg-gray-200 border-gray-300",
+                isDark ? "text-white" : "text-gray-900"
+              )}>
                 {position.token0.symbol}
               </div>
-              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-white/[0.08] flex items-center justify-center text-[8px] font-bold text-text-secondary border border-white/[0.1]">
+              <div className={cn(
+                "absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold border",
+                isDark ? "bg-white/[0.08] border-white/[0.1]" : "bg-gray-200 border-gray-300",
+                isDark ? "text-white/70" : "text-gray-600"
+              )}>
                 {position.token1.symbol.slice(0, 3)}
               </div>
             </div>
 
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-[14px] font-semibold text-text-primary">
+                <h3 className={cn("text-[14px] font-semibold", isDark ? "text-white" : "text-gray-900")}>
                   {position.token0.symbol}/{position.token1.symbol}
                 </h3>
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-white/[0.05] text-text-secondary">
+                <span className={cn(
+                  "px-1.5 py-0.5 rounded text-[9px] font-medium",
+                  isDark ? "bg-white/[0.05] text-white/70" : "bg-gray-100 text-gray-600"
+                )}>
                   {position.feeTier}%
                 </span>
                 <span
@@ -111,13 +131,13 @@ export function PoolPositionCard({
                   className="w-2 h-2 rounded-full"
                   style={{ backgroundColor: chain.color }}
                 />
-                <span className="text-[10px] text-text-muted">{chain.name}</span>
-                <span className="text-[10px] text-text-muted">·</span>
-                <span className="text-[10px] text-text-secondary">{protocol.name}</span>
+                <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>{chain.name}</span>
+                <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>·</span>
+                <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>{protocol.name}</span>
                 {position.nftId && (
                   <>
-                    <span className="text-[10px] text-text-muted">·</span>
-                    <span className="text-[10px] text-text-muted">#{position.nftId}</span>
+                    <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>·</span>
+                    <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>#{position.nftId}</span>
                   </>
                 )}
               </div>
@@ -125,7 +145,7 @@ export function PoolPositionCard({
           </div>
 
           <div className="text-right">
-            <p className="text-[18px] font-semibold text-text-primary tabular-nums">
+            <p className={cn("text-[18px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
               {formatNumber(position.totalValueUsd)}
             </p>
             <div className="flex items-center justify-end gap-1.5">
@@ -138,7 +158,7 @@ export function PoolPositionCard({
                 {position.pnlPercent >= 0 ? '+' : ''}
                 {position.pnlPercent.toFixed(2)}%
               </span>
-              <span className="text-[10px] text-text-muted">
+              <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>
                 ({position.pnlUsd >= 0 ? '+' : ''}
                 {formatNumber(position.pnlUsd)})
               </span>
@@ -148,20 +168,20 @@ export function PoolPositionCard({
 
         {/* Quick Stats Row */}
         <div className="grid grid-cols-4 gap-2 mt-3">
-          <div className="p-2 rounded-lg bg-white/[0.02]">
-            <p className="text-[9px] text-text-muted uppercase tracking-wider">APR</p>
+          <div className={cn("p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+            <p className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>APR</p>
             <p className="text-[13px] font-semibold text-status-success tabular-nums">
               {position.totalApr.toFixed(1)}%
             </p>
           </div>
-          <div className="p-2 rounded-lg bg-white/[0.02]">
-            <p className="text-[9px] text-text-muted uppercase tracking-wider">Fees Earned</p>
-            <p className="text-[13px] font-semibold text-text-primary tabular-nums">
+          <div className={cn("p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+            <p className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>Fees Earned</p>
+            <p className={cn("text-[13px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
               {formatNumber(position.feesEarned.totalUsd)}
             </p>
           </div>
-          <div className="p-2 rounded-lg bg-white/[0.02]">
-            <p className="text-[9px] text-text-muted uppercase tracking-wider">IL</p>
+          <div className={cn("p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+            <p className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>IL</p>
             <p
               className={cn(
                 'text-[13px] font-semibold tabular-nums',
@@ -171,23 +191,23 @@ export function PoolPositionCard({
               {position.impermanentLoss.toFixed(2)}%
             </p>
           </div>
-          <div className="p-2 rounded-lg bg-white/[0.02]">
-            <p className="text-[9px] text-text-muted uppercase tracking-wider">In Range</p>
-            <p className="text-[13px] font-semibold text-text-primary tabular-nums">
+          <div className={cn("p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+            <p className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>In Range</p>
+            <p className={cn("text-[13px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
               {position.inRangePercent.toFixed(1)}%
             </p>
           </div>
         </div>
 
         {/* Price Range Visualization */}
-        <div className="mt-3 p-3 rounded-lg bg-white/[0.02]">
+        <div className={cn("mt-3 p-3 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[9px] text-text-muted uppercase tracking-wider">Price Range</span>
-            <span className="text-[10px] text-text-secondary">
-              Current: <span className="text-text-primary font-medium">{position.currentPrice.toPrecision(4)}</span>
+            <span className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>Price Range</span>
+            <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>
+              Current: <span className={cn("font-medium", isDark ? "text-white" : "text-gray-900")}>{position.currentPrice.toPrecision(4)}</span>
             </span>
           </div>
-          <div className="relative h-2 bg-white/[0.05] rounded-full overflow-hidden">
+          <div className={cn("relative h-2 rounded-full overflow-hidden", isDark ? "bg-white/[0.05]" : "bg-gray-100")}>
             <div
               className={cn(
                 'absolute h-full rounded-full',
@@ -204,10 +224,10 @@ export function PoolPositionCard({
             />
           </div>
           <div className="flex items-center justify-between mt-1.5">
-            <span className="text-[10px] text-text-muted tabular-nums">
+            <span className={cn("text-[10px] tabular-nums", isDark ? "text-white/30" : "text-gray-500")}>
               {position.priceLower.toPrecision(4)}
             </span>
-            <span className="text-[10px] text-text-muted tabular-nums">
+            <span className={cn("text-[10px] tabular-nums", isDark ? "text-white/30" : "text-gray-500")}>
               {position.priceUpper.toPrecision(4)}
             </span>
           </div>
@@ -242,7 +262,10 @@ export function PoolPositionCard({
         {/* Expand/Collapse */}
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="w-full flex items-center justify-center gap-1 mt-3 pt-3 border-t border-white/[0.03] text-[10px] text-text-muted hover:text-text-primary transition-colors"
+          className={cn(
+            "w-full flex items-center justify-center gap-1 mt-3 pt-3 border-t text-[10px] transition-colors",
+            isDark ? "border-white/[0.03] text-white/30 hover:text-white" : "border-gray-100 text-gray-500 hover:text-gray-900"
+          )}
         >
           {isExpanded ? (
             <>
@@ -260,36 +283,36 @@ export function PoolPositionCard({
 
       {/* Expanded Details */}
       {isExpanded && (
-        <div className="px-4 pb-4 space-y-3 border-t border-white/[0.03]">
+        <div className={cn("px-4 pb-4 space-y-3 border-t", isDark ? "border-white/[0.03]" : "border-gray-100")}>
           {/* Token Balances */}
           <div className="pt-3">
-            <p className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Position Breakdown</p>
+            <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Position Breakdown</p>
             <div className="grid grid-cols-2 gap-2">
-              <div className="p-2.5 rounded-lg bg-white/[0.02]">
+              <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] text-text-secondary">{position.token0.symbol}</span>
-                  <span className="text-[9px] text-text-muted">
+                  <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>{position.token0.symbol}</span>
+                  <span className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                     @ ${position.token0.price.toLocaleString()}
                   </span>
                 </div>
-                <p className="text-[12px] font-medium text-text-primary tabular-nums">
+                <p className={cn("text-[12px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                   {position.token0Amount.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                 </p>
-                <p className="text-[9px] text-text-muted">
+                <p className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                   ${(position.token0Amount * position.token0.price).toLocaleString()}
                 </p>
               </div>
-              <div className="p-2.5 rounded-lg bg-white/[0.02]">
+              <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] text-text-secondary">{position.token1.symbol}</span>
-                  <span className="text-[9px] text-text-muted">
+                  <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>{position.token1.symbol}</span>
+                  <span className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                     @ ${position.token1.price.toLocaleString()}
                   </span>
                 </div>
-                <p className="text-[12px] font-medium text-text-primary tabular-nums">
+                <p className={cn("text-[12px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                   {position.token1Amount.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                 </p>
-                <p className="text-[9px] text-text-muted">
+                <p className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                   ${(position.token1Amount * position.token1.price).toLocaleString()}
                 </p>
               </div>
@@ -298,16 +321,16 @@ export function PoolPositionCard({
 
           {/* PnL Breakdown */}
           <div>
-            <p className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Performance</p>
+            <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Performance</p>
             <div className="grid grid-cols-3 gap-2">
-              <div className="p-2.5 rounded-lg bg-white/[0.02]">
-                <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Initial Value</p>
-                <p className="text-[12px] font-medium text-text-primary tabular-nums">
+              <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Initial Value</p>
+                <p className={cn("text-[12px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                   {formatNumber(position.initialValueUsd)}
                 </p>
               </div>
-              <div className="p-2.5 rounded-lg bg-white/[0.02]">
-                <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">vs HODL</p>
+              <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>vs HODL</p>
                 <p
                   className={cn(
                     'text-[12px] font-medium tabular-nums',
@@ -320,8 +343,8 @@ export function PoolPositionCard({
                   {formatNumber(position.currentValueUsd - position.hodlValueUsd)}
                 </p>
               </div>
-              <div className="p-2.5 rounded-lg bg-white/[0.02]">
-                <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">IL Loss</p>
+              <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>IL Loss</p>
                 <p className="text-[12px] font-medium text-status-error tabular-nums">
                   {formatNumber(position.impermanentLossUsd)}
                 </p>
@@ -331,14 +354,14 @@ export function PoolPositionCard({
 
           {/* Unclaimed Fees & Rewards */}
           <div>
-            <p className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Unclaimed</p>
+            <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Unclaimed</p>
             <div className="space-y-2">
               <div className="flex items-center justify-between p-2.5 rounded-lg bg-status-success/5 border border-status-success/10">
                 <div className="flex items-center gap-2">
                   <Droplets className="w-4 h-4 text-status-success" />
                   <div>
-                    <p className="text-[10px] text-text-secondary">Trading Fees</p>
-                    <p className="text-[9px] text-text-muted">
+                    <p className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>Trading Fees</p>
+                    <p className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                       {position.feesUnclaimed.token0.toFixed(4)} {position.token0.symbol} +{' '}
                       {position.feesUnclaimed.token1.toFixed(4)} {position.token1.symbol}
                     </p>
@@ -361,8 +384,8 @@ export function PoolPositionCard({
                       <div className="flex items-center gap-2">
                         <Gift className="w-4 h-4 text-accent-purple" />
                         <div>
-                          <p className="text-[10px] text-text-secondary">{reward.token.symbol} Rewards</p>
-                          <p className="text-[9px] text-text-muted">
+                          <p className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>{reward.token.symbol} Rewards</p>
+                          <p className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                             {reward.amount.toLocaleString()} {reward.token.symbol}
                           </p>
                         </div>
@@ -371,7 +394,7 @@ export function PoolPositionCard({
                         <p className="text-[12px] font-semibold text-accent-purple tabular-nums">
                           {formatNumber(reward.valueUsd)}
                         </p>
-                        <p className="text-[9px] text-text-muted">+{reward.apr.toFixed(1)}% APR</p>
+                        <p className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>+{reward.apr.toFixed(1)}% APR</p>
                       </div>
                     </div>
                   ))}
@@ -382,17 +405,17 @@ export function PoolPositionCard({
 
           {/* Automation Settings */}
           <div>
-            <p className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Automation Settings</p>
+            <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Automation Settings</p>
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02]">
+              <div className={cn("flex items-center justify-between p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
                 <div className="flex items-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5 text-text-muted" />
-                  <span className="text-[10px] text-text-secondary">Auto-Compound</span>
+                  <RefreshCw className={cn("w-3.5 h-3.5", isDark ? "text-white/30" : "text-gray-500")} />
+                  <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>Auto-Compound</span>
                 </div>
                 <span
                   className={cn(
                     'text-[10px] font-medium',
-                    position.automation.autoCompound ? 'text-status-success' : 'text-text-muted'
+                    position.automation.autoCompound ? 'text-status-success' : isDark ? 'text-white/30' : 'text-gray-500'
                   )}
                 >
                   {position.automation.autoCompound
@@ -400,15 +423,15 @@ export function PoolPositionCard({
                     : 'Disabled'}
                 </span>
               </div>
-              <div className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02]">
+              <div className={cn("flex items-center justify-between p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
                 <div className="flex items-center gap-2">
-                  <Zap className="w-3.5 h-3.5 text-text-muted" />
-                  <span className="text-[10px] text-text-secondary">Auto-Range</span>
+                  <Zap className={cn("w-3.5 h-3.5", isDark ? "text-white/30" : "text-gray-500")} />
+                  <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>Auto-Range</span>
                 </div>
                 <span
                   className={cn(
                     'text-[10px] font-medium',
-                    position.automation.autoRange ? 'text-status-success' : 'text-text-muted'
+                    position.automation.autoRange ? 'text-status-success' : isDark ? 'text-white/30' : 'text-gray-500'
                   )}
                 >
                   {position.automation.autoRange
@@ -416,15 +439,15 @@ export function PoolPositionCard({
                     : 'Disabled'}
                 </span>
               </div>
-              <div className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02]">
+              <div className={cn("flex items-center justify-between p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
                 <div className="flex items-center gap-2">
-                  <LogOut className="w-3.5 h-3.5 text-text-muted" />
-                  <span className="text-[10px] text-text-secondary">Auto-Exit</span>
+                  <LogOut className={cn("w-3.5 h-3.5", isDark ? "text-white/30" : "text-gray-500")} />
+                  <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>Auto-Exit</span>
                 </div>
                 <span
                   className={cn(
                     'text-[10px] font-medium',
-                    position.automation.autoExit ? 'text-accent-orange' : 'text-text-muted'
+                    position.automation.autoExit ? 'text-accent-orange' : isDark ? 'text-white/30' : 'text-gray-500'
                   )}
                 >
                   {position.automation.autoExit
@@ -453,7 +476,10 @@ export function PoolPositionCard({
             </button>
             <button
               onClick={() => onRemoveLiquidity?.(position)}
-              className="flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-white/[0.05] text-text-secondary text-[11px] font-medium hover:bg-white/[0.08] transition-colors"
+              className={cn(
+                "flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg text-[11px] font-medium transition-colors",
+                isDark ? "bg-white/[0.05] text-white/70 hover:bg-white/[0.08]" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              )}
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -461,7 +487,10 @@ export function PoolPositionCard({
               href={`${chain.explorer}/token/${position.nftId}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center h-9 px-3 rounded-lg bg-white/[0.05] text-text-secondary hover:bg-white/[0.08] transition-colors"
+              className={cn(
+                "flex items-center justify-center h-9 px-3 rounded-lg transition-colors",
+                isDark ? "bg-white/[0.05] text-white/70 hover:bg-white/[0.08]" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              )}
             >
               <ExternalLink className="w-4 h-4" />
             </a>

@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, ArrowDownLeft, RefreshCw, Coins, Droplets } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 interface Transaction {
   id: string;
@@ -36,20 +37,30 @@ const typeConfig = {
 };
 
 export function RecentTransactions() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+
   return (
     <div
-      className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+      className="backdrop-blur-sm rounded-xl p-4"
       style={{
-        background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-        boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+        background: isDark
+          ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark
+          ? '1px solid rgba(255, 255, 255, 0.08)'
+          : '1px solid rgba(203, 213, 225, 0.6)',
+        boxShadow: isDark
+          ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
       }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
-        <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+      <div className={cn('flex items-center justify-between pb-3 mb-3 border-b', isDark ? 'border-white/[0.06]' : 'border-gray-200')}>
+        <h3 className={cn('text-[12px] font-semibold uppercase tracking-wider', isDark ? 'text-white' : 'text-gray-900')}>
           Recent Transactions
         </h3>
-        <span className="text-[10px] text-text-muted">Last 24 hours</span>
+        <span className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>Last 24 hours</span>
       </div>
 
       {/* List */}
@@ -61,7 +72,10 @@ export function RecentTransactions() {
           return (
             <div
               key={tx.id}
-              className="flex items-center justify-between p-2.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.03] transition-colors cursor-pointer"
+              className={cn(
+                'flex items-center justify-between p-2.5 rounded-lg transition-colors cursor-pointer',
+                isDark ? 'bg-white/[0.02] hover:bg-white/[0.03]' : 'bg-gray-50 hover:bg-gray-100'
+              )}
             >
               <div className="flex items-center gap-2.5">
                 <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center', config.bg)}>
@@ -69,7 +83,7 @@ export function RecentTransactions() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <p className="text-[11px] font-medium text-text-primary">{tx.asset}</p>
+                    <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{tx.asset}</p>
                     <span className={cn(
                       'px-1.5 py-0.5 rounded text-[8px] font-medium',
                       config.bg, config.color
@@ -82,7 +96,7 @@ export function RecentTransactions() {
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5 text-[9px] text-text-muted">
+                  <div className={cn('flex items-center gap-1.5 text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>
                     <span>{tx.timestamp}</span>
                     <span>·</span>
                     <span>{tx.location}</span>
@@ -90,10 +104,10 @@ export function RecentTransactions() {
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-[11px] font-medium text-text-primary tabular-nums">
+                <p className={cn('text-[11px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
                   {tx.type === 'sell' || tx.type === 'transfer_out' ? '-' : '+'}{tx.amount.toLocaleString()} {tx.symbol !== 'SWAP' ? tx.symbol : ''}
                 </p>
-                <p className="text-[9px] text-text-muted tabular-nums">
+                <p className={cn('text-[9px] tabular-nums', isDark ? 'text-white/30' : 'text-gray-500')}>
                   ${tx.value.toLocaleString()}
                 </p>
               </div>
@@ -103,8 +117,8 @@ export function RecentTransactions() {
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/[0.03]">
-        <span className="text-[10px] text-text-muted">
+      <div className={cn('flex items-center justify-between mt-3 pt-3 border-t', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
+        <span className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>
           {mockTransactions.length} transactions
         </span>
         <button className="text-[10px] text-accent-blue hover:underline">View all transactions →</button>

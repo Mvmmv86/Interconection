@@ -2,6 +2,7 @@
 
 import { ArrowDownRight, ArrowUpRight, RefreshCw, Gift } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ThemedCard, useThemedText } from '@/components/ui/themed-card';
 
 interface Activity {
   id: string;
@@ -21,42 +22,55 @@ const mockActivities: Activity[] = [
 ];
 
 const activityConfig = {
-  buy: { icon: ArrowDownRight, color: 'text-status-success' },
-  sell: { icon: ArrowUpRight, color: 'text-status-error' },
-  transfer: { icon: RefreshCw, color: 'text-accent-blue' },
-  reward: { icon: Gift, color: 'text-accent-cyan' },
+  buy: {
+    icon: ArrowDownRight,
+    color: 'text-status-success',
+    bgDark: 'rgba(34, 197, 94, 0.15)',
+    bgLight: 'linear-gradient(135deg, rgba(34, 197, 94, 0.12) 0%, rgba(34, 197, 94, 0.04) 100%)',
+    borderLight: 'rgba(34, 197, 94, 0.2)',
+    shadowLight: 'rgba(34, 197, 94, 0.1)',
+  },
+  sell: {
+    icon: ArrowUpRight,
+    color: 'text-status-error',
+    bgDark: 'rgba(239, 68, 68, 0.15)',
+    bgLight: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(239, 68, 68, 0.04) 100%)',
+    borderLight: 'rgba(239, 68, 68, 0.2)',
+    shadowLight: 'rgba(239, 68, 68, 0.1)',
+  },
+  transfer: {
+    icon: RefreshCw,
+    color: 'text-accent-blue',
+    bgDark: 'rgba(59, 130, 246, 0.15)',
+    bgLight: 'linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(59, 130, 246, 0.04) 100%)',
+    borderLight: 'rgba(59, 130, 246, 0.2)',
+    shadowLight: 'rgba(59, 130, 246, 0.1)',
+  },
+  reward: {
+    icon: Gift,
+    color: 'text-accent-cyan',
+    bgDark: 'rgba(6, 182, 212, 0.15)',
+    bgLight: 'linear-gradient(135deg, rgba(6, 182, 212, 0.12) 0%, rgba(6, 182, 212, 0.04) 100%)',
+    borderLight: 'rgba(6, 182, 212, 0.2)',
+    shadowLight: 'rgba(6, 182, 212, 0.1)',
+  },
 };
 
 export function RecentActivity() {
-  return (
-    <div
-      className="rounded-xl p-4 relative overflow-hidden"
-      style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
-      }}
-    >
-      {/* Top shine effect */}
-      <div
-        className="absolute inset-x-0 top-0 h-[1px]"
-        style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
-        }}
-      />
+  const { isDark, label } = useThemedText();
 
+  return (
+    <ThemedCard>
       {/* Header */}
       <div className="flex items-center justify-between mb-3 relative z-10">
-        <span className="text-[11px] font-medium text-text-secondary uppercase tracking-wider">Recent Activity</span>
-        <button className="text-[10px] text-accent-blue hover:underline">View all</button>
+        <span className={cn('text-[11px] font-semibold uppercase tracking-wider', label)}>
+          Recent Activity
+        </span>
+        <button className="text-[10px] font-medium text-accent-blue hover:underline">View all</button>
       </div>
 
       {/* List */}
-      <div className="space-y-1">
+      <div className="space-y-2">
         {mockActivities.map((activity) => {
           const config = activityConfig[activity.type];
           const Icon = config.icon;
@@ -64,35 +78,77 @@ export function RecentActivity() {
           return (
             <div
               key={activity.id}
-              className="flex items-center gap-2.5 p-2.5 rounded-lg hover:bg-white/[0.02] transition-colors"
+              className="rounded-lg transition-all duration-200"
+              style={{
+                background: isDark
+                  ? 'linear-gradient(145deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%)'
+                  : '#f8fafc',
+                border: isDark
+                  ? '1px solid rgba(255, 255, 255, 0.05)'
+                  : '1px solid #e2e8f0',
+              }}
             >
-              <div className={cn('w-7 h-7 rounded-md bg-white/[0.03] flex items-center justify-center', config.color)}>
-                <Icon className="w-3.5 h-3.5" />
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-text-primary capitalize">{activity.type}</span>
-                  <span className="text-[11px] text-text-muted">{activity.amount} {activity.asset}</span>
+              <div className="flex items-center gap-3 p-2.5">
+                {/* Icon with gradient background */}
+                <div
+                  className={cn('w-9 h-9 rounded-lg flex items-center justify-center', config.color)}
+                  style={{
+                    background: isDark ? config.bgDark : config.bgLight,
+                    border: isDark ? 'none' : `1px solid ${config.borderLight}`,
+                    boxShadow: isDark ? 'none' : `0 2px 6px ${config.shadowLight}`,
+                  }}
+                >
+                  <Icon className="w-4 h-4" />
                 </div>
-                <span className="text-[10px] text-text-muted">{activity.time}</span>
-              </div>
 
-              <div className="text-right">
-                <p className="text-[11px] font-medium text-text-primary tabular-nums">
-                  ${activity.value.toLocaleString()}
-                </p>
-                <span className={cn(
-                  'text-[9px] font-medium uppercase tracking-wide',
-                  activity.status === 'confirmed' ? 'text-status-success' : 'text-accent-yellow'
-                )}>
-                  {activity.status}
-                </span>
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={cn(
+                      'text-[11px] font-semibold capitalize',
+                      isDark ? 'text-white' : 'text-slate-900'
+                    )}>
+                      {activity.type}
+                    </span>
+                    <span className={cn(
+                      'text-[11px] font-medium',
+                      isDark ? 'text-white/60' : 'text-slate-600'
+                    )}>
+                      {activity.amount} {activity.asset}
+                    </span>
+                  </div>
+                  <span className={cn(
+                    'text-[10px]',
+                    isDark ? 'text-white/40' : 'text-slate-500'
+                  )}>
+                    {activity.time}
+                  </span>
+                </div>
+
+                {/* Value & Status */}
+                <div className="text-right">
+                  <p className={cn(
+                    'text-[12px] font-bold tabular-nums',
+                    isDark ? 'text-white' : 'text-slate-900'
+                  )}>
+                    ${activity.value.toLocaleString()}
+                  </p>
+                  <span
+                    className={cn(
+                      'inline-block px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide',
+                      activity.status === 'confirmed'
+                        ? 'bg-status-success/15 text-status-success'
+                        : 'bg-accent-yellow/15 text-accent-yellow'
+                    )}
+                  >
+                    {activity.status}
+                  </span>
+                </div>
               </div>
             </div>
           );
         })}
       </div>
-    </div>
+    </ThemedCard>
   );
 }

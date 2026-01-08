@@ -2,6 +2,7 @@
 
 import { AlertTriangle, TrendingUp, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ThemedCard, useThemedText } from '@/components/ui/themed-card';
 
 interface Alert {
   id: string;
@@ -25,37 +26,45 @@ const alertIcons = {
 };
 
 const priorityConfig = {
-  high: { border: 'border-l-status-error', dot: 'bg-status-error' },
-  medium: { border: 'border-l-accent-yellow', dot: 'bg-accent-yellow' },
-  low: { border: 'border-l-accent-blue', dot: 'bg-accent-blue' },
+  high: {
+    borderColor: '#ef4444',
+    iconColor: 'text-status-error',
+    bgDark: 'rgba(239, 68, 68, 0.15)',
+    bgLight: 'linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(239, 68, 68, 0.02) 100%)',
+    dotBg: 'bg-status-error',
+    glowLight: 'rgba(239, 68, 68, 0.15)',
+  },
+  medium: {
+    borderColor: '#eab308',
+    iconColor: 'text-amber-500',
+    bgDark: 'rgba(234, 179, 8, 0.15)',
+    bgLight: 'linear-gradient(135deg, rgba(234, 179, 8, 0.08) 0%, rgba(234, 179, 8, 0.02) 100%)',
+    dotBg: 'bg-accent-yellow',
+    glowLight: 'rgba(234, 179, 8, 0.15)',
+  },
+  low: {
+    borderColor: '#3b82f6',
+    iconColor: 'text-accent-blue',
+    bgDark: 'rgba(59, 130, 246, 0.15)',
+    bgLight: 'linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(59, 130, 246, 0.02) 100%)',
+    dotBg: 'bg-accent-blue',
+    glowLight: 'rgba(59, 130, 246, 0.15)',
+  },
 };
 
 export function PendingAlerts() {
-  return (
-    <div
-      className="rounded-xl p-4 relative overflow-hidden"
-      style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
-      }}
-    >
-      {/* Top shine effect */}
-      <div
-        className="absolute inset-x-0 top-0 h-[1px]"
-        style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
-        }}
-      />
+  const { isDark, label } = useThemedText();
 
+  return (
+    <ThemedCard>
       {/* Header */}
       <div className="flex items-center justify-between mb-3 relative z-10">
-        <span className="text-[11px] font-medium text-text-secondary uppercase tracking-wider">Pending Alerts</span>
-        <span className="text-[10px] text-status-error">{mockAlerts.length} active</span>
+        <span className={cn('text-[11px] font-semibold uppercase tracking-wider', label)}>
+          Pending Alerts
+        </span>
+        <span className="px-2 py-0.5 rounded-full bg-status-error/15 text-[10px] font-bold text-status-error">
+          {mockAlerts.length} active
+        </span>
       </div>
 
       {/* List */}
@@ -67,25 +76,66 @@ export function PendingAlerts() {
           return (
             <div
               key={alert.id}
-              className={cn(
-                'p-2.5 rounded-lg bg-white/[0.02] border-l-2',
-                config.border
-              )}
+              className="rounded-lg overflow-hidden transition-all duration-200"
+              style={{
+                background: isDark
+                  ? 'linear-gradient(145deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%)'
+                  : '#f8fafc',
+                border: isDark
+                  ? '1px solid rgba(255, 255, 255, 0.05)'
+                  : '1px solid #e2e8f0',
+              }}
             >
-              <div className="flex items-start gap-2.5">
-                <Icon className="w-3.5 h-3.5 text-text-muted shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    <span className="text-[11px] font-medium text-text-primary">{alert.title}</span>
-                    <span className={cn('w-1.5 h-1.5 rounded-full', config.dot)} />
+              {/* Priority indicator bar */}
+              <div
+                className="h-[3px]"
+                style={{
+                  background: `linear-gradient(90deg, ${config.borderColor} 0%, transparent 100%)`,
+                }}
+              />
+
+              <div className="p-2.5">
+                <div className="flex items-start gap-3">
+                  {/* Icon with styled background */}
+                  <div
+                    className={cn('w-8 h-8 rounded-lg flex items-center justify-center shrink-0', config.iconColor)}
+                    style={{
+                      background: isDark ? config.bgDark : config.bgLight,
+                      border: isDark ? 'none' : `1px solid ${config.borderColor}20`,
+                      boxShadow: isDark ? 'none' : `0 2px 6px ${config.glowLight}`,
+                    }}
+                  >
+                    <Icon className="w-4 h-4" />
                   </div>
-                  <p className="text-[10px] text-text-muted">{alert.message}</p>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={cn(
+                        'text-[11px] font-semibold',
+                        isDark ? 'text-white' : 'text-slate-900'
+                      )}>
+                        {alert.title}
+                      </span>
+                      <span
+                        className={cn('w-2 h-2 rounded-full animate-pulse', config.dotBg)}
+                        style={{
+                          boxShadow: `0 0 6px ${config.borderColor}`,
+                        }}
+                      />
+                    </div>
+                    <p className={cn(
+                      'text-[10px]',
+                      isDark ? 'text-white/50' : 'text-slate-600'
+                    )}>
+                      {alert.message}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
           );
         })}
       </div>
-    </div>
+    </ThemedCard>
   );
 }

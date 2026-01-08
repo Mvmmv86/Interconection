@@ -13,6 +13,7 @@ import {
   Shield,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 interface WalletAccount {
   id: string;
@@ -115,6 +116,8 @@ const typeConfig = {
 };
 
 export default function WalletsPage() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [searchTerm, setSearchTerm] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -138,21 +141,25 @@ export default function WalletsPage() {
     <div
       className="min-h-screen"
       style={{
-        background: 'linear-gradient(135deg, #0a0a0f 0%, #0d0d14 20%, #0f1018 40%, #0d0e15 60%, #0a0b10 80%, #08090d 100%)',
+        background: isDark
+          ? 'linear-gradient(135deg, #0a0a0f 0%, #0d0d14 20%, #0f1018 40%, #0d0e15 60%, #0a0b10 80%, #08090d 100%)'
+          : '#ffffff',
       }}
     >
       {/* Futuristic gradient overlays */}
-      <div
-        className="fixed inset-0 pointer-events-none"
-        style={{
-          background: `
-            radial-gradient(ellipse at 0% 0%, rgba(59, 130, 246, 0.04) 0%, transparent 50%),
-            radial-gradient(ellipse at 100% 0%, rgba(139, 92, 246, 0.03) 0%, transparent 50%),
-            radial-gradient(ellipse at 50% 100%, rgba(6, 182, 212, 0.02) 0%, transparent 40%),
-            linear-gradient(180deg, rgba(255, 255, 255, 0.01) 0%, transparent 30%)
-          `,
-        }}
-      />
+      {isDark && (
+        <div
+          className="fixed inset-0 pointer-events-none"
+          style={{
+            background: `
+              radial-gradient(ellipse at 0% 0%, rgba(59, 130, 246, 0.04) 0%, transparent 50%),
+              radial-gradient(ellipse at 100% 0%, rgba(139, 92, 246, 0.03) 0%, transparent 50%),
+              radial-gradient(ellipse at 50% 100%, rgba(6, 182, 212, 0.02) 0%, transparent 40%),
+              linear-gradient(180deg, rgba(255, 255, 255, 0.01) 0%, transparent 30%)
+            `,
+          }}
+        />
+      )}
 
       <Sidebar />
 
@@ -163,13 +170,13 @@ export default function WalletsPage() {
           {/* Page Title */}
           <div className="flex items-center justify-between mb-5">
             <div>
-              <div className="flex items-center gap-2 text-[11px] text-text-muted mb-1">
+              <div className={cn("flex items-center gap-2 text-[11px] mb-1", isDark ? "text-white/30" : "text-gray-500")}>
                 <span>Positions</span>
                 <ChevronRight className="w-3 h-3" />
-                <span className="text-text-secondary">Wallets</span>
+                <span className={isDark ? "text-white/50" : "text-gray-600"}>Wallets</span>
               </div>
-              <h1 className="text-lg font-semibold text-text-primary">Wallet Positions</h1>
-              <p className="text-[11px] text-text-muted mt-0.5">
+              <h1 className={cn("text-lg font-semibold", isDark ? "text-white" : "text-gray-900")}>Wallet Positions</h1>
+              <p className={cn("text-[11px] mt-0.5", isDark ? "text-white/30" : "text-gray-500")}>
                 Monitore todas as suas carteiras em diferentes blockchains
               </p>
             </div>
@@ -189,21 +196,28 @@ export default function WalletsPage() {
             ].map((card) => (
               <div
                 key={card.label}
-                className="rounded-xl border border-white/[0.08] p-4 relative overflow-hidden"
+                className="rounded-xl p-4 relative overflow-hidden"
                 style={{
-                  background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                  boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                  background: isDark
+                    ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                    : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                  border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                  boxShadow: isDark
+                    ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                    : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                 }}
               >
-                <div
-                  className="absolute inset-x-0 top-0 h-[1px]"
-                  style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)' }}
-                />
+                {isDark && (
+                  <div
+                    className="absolute inset-x-0 top-0 h-[1px]"
+                    style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)' }}
+                  />
+                )}
                 <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center mb-2', card.bg)}>
                   <card.icon className={cn('w-4 h-4', card.color)} />
                 </div>
-                <p className="text-[10px] text-text-muted uppercase tracking-wider">{card.label}</p>
-                <p className="text-[20px] font-semibold text-text-primary tabular-nums">{card.value}</p>
+                <p className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>{card.label}</p>
+                <p className={cn("text-[20px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>{card.value}</p>
               </div>
             ))}
           </div>
@@ -216,18 +230,25 @@ export default function WalletsPage() {
               return (
                 <div
                   key={wallet.id}
-                  className="rounded-xl border border-white/[0.08] p-4 relative overflow-hidden"
+                  className="rounded-xl p-4 relative overflow-hidden"
                   style={{
-                    background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                    boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                    background: isDark
+                      ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                      : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                    border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                    boxShadow: isDark
+                      ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                      : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                   }}
                 >
-                  <div
-                    className="absolute inset-x-0 top-0 h-[1px]"
-                    style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)' }}
-                  />
+                  {isDark && (
+                    <div
+                      className="absolute inset-x-0 top-0 h-[1px]"
+                      style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)' }}
+                    />
+                  )}
                   {/* Wallet Header */}
-                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
+                  <div className={cn("flex items-center justify-between pb-3 mb-3 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
                     <div className="flex items-center gap-3">
                       <div
                         className="w-10 h-10 rounded-xl flex items-center justify-center"
@@ -237,7 +258,7 @@ export default function WalletsPage() {
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <h3 className="text-[14px] font-semibold text-text-primary">{wallet.name}</h3>
+                          <h3 className={cn("text-[14px] font-semibold", isDark ? "text-white" : "text-gray-900")}>{wallet.name}</h3>
                           <span className={cn('px-2 py-0.5 rounded text-[9px] font-medium', type.bg, type.color)}>
                             {type.label}
                           </span>
@@ -250,35 +271,35 @@ export default function WalletsPage() {
                             className="w-2 h-2 rounded-full"
                             style={{ backgroundColor: wallet.chainColor }}
                           />
-                          <span className="text-[10px] text-text-muted">{wallet.chain}</span>
-                          <span className="text-[10px] text-text-muted">·</span>
-                          <span className="text-[10px] text-text-secondary font-mono">
+                          <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>{wallet.chain}</span>
+                          <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>·</span>
+                          <span className={cn("text-[10px] font-mono", isDark ? "text-white/50" : "text-gray-600")}>
                             {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)}
                           </span>
                           <button
                             onClick={() => handleCopy(wallet.id, wallet.address)}
-                            className="p-1 hover:bg-white/[0.05] rounded transition-colors"
+                            className={cn("p-1 rounded transition-colors", isDark ? "hover:bg-white/[0.05]" : "hover:bg-gray-100")}
                           >
                             {copiedId === wallet.id ? (
                               <CheckCircle2 className="w-3 h-3 text-status-success" />
                             ) : (
-                              <Copy className="w-3 h-3 text-text-muted" />
+                              <Copy className={cn("w-3 h-3", isDark ? "text-white/30" : "text-gray-500")} />
                             )}
                           </button>
                           <a
                             href="#"
-                            className="p-1 hover:bg-white/[0.05] rounded transition-colors"
+                            className={cn("p-1 rounded transition-colors", isDark ? "hover:bg-white/[0.05]" : "hover:bg-gray-100")}
                           >
-                            <ExternalLink className="w-3 h-3 text-text-muted" />
+                            <ExternalLink className={cn("w-3 h-3", isDark ? "text-white/30" : "text-gray-500")} />
                           </a>
                         </div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-[18px] font-semibold text-text-primary tabular-nums">
+                      <p className={cn("text-[18px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                         ${wallet.totalValue.toLocaleString()}
                       </p>
-                      <span className="text-[10px] text-text-muted">
+                      <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>
                         {wallet.tokens} tokens · {wallet.nfts} NFTs
                       </span>
                     </div>
@@ -286,20 +307,23 @@ export default function WalletsPage() {
 
                   {/* Top Assets */}
                   <div>
-                    <p className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Holdings</p>
+                    <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Holdings</p>
                     <div className="grid grid-cols-3 gap-2">
                       {wallet.topAssets.map((asset) => (
                         <div
                           key={asset.symbol}
-                          className="p-2.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.03] transition-colors cursor-pointer"
+                          className={cn(
+                            "p-2.5 rounded-lg transition-colors cursor-pointer",
+                            isDark ? "bg-white/[0.02] hover:bg-white/[0.03]" : "bg-gray-50 hover:bg-gray-100"
+                          )}
                         >
                           <div className="flex items-center justify-between mb-1">
-                            <span className="text-[11px] font-medium text-text-primary">{asset.symbol}</span>
+                            <span className={cn("text-[11px] font-medium", isDark ? "text-white" : "text-gray-900")}>{asset.symbol}</span>
                           </div>
-                          <p className="text-[10px] text-text-muted tabular-nums">
+                          <p className={cn("text-[10px] tabular-nums", isDark ? "text-white/30" : "text-gray-500")}>
                             {asset.balance.toLocaleString()}
                           </p>
-                          <p className="text-[10px] text-text-secondary tabular-nums">
+                          <p className={cn("text-[10px] tabular-nums", isDark ? "text-white/50" : "text-gray-600")}>
                             ${(asset.value / 1000).toFixed(1)}K
                           </p>
                         </div>

@@ -2,6 +2,7 @@
 
 import { Building2, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 interface ExchangePosition {
   id: string;
@@ -74,47 +75,59 @@ const statusConfig = {
 };
 
 export function ExchangePositions() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const totalExchangeValue = mockExchanges.reduce((sum, e) => sum + e.totalValue, 0);
 
   return (
     <div
       className="backdrop-blur-sm rounded-xl p-4 relative overflow-hidden"
       style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
+        background: isDark
+          ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark
+          ? '1px solid rgba(255, 255, 255, 0.08)'
+          : '1px solid rgba(203, 213, 225, 0.6)',
+        boxShadow: isDark
+          ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
       }}
     >
       {/* Top shine effect */}
       <div
         className="absolute inset-x-0 top-0 h-[1px]"
         style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
+          background: isDark
+            ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+            : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
         }}
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06] relative z-10">
+      <div className={cn(
+        'flex items-center justify-between pb-3 mb-3 border-b relative z-10',
+        isDark ? 'border-white/[0.06]' : 'border-gray-200'
+      )}>
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-accent-blue/10 flex items-center justify-center">
             <Building2 className="w-4 h-4 text-accent-blue" />
           </div>
           <div>
-            <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+            <h3 className={cn(
+              'text-[12px] font-semibold uppercase tracking-wider',
+              isDark ? 'text-white' : 'text-gray-900'
+            )}>
               Exchange Positions
             </h3>
-            <p className="text-[10px] text-text-muted">{mockExchanges.length} connected</p>
+            <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>{mockExchanges.length} connected</p>
           </div>
         </div>
         <div className="text-right">
-          <p className="text-[14px] font-semibold text-text-primary tabular-nums">
+          <p className={cn('text-[14px] font-semibold tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
             ${(totalExchangeValue / 1000).toFixed(0)}K
           </p>
-          <p className="text-[9px] text-text-muted">Total Value</p>
+          <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Total Value</p>
         </div>
       </div>
 
@@ -125,15 +138,21 @@ export function ExchangePositions() {
           return (
             <div
               key={exchange.id}
-              className="p-3 rounded-lg bg-white/[0.02] hover:bg-white/[0.03] transition-colors"
+              className={cn(
+                'p-3 rounded-lg transition-colors',
+                isDark ? 'bg-white/[0.02] hover:bg-white/[0.03]' : 'bg-gray-50 hover:bg-gray-100'
+              )}
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-white/[0.05] flex items-center justify-center text-[10px] font-bold text-text-secondary">
+                  <div className={cn(
+                    'w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold',
+                    isDark ? 'bg-white/[0.05] text-white/70' : 'bg-gray-100 text-gray-600'
+                  )}>
                     {exchange.logo}
                   </div>
                   <div>
-                    <p className="text-[11px] font-medium text-text-primary">{exchange.exchange}</p>
+                    <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{exchange.exchange}</p>
                     <div className="flex items-center gap-1">
                       <StatusIcon
                         className={cn(
@@ -142,12 +161,12 @@ export function ExchangePositions() {
                           exchange.status === 'syncing' && 'animate-spin'
                         )}
                       />
-                      <span className="text-[9px] text-text-muted">{exchange.lastSync}</span>
+                      <span className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>{exchange.lastSync}</span>
                     </div>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-[12px] font-medium text-text-primary tabular-nums">
+                  <p className={cn('text-[12px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
                     ${exchange.totalValue.toLocaleString()}
                   </p>
                   <span
@@ -162,22 +181,25 @@ export function ExchangePositions() {
               </div>
 
               {/* Breakdown */}
-              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/[0.03]">
+              <div className={cn(
+                'grid grid-cols-3 gap-2 pt-2 border-t',
+                isDark ? 'border-white/[0.03]' : 'border-gray-200'
+              )}>
                 <div>
-                  <p className="text-[9px] text-text-muted">Spot</p>
-                  <p className="text-[10px] font-medium text-text-secondary tabular-nums">
+                  <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Spot</p>
+                  <p className={cn('text-[10px] font-medium tabular-nums', isDark ? 'text-white/70' : 'text-gray-700')}>
                     ${(exchange.spotValue / 1000).toFixed(0)}K
                   </p>
                 </div>
                 <div>
-                  <p className="text-[9px] text-text-muted">Margin</p>
-                  <p className="text-[10px] font-medium text-text-secondary tabular-nums">
+                  <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Margin</p>
+                  <p className={cn('text-[10px] font-medium tabular-nums', isDark ? 'text-white/70' : 'text-gray-700')}>
                     ${(exchange.marginValue / 1000).toFixed(0)}K
                   </p>
                 </div>
                 <div>
-                  <p className="text-[9px] text-text-muted">Futures</p>
-                  <p className="text-[10px] font-medium text-text-secondary tabular-nums">
+                  <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Futures</p>
+                  <p className={cn('text-[10px] font-medium tabular-nums', isDark ? 'text-white/70' : 'text-gray-700')}>
                     ${(exchange.futuresValue / 1000).toFixed(0)}K
                   </p>
                 </div>
@@ -188,8 +210,14 @@ export function ExchangePositions() {
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/[0.03]">
-        <button className="text-[10px] text-text-muted hover:text-text-secondary">
+      <div className={cn(
+        'flex items-center justify-between mt-3 pt-3 border-t',
+        isDark ? 'border-white/[0.03]' : 'border-gray-100'
+      )}>
+        <button className={cn(
+          'text-[10px]',
+          isDark ? 'text-white/30 hover:text-white/70' : 'text-gray-500 hover:text-gray-700'
+        )}>
           + Add Exchange
         </button>
         <button className="text-[10px] text-accent-blue hover:underline">Manage →</button>

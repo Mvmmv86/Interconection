@@ -2,6 +2,7 @@
 
 import { Play, Pause } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ThemedCard, useThemedText } from '@/components/ui/themed-card';
 
 interface Strategy {
   id: string;
@@ -19,83 +20,140 @@ const mockStrategies: Strategy[] = [
 ];
 
 export function ActiveStrategies() {
-  return (
-    <div
-      className="rounded-xl p-4 relative overflow-hidden"
-      style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
-      }}
-    >
-      {/* Top shine effect */}
-      <div
-        className="absolute inset-x-0 top-0 h-[1px]"
-        style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
-        }}
-      />
+  const { isDark, label } = useThemedText();
 
+  return (
+    <ThemedCard>
       {/* Header */}
       <div className="flex items-center justify-between mb-3 relative z-10">
-        <span className="text-[11px] font-medium text-text-secondary uppercase tracking-wider">Active Strategies</span>
-        <button className="text-[10px] text-accent-blue hover:underline">View all</button>
+        <span className={cn('text-[11px] font-semibold uppercase tracking-wider', label)}>
+          Active Strategies
+        </span>
+        <button className="text-[10px] font-medium text-accent-blue hover:underline">View all</button>
       </div>
 
       {/* List */}
       <div className="space-y-2">
-        {mockStrategies.map((strategy) => (
-          <div
-            key={strategy.id}
-            className="p-2.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.03] transition-colors"
-          >
-            <div className="flex items-center gap-2.5">
-              {/* Status Icon */}
-              <div
-                className={cn(
-                  'w-7 h-7 rounded-md flex items-center justify-center',
-                  strategy.status === 'active'
-                    ? 'bg-status-success/10 text-status-success'
-                    : 'bg-white/[0.03] text-text-muted'
-                )}
-              >
-                {strategy.status === 'active' ? (
-                  <Play className="w-3.5 h-3.5" />
-                ) : (
-                  <Pause className="w-3.5 h-3.5" />
-                )}
-              </div>
+        {mockStrategies.map((strategy) => {
+          const isActive = strategy.status === 'active';
 
-              {/* Info */}
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-medium text-text-primary">{strategy.name}</p>
-                <p className="text-[10px] text-text-muted">{strategy.type}</p>
-              </div>
+          return (
+            <div
+              key={strategy.id}
+              className="rounded-lg overflow-hidden transition-all duration-200"
+              style={{
+                background: isDark
+                  ? 'linear-gradient(145deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%)'
+                  : '#f8fafc',
+                border: isDark
+                  ? '1px solid rgba(255, 255, 255, 0.05)'
+                  : '1px solid #e2e8f0',
+              }}
+            >
+              <div className="p-3">
+                <div className="flex items-center gap-3">
+                  {/* Status Icon */}
+                  <div
+                    className={cn(
+                      'w-9 h-9 rounded-lg flex items-center justify-center',
+                      isActive ? 'text-status-success' : (isDark ? 'text-white/40' : 'text-slate-400')
+                    )}
+                    style={{
+                      background: isActive
+                        ? isDark
+                          ? 'rgba(34, 197, 94, 0.15)'
+                          : 'linear-gradient(135deg, rgba(34, 197, 94, 0.12) 0%, rgba(34, 197, 94, 0.04) 100%)'
+                        : isDark
+                          ? 'rgba(255, 255, 255, 0.05)'
+                          : 'linear-gradient(135deg, rgba(100, 116, 139, 0.1) 0%, rgba(100, 116, 139, 0.04) 100%)',
+                      border: isActive
+                        ? isDark ? 'none' : '1px solid rgba(34, 197, 94, 0.2)'
+                        : isDark ? 'none' : '1px solid rgba(100, 116, 139, 0.15)',
+                      boxShadow: isActive && !isDark ? '0 2px 6px rgba(34, 197, 94, 0.1)' : 'none',
+                    }}
+                  >
+                    {isActive ? (
+                      <Play className="w-4 h-4" />
+                    ) : (
+                      <Pause className="w-4 h-4" />
+                    )}
+                  </div>
 
-              {/* Metrics */}
-              <div className="text-right">
-                <p className="text-[11px] font-medium text-accent-blue tabular-nums">{strategy.apy}% APY</p>
-                <p className="text-[10px] text-text-muted tabular-nums">{strategy.allocation}%</p>
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className={cn(
+                      'text-[11px] font-semibold',
+                      isDark ? 'text-white' : 'text-slate-900'
+                    )}>
+                      {strategy.name}
+                    </p>
+                    <p className={cn(
+                      'text-[10px]',
+                      isDark ? 'text-white/40' : 'text-slate-500'
+                    )}>
+                      {strategy.type}
+                    </p>
+                  </div>
+
+                  {/* Metrics */}
+                  <div className="text-right">
+                    <div
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md mb-1"
+                      style={{
+                        background: isDark
+                          ? 'rgba(59, 130, 246, 0.15)'
+                          : 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.04) 100%)',
+                        border: isDark ? 'none' : '1px solid rgba(59, 130, 246, 0.2)',
+                      }}
+                    >
+                      <span className="text-[11px] font-bold text-accent-blue tabular-nums">
+                        {strategy.apy}%
+                      </span>
+                      <span className={cn(
+                        'text-[9px] font-medium',
+                        isDark ? 'text-accent-blue/70' : 'text-accent-blue/80'
+                      )}>
+                        APY
+                      </span>
+                    </div>
+                    <p className={cn(
+                      'text-[10px] font-medium tabular-nums',
+                      isDark ? 'text-white/50' : 'text-slate-600'
+                    )}>
+                      {strategy.allocation}% allocated
+                    </p>
+                  </div>
+                </div>
+
+                {/* Progress bar with gradient */}
+                <div className="mt-3">
+                  <div
+                    className="h-[4px] rounded-full overflow-hidden"
+                    style={{
+                      background: isDark
+                        ? 'rgba(255, 255, 255, 0.05)'
+                        : 'linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 100%)',
+                    }}
+                  >
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{
+                        width: `${strategy.allocation}%`,
+                        background: isActive
+                          ? 'linear-gradient(90deg, #3b82f6 0%, #06b6d4 100%)'
+                          : isDark
+                            ? 'rgba(255, 255, 255, 0.2)'
+                            : '#94a3b8',
+                        boxShadow: isActive ? '0 0 8px rgba(59, 130, 246, 0.4)' : 'none',
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
-
-            {/* Progress bar */}
-            <div className="mt-2 h-[3px] bg-white/[0.03] rounded-full overflow-hidden">
-              <div
-                className={cn(
-                  'h-full rounded-full transition-all',
-                  strategy.status === 'active' ? 'bg-accent-blue' : 'bg-text-muted'
-                )}
-                style={{ width: `${strategy.allocation}%` }}
-              />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-    </div>
+    </ThemedCard>
   );
 }

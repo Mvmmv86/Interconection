@@ -1,6 +1,8 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
@@ -10,6 +12,9 @@ const allocationData = {
 };
 
 export function AllocationByType() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+
   const chartOptions: ApexCharts.ApexOptions = {
     chart: {
       type: 'donut',
@@ -28,7 +33,7 @@ export function AllocationByType() {
               show: true,
               fontSize: '10px',
               fontFamily: 'Inter',
-              color: 'rgba(255, 255, 255, 0.4)',
+              color: isDark ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.5)',
               offsetY: -6,
             },
             value: {
@@ -36,7 +41,7 @@ export function AllocationByType() {
               fontSize: '18px',
               fontFamily: 'Inter',
               fontWeight: 600,
-              color: '#ffffff',
+              color: isDark ? '#ffffff' : '#1a1d23',
               offsetY: 4,
               formatter: (val) => `${val}%`,
             },
@@ -45,7 +50,7 @@ export function AllocationByType() {
               label: 'By Type',
               fontSize: '10px',
               fontFamily: 'Inter',
-              color: 'rgba(255, 255, 255, 0.3)',
+              color: isDark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.4)',
               formatter: () => '$2.45M',
             },
           },
@@ -57,7 +62,7 @@ export function AllocationByType() {
     },
     dataLabels: { enabled: false },
     tooltip: {
-      theme: 'dark',
+      theme: isDark ? 'dark' : 'light',
       y: { formatter: (val: number) => `${val}%` },
       style: { fontSize: '10px', fontFamily: 'Inter' },
     },
@@ -67,26 +72,36 @@ export function AllocationByType() {
     <div
       className="backdrop-blur-sm rounded-xl p-4 relative overflow-hidden"
       style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
+        background: isDark
+          ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark
+          ? '1px solid rgba(255, 255, 255, 0.08)'
+          : '1px solid rgba(203, 213, 225, 0.6)',
+        boxShadow: isDark
+          ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
       }}
     >
       {/* Top shine effect */}
       <div
         className="absolute inset-x-0 top-0 h-[1px]"
         style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
+          background: isDark
+            ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+            : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
         }}
       />
 
       {/* Header */}
-      <div className="pb-3 mb-3 border-b border-white/[0.06] relative z-10">
-        <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+      <div className={cn(
+        'pb-3 mb-3 border-b relative z-10',
+        isDark ? 'border-white/[0.06]' : 'border-gray-200'
+      )}>
+        <h3 className={cn(
+          'text-[12px] font-semibold uppercase tracking-wider',
+          isDark ? 'text-white' : 'text-gray-900'
+        )}>
           Allocation by Type
         </h3>
       </div>
@@ -113,13 +128,22 @@ export function AllocationByType() {
                     className="w-2 h-2 rounded-full"
                     style={{ backgroundColor: colors[index] }}
                   />
-                  <span className="text-[10px] text-text-secondary">{label}</span>
+                  <span className={cn(
+                    'text-[10px]',
+                    isDark ? 'text-white/70' : 'text-gray-700'
+                  )}>{label}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-medium text-text-primary tabular-nums">
+                  <span className={cn(
+                    'text-[10px] font-medium tabular-nums',
+                    isDark ? 'text-white' : 'text-gray-900'
+                  )}>
                     {values[index]}
                   </span>
-                  <span className="text-[9px] text-text-muted tabular-nums">
+                  <span className={cn(
+                    'text-[9px] tabular-nums',
+                    isDark ? 'text-white/30' : 'text-gray-500'
+                  )}>
                     {allocationData.series[index]}%
                   </span>
                 </div>

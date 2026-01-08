@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { useTheme } from '@/contexts/theme-context';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
@@ -27,6 +28,9 @@ const byChainData: DistributionData[] = [
 ];
 
 export function PositionsDistribution() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+
   const typeChartOptions: ApexCharts.ApexOptions = {
     chart: {
       type: 'donut',
@@ -46,14 +50,14 @@ export function PositionsDistribution() {
             name: {
               show: true,
               fontSize: '10px',
-              color: 'rgba(255, 255, 255, 0.5)',
+              color: isDark ? 'rgba(255, 255, 255, 0.5)' : 'rgba(0, 0, 0, 0.5)',
               offsetY: -5,
             },
             value: {
               show: true,
               fontSize: '16px',
               fontWeight: 600,
-              color: '#ffffff',
+              color: isDark ? '#ffffff' : '#111827',
               offsetY: 5,
               formatter: (val) => `${val}%`,
             },
@@ -61,7 +65,7 @@ export function PositionsDistribution() {
               show: true,
               label: 'By Type',
               fontSize: '9px',
-              color: 'rgba(255, 255, 255, 0.4)',
+              color: isDark ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.4)',
               formatter: () => '$2.46M',
             },
           },
@@ -70,7 +74,7 @@ export function PositionsDistribution() {
     },
     tooltip: {
       enabled: true,
-      theme: 'dark',
+      theme: isDark ? 'dark' : 'light',
       y: { formatter: (val: number) => `${val}%` },
     },
   };
@@ -88,14 +92,14 @@ export function PositionsDistribution() {
             name: {
               show: true,
               fontSize: '10px',
-              color: 'rgba(255, 255, 255, 0.5)',
+              color: isDark ? 'rgba(255, 255, 255, 0.5)' : 'rgba(0, 0, 0, 0.5)',
               offsetY: -5,
             },
             value: {
               show: true,
               fontSize: '16px',
               fontWeight: 600,
-              color: '#ffffff',
+              color: isDark ? '#ffffff' : '#111827',
               offsetY: 5,
               formatter: (val) => `${val}%`,
             },
@@ -103,7 +107,7 @@ export function PositionsDistribution() {
               show: true,
               label: 'By Chain',
               fontSize: '9px',
-              color: 'rgba(255, 255, 255, 0.4)',
+              color: isDark ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.4)',
               formatter: () => '5 chains',
             },
           },
@@ -116,14 +120,21 @@ export function PositionsDistribution() {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
       {/* By Type */}
       <div
-        className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+        className="backdrop-blur-sm rounded-xl p-4"
         style={{
-          background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+          background: isDark
+            ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+            : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+          border: isDark
+            ? '1px solid rgba(255, 255, 255, 0.08)'
+            : '1px solid rgba(203, 213, 225, 0.6)',
+          boxShadow: isDark
+            ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+            : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
         }}
       >
-        <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
-          <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+        <div className={`flex items-center justify-between pb-3 mb-3 border-b ${isDark ? 'border-white/[0.06]' : 'border-gray-200'}`}>
+          <h3 className={`text-[12px] font-semibold uppercase tracking-wider ${isDark ? 'text-white' : 'text-gray-900'}`}>
             Distribution by Type
           </h3>
         </div>
@@ -145,9 +156,9 @@ export function PositionsDistribution() {
                     className="w-2 h-2 rounded-full"
                     style={{ backgroundColor: item.color }}
                   />
-                  <span className="text-[10px] text-text-secondary">{item.label}</span>
+                  <span className={`text-[10px] ${isDark ? 'text-white/70' : 'text-gray-700'}`}>{item.label}</span>
                 </div>
-                <span className="text-[10px] font-medium text-text-primary tabular-nums">
+                <span className={`text-[10px] font-medium tabular-nums ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   {item.value}%
                 </span>
               </div>
@@ -158,14 +169,21 @@ export function PositionsDistribution() {
 
       {/* By Chain */}
       <div
-        className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+        className="backdrop-blur-sm rounded-xl p-4"
         style={{
-          background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+          background: isDark
+            ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+            : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+          border: isDark
+            ? '1px solid rgba(255, 255, 255, 0.08)'
+            : '1px solid rgba(203, 213, 225, 0.6)',
+          boxShadow: isDark
+            ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+            : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
         }}
       >
-        <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
-          <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+        <div className={`flex items-center justify-between pb-3 mb-3 border-b ${isDark ? 'border-white/[0.06]' : 'border-gray-200'}`}>
+          <h3 className={`text-[12px] font-semibold uppercase tracking-wider ${isDark ? 'text-white' : 'text-gray-900'}`}>
             Distribution by Chain
           </h3>
         </div>
@@ -187,9 +205,9 @@ export function PositionsDistribution() {
                     className="w-2 h-2 rounded-full"
                     style={{ backgroundColor: item.color }}
                   />
-                  <span className="text-[10px] text-text-secondary">{item.label}</span>
+                  <span className={`text-[10px] ${isDark ? 'text-white/70' : 'text-gray-700'}`}>{item.label}</span>
                 </div>
-                <span className="text-[10px] font-medium text-text-primary tabular-nums">
+                <span className={`text-[10px] font-medium tabular-nums ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   {item.value}%
                 </span>
               </div>

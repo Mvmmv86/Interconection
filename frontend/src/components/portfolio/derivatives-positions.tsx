@@ -2,6 +2,7 @@
 
 import { LineChart, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 interface DerivativePosition {
   id: string;
@@ -89,6 +90,8 @@ const typeConfig = {
 };
 
 export function DerivativesPositions() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const totalNotional = mockDerivatives.reduce((sum, p) => sum + p.size, 0);
   const totalPnl = mockDerivatives.reduce((sum, p) => sum + p.pnl, 0);
   const totalMargin = mockDerivatives.reduce((sum, p) => sum + p.margin, 0);
@@ -97,48 +100,61 @@ export function DerivativesPositions() {
     <div
       className="backdrop-blur-sm rounded-xl p-4 relative overflow-hidden"
       style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
+        background: isDark
+          ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark
+          ? '1px solid rgba(255, 255, 255, 0.08)'
+          : '1px solid rgba(203, 213, 225, 0.6)',
+        boxShadow: isDark
+          ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
       }}
     >
       {/* Top shine effect */}
       <div
         className="absolute inset-x-0 top-0 h-[1px]"
         style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
+          background: isDark
+            ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+            : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
         }}
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06] relative z-10">
+      <div className={cn(
+        'flex items-center justify-between pb-3 mb-3 border-b relative z-10',
+        isDark ? 'border-white/[0.06]' : 'border-gray-200'
+      )}>
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-accent-orange/10 flex items-center justify-center">
             <LineChart className="w-4 h-4 text-accent-orange" />
           </div>
           <div>
-            <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+            <h3 className={cn(
+              'text-[12px] font-semibold uppercase tracking-wider',
+              isDark ? 'text-white' : 'text-gray-900'
+            )}>
               Derivatives
             </h3>
-            <p className="text-[10px] text-text-muted">{mockDerivatives.length} open positions</p>
+            <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>{mockDerivatives.length} open positions</p>
           </div>
         </div>
         <div className="text-right">
-          <p className="text-[14px] font-semibold text-text-primary tabular-nums">
+          <p className={cn('text-[14px] font-semibold tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
             ${(totalNotional / 1000).toFixed(0)}K
           </p>
-          <p className="text-[9px] text-text-muted">Notional Value</p>
+          <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Notional Value</p>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-2 mb-3 p-2 rounded-lg bg-white/[0.02]">
+      <div className={cn(
+        'grid grid-cols-3 gap-2 mb-3 p-2 rounded-lg',
+        isDark ? 'bg-white/[0.02]' : 'bg-gray-50'
+      )}>
         <div className="text-center">
-          <p className="text-[9px] text-text-muted">Unrealized P&L</p>
+          <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Unrealized P&L</p>
           <p
             className={cn(
               'text-[11px] font-medium tabular-nums',
@@ -149,13 +165,13 @@ export function DerivativesPositions() {
           </p>
         </div>
         <div className="text-center">
-          <p className="text-[9px] text-text-muted">Total Margin</p>
-          <p className="text-[11px] font-medium text-text-primary tabular-nums">
+          <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Total Margin</p>
+          <p className={cn('text-[11px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
             ${(totalMargin / 1000).toFixed(1)}K
           </p>
         </div>
         <div className="text-center">
-          <p className="text-[9px] text-text-muted">Avg Leverage</p>
+          <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Avg Leverage</p>
           <p className="text-[11px] font-medium text-accent-yellow tabular-nums">
             {(mockDerivatives.reduce((sum, p) => sum + p.leverage, 0) / mockDerivatives.length).toFixed(1)}x
           </p>
@@ -173,7 +189,10 @@ export function DerivativesPositions() {
           return (
             <div
               key={position.id}
-              className="p-2.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.03] transition-colors"
+              className={cn(
+                'p-2.5 rounded-lg transition-colors',
+                isDark ? 'bg-white/[0.02] hover:bg-white/[0.03]' : 'bg-gray-50 hover:bg-gray-100'
+              )}
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
@@ -191,7 +210,7 @@ export function DerivativesPositions() {
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <p className="text-[11px] font-medium text-text-primary">{position.pair}</p>
+                      <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{position.pair}</p>
                       <span
                         className={cn(
                           'px-1.5 py-0.5 rounded text-[8px] font-medium',
@@ -211,7 +230,7 @@ export function DerivativesPositions() {
                         {position.side}
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 text-[9px] text-text-muted">
+                    <div className={cn('flex items-center gap-2 text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>
                       <span>{position.exchange}</span>
                       <span>•</span>
                       <span>{position.leverage}x</span>
@@ -241,28 +260,31 @@ export function DerivativesPositions() {
               </div>
 
               {/* Price & Liquidation */}
-              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/[0.03]">
+              <div className={cn(
+                'grid grid-cols-3 gap-2 pt-2 border-t',
+                isDark ? 'border-white/[0.03]' : 'border-gray-100'
+              )}>
                 <div>
-                  <p className="text-[9px] text-text-muted">Entry</p>
-                  <p className="text-[10px] font-medium text-text-secondary tabular-nums">
+                  <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Entry</p>
+                  <p className={cn('text-[10px] font-medium tabular-nums', isDark ? 'text-white/70' : 'text-gray-700')}>
                     ${position.entryPrice.toLocaleString()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[9px] text-text-muted">Mark</p>
-                  <p className="text-[10px] font-medium text-text-primary tabular-nums">
+                  <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>Mark</p>
+                  <p className={cn('text-[10px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
                     ${position.markPrice.toLocaleString()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[9px] text-text-muted flex items-center gap-1">
+                  <p className={cn('text-[9px] flex items-center gap-1', isDark ? 'text-white/30' : 'text-gray-500')}>
                     Liq
                     {distanceToLiq < 20 && <AlertTriangle className="w-2.5 h-2.5 text-accent-yellow" />}
                   </p>
                   <p
                     className={cn(
                       'text-[10px] font-medium tabular-nums',
-                      distanceToLiq < 20 ? 'text-accent-yellow' : 'text-text-muted'
+                      distanceToLiq < 20 ? 'text-accent-yellow' : (isDark ? 'text-white/30' : 'text-gray-500')
                     )}
                   >
                     ${position.liquidationPrice.toLocaleString()}
@@ -275,7 +297,10 @@ export function DerivativesPositions() {
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/[0.03]">
+      <div className={cn(
+        'flex items-center justify-between mt-3 pt-3 border-t',
+        isDark ? 'border-white/[0.03]' : 'border-gray-100'
+      )}>
         <div className="flex items-center gap-1 text-[10px] text-accent-yellow">
           <AlertTriangle className="w-3 h-3" />
           <span>High leverage positions</span>

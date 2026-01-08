@@ -20,7 +20,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         <Header />
 
         {/* Page Content */}
-        <main className="min-h-[calc(100vh-64px)]">
+        <main className="min-h-[calc(100vh-64px)] bg-background-primary">
           {children}
         </main>
       </div>

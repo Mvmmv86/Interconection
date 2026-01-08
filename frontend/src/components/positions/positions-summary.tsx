@@ -2,6 +2,7 @@
 
 import { Wallet, TrendingUp, TrendingDown, Building2, Layers, Coins } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 interface SummaryCard {
   label: string;
@@ -62,6 +63,9 @@ const summaryData: SummaryCard[] = [
 ];
 
 export function PositionsSummary() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
       {summaryData.map((card) => {
@@ -69,10 +73,17 @@ export function PositionsSummary() {
         return (
           <div
             key={card.label}
-            className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+            className="backdrop-blur-sm rounded-xl p-4"
             style={{
-              background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-              boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+              background: isDark
+                ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+              border: isDark
+                ? '1px solid rgba(255, 255, 255, 0.08)'
+                : '1px solid rgba(203, 213, 225, 0.6)',
+              boxShadow: isDark
+                ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
             }}
           >
             <div className="flex items-start justify-between mb-3">
@@ -95,10 +106,10 @@ export function PositionsSummary() {
                 </div>
               )}
             </div>
-            <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">{card.label}</p>
-            <p className="text-[18px] font-semibold text-text-primary tabular-nums">{card.value}</p>
+            <p className={cn('text-[10px] uppercase tracking-wider mb-1', isDark ? 'text-white/30' : 'text-gray-500')}>{card.label}</p>
+            <p className={cn('text-[18px] font-semibold tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>{card.value}</p>
             {card.subValue && (
-              <p className="text-[10px] text-text-secondary mt-0.5">{card.subValue}</p>
+              <p className={cn('text-[10px] mt-0.5', isDark ? 'text-white/70' : 'text-gray-700')}>{card.subValue}</p>
             )}
           </div>
         );

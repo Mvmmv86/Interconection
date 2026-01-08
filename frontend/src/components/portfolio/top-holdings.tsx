@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { TrendingUp, TrendingDown, Search, ArrowUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 interface Holding {
   id: string;
@@ -38,6 +39,8 @@ const locationColors = {
 };
 
 export function TopHoldings() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'value' | 'pnl' | 'allocation'>('value');
 
@@ -52,49 +55,75 @@ export function TopHoldings() {
     <div
       className="backdrop-blur-sm rounded-xl p-4 relative overflow-hidden"
       style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
+        background: isDark
+          ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark
+          ? '1px solid rgba(255, 255, 255, 0.08)'
+          : '1px solid rgba(203, 213, 225, 0.6)',
+        boxShadow: isDark
+          ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
       }}
     >
       {/* Top shine effect */}
       <div
         className="absolute inset-x-0 top-0 h-[1px]"
         style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
+          background: isDark
+            ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+            : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
         }}
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/[0.06] relative z-10">
-        <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+      <div className={cn(
+        'flex items-center justify-between pb-3 mb-4 border-b relative z-10',
+        isDark ? 'border-white/[0.06]' : 'border-gray-200'
+      )}>
+        <h3 className={cn(
+          'text-[12px] font-semibold uppercase tracking-wider',
+          isDark ? 'text-white' : 'text-gray-900'
+        )}>
           Top Holdings
         </h3>
 
         <div className="flex items-center gap-2">
           {/* Search */}
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted" />
+            <Search className={cn(
+              'absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3',
+              isDark ? 'text-white/30' : 'text-gray-400'
+            )} />
             <input
               type="text"
               placeholder="Search..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-32 h-7 pl-7 pr-2 rounded-md bg-white/[0.03] border border-white/[0.03] text-[10px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-white/[0.06]"
+              className={cn(
+                'w-32 h-7 pl-7 pr-2 rounded-md text-[10px] focus:outline-none transition-colors',
+                isDark
+                  ? 'bg-white/[0.03] border border-white/[0.03] text-white placeholder:text-white/30 focus:border-white/[0.06]'
+                  : 'bg-gray-100 border border-gray-200 text-gray-900 placeholder:text-gray-400 focus:border-gray-300'
+              )}
             />
           </div>
 
           {/* Sort */}
-          <div className="flex items-center gap-1 px-2 py-1.5 rounded-md bg-white/[0.03] border border-white/[0.03]">
-            <ArrowUpDown className="w-3 h-3 text-text-muted" />
+          <div className={cn(
+            'flex items-center gap-1 px-2 py-1.5 rounded-md',
+            isDark
+              ? 'bg-white/[0.03] border border-white/[0.03]'
+              : 'bg-gray-100 border border-gray-200'
+          )}>
+            <ArrowUpDown className={cn('w-3 h-3', isDark ? 'text-white/30' : 'text-gray-400')} />
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as 'value' | 'pnl' | 'allocation')}
-              className="bg-transparent text-[10px] text-text-secondary focus:outline-none cursor-pointer"
+              className={cn(
+                'bg-transparent text-[10px] focus:outline-none cursor-pointer',
+                isDark ? 'text-white/70' : 'text-gray-700'
+              )}
             >
               <option value="value">Value</option>
               <option value="pnl">P&L</option>
@@ -108,44 +137,52 @@ export function TopHoldings() {
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-white/[0.03]">
-              <th className="text-left py-2 text-[9px] font-medium text-text-muted uppercase tracking-wider">Asset</th>
-              <th className="text-right py-2 text-[9px] font-medium text-text-muted uppercase tracking-wider">Quantity</th>
-              <th className="text-right py-2 text-[9px] font-medium text-text-muted uppercase tracking-wider">Avg Price</th>
-              <th className="text-right py-2 text-[9px] font-medium text-text-muted uppercase tracking-wider">Current</th>
-              <th className="text-right py-2 text-[9px] font-medium text-text-muted uppercase tracking-wider">Value</th>
-              <th className="text-right py-2 text-[9px] font-medium text-text-muted uppercase tracking-wider">P&L</th>
-              <th className="text-right py-2 text-[9px] font-medium text-text-muted uppercase tracking-wider">Alloc.</th>
-              <th className="text-left py-2 text-[9px] font-medium text-text-muted uppercase tracking-wider pl-3">Location</th>
+            <tr className={cn('border-b', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
+              <th className={cn('text-left py-2 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Asset</th>
+              <th className={cn('text-right py-2 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Quantity</th>
+              <th className={cn('text-right py-2 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Avg Price</th>
+              <th className={cn('text-right py-2 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Current</th>
+              <th className={cn('text-right py-2 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Value</th>
+              <th className={cn('text-right py-2 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>P&L</th>
+              <th className={cn('text-right py-2 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Alloc.</th>
+              <th className={cn('text-left py-2 text-[9px] font-medium uppercase tracking-wider pl-3', isDark ? 'text-white/30' : 'text-gray-500')}>Location</th>
             </tr>
           </thead>
           <tbody>
             {filteredHoldings.map((holding) => (
               <tr
                 key={holding.id}
-                className="border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors"
+                className={cn(
+                  'border-b transition-colors',
+                  isDark
+                    ? 'border-white/[0.02] hover:bg-white/[0.02]'
+                    : 'border-gray-50 hover:bg-gray-50'
+                )}
               >
                 <td className="py-2.5">
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-white/[0.05] flex items-center justify-center text-[8px] font-bold text-text-secondary">
+                    <div className={cn(
+                      'w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold',
+                      isDark ? 'bg-white/[0.05] text-white/70' : 'bg-gray-100 text-gray-600'
+                    )}>
                       {holding.symbol.slice(0, 2)}
                     </div>
                     <div>
-                      <p className="text-[11px] font-medium text-text-primary">{holding.symbol}</p>
-                      <p className="text-[9px] text-text-muted">{holding.asset}</p>
+                      <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{holding.symbol}</p>
+                      <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>{holding.asset}</p>
                     </div>
                   </div>
                 </td>
-                <td className="text-right py-2.5 text-[11px] text-text-secondary tabular-nums">
+                <td className={cn('text-right py-2.5 text-[11px] tabular-nums', isDark ? 'text-white/70' : 'text-gray-700')}>
                   {holding.quantity.toLocaleString()}
                 </td>
-                <td className="text-right py-2.5 text-[11px] text-text-muted tabular-nums">
+                <td className={cn('text-right py-2.5 text-[11px] tabular-nums', isDark ? 'text-white/30' : 'text-gray-500')}>
                   ${holding.avgPrice.toLocaleString()}
                 </td>
-                <td className="text-right py-2.5 text-[11px] text-text-primary tabular-nums">
+                <td className={cn('text-right py-2.5 text-[11px] tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
                   ${holding.currentPrice.toLocaleString()}
                 </td>
-                <td className="text-right py-2.5 text-[11px] font-medium text-text-primary tabular-nums">
+                <td className={cn('text-right py-2.5 text-[11px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
                   ${holding.value.toLocaleString()}
                 </td>
                 <td className="text-right py-2.5">
@@ -165,7 +202,7 @@ export function TopHoldings() {
                     </span>
                   </div>
                 </td>
-                <td className="text-right py-2.5 text-[11px] text-text-secondary tabular-nums">
+                <td className={cn('text-right py-2.5 text-[11px] tabular-nums', isDark ? 'text-white/70' : 'text-gray-700')}>
                   {holding.allocation.toFixed(1)}%
                 </td>
                 <td className="py-2.5 pl-3">
@@ -185,8 +222,11 @@ export function TopHoldings() {
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/[0.03]">
-        <span className="text-[10px] text-text-muted">
+      <div className={cn(
+        'flex items-center justify-between mt-3 pt-3 border-t',
+        isDark ? 'border-white/[0.03]' : 'border-gray-100'
+      )}>
+        <span className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>
           Showing {filteredHoldings.length} of {mockHoldings.length} holdings
         </span>
         <button className="text-[10px] text-accent-blue hover:underline">View all positions →</button>

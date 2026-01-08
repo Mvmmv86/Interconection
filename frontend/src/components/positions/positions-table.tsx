@@ -14,6 +14,7 @@ import {
   Coins,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 interface Position {
   id: string;
@@ -64,6 +65,8 @@ type SortField = 'value' | 'pnl' | 'pnlPercent' | 'allocation' | 'quantity';
 type FilterType = 'all' | 'exchange' | 'defi' | 'wallet' | 'staking';
 
 export function PositionsTable() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<SortField>('value');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -98,19 +101,29 @@ export function PositionsTable() {
 
   return (
     <div
-      className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+      className="backdrop-blur-sm rounded-xl p-4"
       style={{
-        background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-        boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+        background: isDark
+          ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark
+          ? '1px solid rgba(255, 255, 255, 0.08)'
+          : '1px solid rgba(203, 213, 225, 0.6)',
+        boxShadow: isDark
+          ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
       }}
     >
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 mb-4 border-b border-white/[0.06]">
+      <div className={cn(
+        'flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 mb-4 border-b',
+        isDark ? 'border-white/[0.06]' : 'border-gray-200'
+      )}>
         <div>
-          <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+          <h3 className={cn('text-[12px] font-semibold uppercase tracking-wider', isDark ? 'text-white' : 'text-gray-900')}>
             All Positions
           </h3>
-          <p className="text-[10px] text-text-muted mt-0.5">
+          <p className={cn('text-[10px] mt-0.5', isDark ? 'text-white/30' : 'text-gray-500')}>
             {filteredPositions.length} positions · ${(totalValue / 1000000).toFixed(2)}M total
           </p>
         </div>
@@ -118,13 +131,18 @@ export function PositionsTable() {
         <div className="flex items-center gap-2">
           {/* Search */}
           <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
+            <Search className={cn('absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5', isDark ? 'text-white/30' : 'text-gray-400')} />
             <input
               type="text"
               placeholder="Search positions..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-40 h-8 pl-8 pr-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-purple/50"
+              className={cn(
+                'w-40 h-8 pl-8 pr-3 rounded-lg text-[11px] focus:outline-none focus:border-accent-purple/50',
+                isDark
+                  ? 'bg-white/[0.03] border border-white/[0.06] text-white placeholder:text-white/30'
+                  : 'bg-gray-100 border border-gray-200 text-gray-900 placeholder:text-gray-400'
+              )}
             />
           </div>
 
@@ -135,7 +153,9 @@ export function PositionsTable() {
               'h-8 px-3 rounded-lg border text-[11px] font-medium flex items-center gap-1.5 transition-colors',
               showFilters
                 ? 'bg-accent-purple/10 border-accent-purple/30 text-accent-purple'
-                : 'bg-white/[0.03] border-white/[0.06] text-text-secondary hover:bg-white/[0.05]'
+                : isDark
+                  ? 'bg-white/[0.03] border-white/[0.06] text-white/70 hover:bg-white/[0.05]'
+                  : 'bg-gray-100 border-gray-200 text-gray-700 hover:bg-gray-200'
             )}
           >
             <Filter className="w-3.5 h-3.5" />
@@ -144,12 +164,15 @@ export function PositionsTable() {
           </button>
 
           {/* Sort */}
-          <div className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-            <ArrowUpDown className="w-3.5 h-3.5 text-text-muted" />
+          <div className={cn(
+            'flex items-center gap-1.5 h-8 px-3 rounded-lg border',
+            isDark ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-gray-100 border-gray-200'
+          )}>
+            <ArrowUpDown className={cn('w-3.5 h-3.5', isDark ? 'text-white/30' : 'text-gray-400')} />
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as SortField)}
-              className="bg-transparent text-[11px] text-text-secondary focus:outline-none cursor-pointer"
+              className={cn('bg-transparent text-[11px] focus:outline-none cursor-pointer', isDark ? 'text-white/70' : 'text-gray-700')}
             >
               <option value="value">Value</option>
               <option value="pnl">P&L</option>
@@ -162,8 +185,8 @@ export function PositionsTable() {
 
       {/* Filter Pills */}
       {showFilters && (
-        <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/[0.03]">
-          <span className="text-[10px] text-text-muted">Type:</span>
+        <div className={cn('flex items-center gap-2 mb-4 pb-3 border-b', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
+          <span className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>Type:</span>
           {(['all', 'exchange', 'defi', 'wallet', 'staking'] as FilterType[]).map((type) => (
             <button
               key={type}
@@ -172,7 +195,9 @@ export function PositionsTable() {
                 'px-2.5 py-1 rounded-md text-[10px] font-medium capitalize transition-colors',
                 filterType === type
                   ? 'bg-accent-purple/20 text-accent-purple'
-                  : 'bg-white/[0.03] text-text-secondary hover:bg-white/[0.05]'
+                  : isDark
+                    ? 'bg-white/[0.03] text-white/70 hover:bg-white/[0.05]'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               )}
             >
               {type}
@@ -185,13 +210,13 @@ export function PositionsTable() {
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-white/[0.03]">
-              <th className="text-left py-2.5 text-[9px] font-medium text-text-muted uppercase tracking-wider">Asset</th>
-              <th className="text-right py-2.5 text-[9px] font-medium text-text-muted uppercase tracking-wider">Quantity</th>
-              <th className="text-right py-2.5 text-[9px] font-medium text-text-muted uppercase tracking-wider">Avg Price</th>
-              <th className="text-right py-2.5 text-[9px] font-medium text-text-muted uppercase tracking-wider">Current</th>
+            <tr className={cn('border-b', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
+              <th className={cn('text-left py-2.5 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Asset</th>
+              <th className={cn('text-right py-2.5 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Quantity</th>
+              <th className={cn('text-right py-2.5 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Avg Price</th>
+              <th className={cn('text-right py-2.5 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Current</th>
               <th
-                className="text-right py-2.5 text-[9px] font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-secondary"
+                className={cn('text-right py-2.5 text-[9px] font-medium uppercase tracking-wider cursor-pointer', isDark ? 'text-white/30 hover:text-white/70' : 'text-gray-500 hover:text-gray-700')}
                 onClick={() => handleSort('value')}
               >
                 <span className="flex items-center justify-end gap-1">
@@ -200,7 +225,7 @@ export function PositionsTable() {
                 </span>
               </th>
               <th
-                className="text-right py-2.5 text-[9px] font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-secondary"
+                className={cn('text-right py-2.5 text-[9px] font-medium uppercase tracking-wider cursor-pointer', isDark ? 'text-white/30 hover:text-white/70' : 'text-gray-500 hover:text-gray-700')}
                 onClick={() => handleSort('pnlPercent')}
               >
                 <span className="flex items-center justify-end gap-1">
@@ -209,7 +234,7 @@ export function PositionsTable() {
                 </span>
               </th>
               <th
-                className="text-right py-2.5 text-[9px] font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-secondary"
+                className={cn('text-right py-2.5 text-[9px] font-medium uppercase tracking-wider cursor-pointer', isDark ? 'text-white/30 hover:text-white/70' : 'text-gray-500 hover:text-gray-700')}
                 onClick={() => handleSort('allocation')}
               >
                 <span className="flex items-center justify-end gap-1">
@@ -217,8 +242,8 @@ export function PositionsTable() {
                   {sortBy === 'allocation' && <ArrowUpDown className="w-2.5 h-2.5" />}
                 </span>
               </th>
-              <th className="text-left py-2.5 text-[9px] font-medium text-text-muted uppercase tracking-wider pl-3">Location</th>
-              <th className="text-left py-2.5 text-[9px] font-medium text-text-muted uppercase tracking-wider">Chain</th>
+              <th className={cn('text-left py-2.5 text-[9px] font-medium uppercase tracking-wider pl-3', isDark ? 'text-white/30' : 'text-gray-500')}>Location</th>
+              <th className={cn('text-left py-2.5 text-[9px] font-medium uppercase tracking-wider', isDark ? 'text-white/30' : 'text-gray-500')}>Chain</th>
             </tr>
           </thead>
           <tbody>
@@ -227,29 +252,35 @@ export function PositionsTable() {
               return (
                 <tr
                   key={position.id}
-                  className="border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors cursor-pointer"
+                  className={cn(
+                    'border-b transition-colors cursor-pointer',
+                    isDark ? 'border-white/[0.02] hover:bg-white/[0.02]' : 'border-gray-50 hover:bg-gray-50'
+                  )}
                 >
                   <td className="py-3">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-full bg-white/[0.05] flex items-center justify-center text-[10px] font-bold text-text-secondary">
+                      <div className={cn(
+                        'w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold',
+                        isDark ? 'bg-white/[0.05] text-white/70' : 'bg-gray-100 text-gray-600'
+                      )}>
                         {position.symbol.slice(0, 2)}
                       </div>
                       <div>
-                        <p className="text-[11px] font-medium text-text-primary">{position.symbol}</p>
-                        <p className="text-[9px] text-text-muted">{position.asset}</p>
+                        <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{position.symbol}</p>
+                        <p className={cn('text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>{position.asset}</p>
                       </div>
                     </div>
                   </td>
-                  <td className="text-right py-3 text-[11px] text-text-secondary tabular-nums">
+                  <td className={cn('text-right py-3 text-[11px] tabular-nums', isDark ? 'text-white/70' : 'text-gray-700')}>
                     {position.quantity.toLocaleString()}
                   </td>
-                  <td className="text-right py-3 text-[11px] text-text-muted tabular-nums">
+                  <td className={cn('text-right py-3 text-[11px] tabular-nums', isDark ? 'text-white/30' : 'text-gray-500')}>
                     ${position.avgPrice.toLocaleString()}
                   </td>
-                  <td className="text-right py-3 text-[11px] text-text-primary tabular-nums">
+                  <td className={cn('text-right py-3 text-[11px] tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
                     ${position.currentPrice.toLocaleString()}
                   </td>
-                  <td className="text-right py-3 text-[12px] font-medium text-text-primary tabular-nums">
+                  <td className={cn('text-right py-3 text-[12px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
                     ${position.value.toLocaleString()}
                   </td>
                   <td className="text-right py-3">
@@ -265,14 +296,14 @@ export function PositionsTable() {
                         className={cn(
                           'text-[11px] font-medium tabular-nums',
                           position.pnl >= 0 ? 'text-status-success' : 'text-status-error',
-                          position.pnl === 0 && 'text-text-muted'
+                          position.pnl === 0 && (isDark ? 'text-white/30' : 'text-gray-500')
                         )}
                       >
                         {position.pnl >= 0 ? '+' : ''}{position.pnlPercent.toFixed(1)}%
                       </span>
                     </div>
                   </td>
-                  <td className="text-right py-3 text-[11px] text-text-secondary tabular-nums">
+                  <td className={cn('text-right py-3 text-[11px] tabular-nums', isDark ? 'text-white/70' : 'text-gray-700')}>
                     {position.allocation.toFixed(1)}%
                   </td>
                   <td className="py-3 pl-3">
@@ -280,11 +311,11 @@ export function PositionsTable() {
                       <div className={cn('w-5 h-5 rounded flex items-center justify-center', locationColors[position.locationType])}>
                         <LocationIcon className="w-3 h-3" />
                       </div>
-                      <span className="text-[10px] text-text-secondary">{position.location}</span>
+                      <span className={cn('text-[10px]', isDark ? 'text-white/70' : 'text-gray-700')}>{position.location}</span>
                     </div>
                   </td>
                   <td className="py-3">
-                    <span className="text-[10px] text-text-muted">{position.chain}</span>
+                    <span className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>{position.chain}</span>
                   </td>
                 </tr>
               );
@@ -294,12 +325,12 @@ export function PositionsTable() {
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/[0.03]">
+      <div className={cn('flex items-center justify-between mt-4 pt-3 border-t', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
         <div className="flex items-center gap-4">
-          <span className="text-[10px] text-text-muted">
-            Total: <span className="text-text-primary font-medium">${(totalValue / 1000000).toFixed(2)}M</span>
+          <span className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+            Total: <span className={cn('font-medium', isDark ? 'text-white' : 'text-gray-900')}>${(totalValue / 1000000).toFixed(2)}M</span>
           </span>
-          <span className="text-[10px] text-text-muted">
+          <span className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>
             P&L:{' '}
             <span className={cn('font-medium', totalPnl >= 0 ? 'text-status-success' : 'text-status-error')}>
               {totalPnl >= 0 ? '+' : ''}${(totalPnl / 1000).toFixed(0)}K

@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
+import { useTheme } from '@/contexts/theme-context';
 import {
   Coins,
   TrendingUp,
@@ -249,6 +250,8 @@ function ClientFilter({
 }
 
 export default function StakingPage() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const { clients } = useClients();
   const [filterType, setFilterType] = useState<string>('all');
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -291,21 +294,25 @@ export default function StakingPage() {
     <div
       className="min-h-screen"
       style={{
-        background: 'linear-gradient(135deg, #0a0a0f 0%, #0d0d14 20%, #0f1018 40%, #0d0e15 60%, #0a0b10 80%, #08090d 100%)',
+        background: isDark
+          ? 'linear-gradient(135deg, #0a0a0f 0%, #0d0d14 20%, #0f1018 40%, #0d0e15 60%, #0a0b10 80%, #08090d 100%)'
+          : '#ffffff',
       }}
     >
       {/* Futuristic gradient overlays */}
-      <div
-        className="fixed inset-0 pointer-events-none"
-        style={{
-          background: `
-            radial-gradient(ellipse at 0% 0%, rgba(59, 130, 246, 0.04) 0%, transparent 50%),
-            radial-gradient(ellipse at 100% 0%, rgba(139, 92, 246, 0.03) 0%, transparent 50%),
-            radial-gradient(ellipse at 50% 100%, rgba(6, 182, 212, 0.02) 0%, transparent 40%),
-            linear-gradient(180deg, rgba(255, 255, 255, 0.01) 0%, transparent 30%)
-          `,
-        }}
-      />
+      {isDark && (
+        <div
+          className="fixed inset-0 pointer-events-none"
+          style={{
+            background: `
+              radial-gradient(ellipse at 0% 0%, rgba(59, 130, 246, 0.04) 0%, transparent 50%),
+              radial-gradient(ellipse at 100% 0%, rgba(139, 92, 246, 0.03) 0%, transparent 50%),
+              radial-gradient(ellipse at 50% 100%, rgba(6, 182, 212, 0.02) 0%, transparent 40%),
+              linear-gradient(180deg, rgba(255, 255, 255, 0.01) 0%, transparent 30%)
+            `,
+          }}
+        />
+      )}
 
       <Sidebar />
 
@@ -316,13 +323,13 @@ export default function StakingPage() {
           {/* Page Title */}
           <div className="flex items-center justify-between mb-5">
             <div>
-              <div className="flex items-center gap-2 text-[11px] text-text-muted mb-1">
+              <div className={cn("flex items-center gap-2 text-[11px] mb-1", isDark ? "text-white/30" : "text-gray-500")}>
                 <span>Positions</span>
                 <ChevronRight className="w-3 h-3" />
-                <span className="text-text-secondary">Staking</span>
+                <span className={isDark ? "text-white/50" : "text-gray-600"}>Staking</span>
               </div>
-              <h1 className="text-lg font-semibold text-text-primary">Staking Positions</h1>
-              <p className="text-[11px] text-text-muted mt-0.5">
+              <h1 className={cn("text-lg font-semibold", isDark ? "text-white" : "text-gray-900")}>Staking Positions</h1>
+              <p className={cn("text-[11px] mt-0.5", isDark ? "text-white/30" : "text-gray-500")}>
                 Gerencie suas posições de staking, delegações e validadores
               </p>
             </div>
@@ -360,8 +367,8 @@ export default function StakingPage() {
                         {client.name.slice(0, 2).toUpperCase()}
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-text-primary">{client.name}</p>
-                        <p className="text-[10px] text-text-muted">
+                        <p className={cn("text-sm font-semibold", isDark ? "text-white" : "text-gray-900")}>{client.name}</p>
+                        <p className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>
                           {filteredPositions.length} posições de staking
                         </p>
                       </div>
@@ -390,21 +397,30 @@ export default function StakingPage() {
             ].map((card) => (
               <div
                 key={card.label}
-                className="rounded-xl border border-white/[0.08] p-4 relative overflow-hidden"
+                className="rounded-xl p-4 relative overflow-hidden"
                 style={{
-                  background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                  boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                  background: isDark
+                    ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                    : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                  border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                  boxShadow: isDark
+                    ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                    : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                 }}
               >
                 <div
                   className="absolute inset-x-0 top-0 h-[1px]"
-                  style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)' }}
+                  style={{
+                    background: isDark
+                      ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+                      : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
+                  }}
                 />
                 <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center mb-2', card.bg)}>
                   <card.icon className={cn('w-4 h-4', card.color)} />
                 </div>
-                <p className="text-[10px] text-text-muted uppercase tracking-wider">{card.label}</p>
-                <p className="text-[20px] font-semibold text-text-primary tabular-nums">
+                <p className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>{card.label}</p>
+                <p className={cn("text-[20px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                   {card.isPercentage ? `${card.value.toFixed(1)}%` : `$${card.value.toLocaleString()}`}
                 </p>
               </div>
@@ -413,7 +429,7 @@ export default function StakingPage() {
 
           {/* Filter Pills */}
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-[10px] text-text-muted">Type:</span>
+            <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>Type:</span>
             {['all', 'liquid', 'locked', 'validator'].map((type) => (
               <button
                 key={type}
@@ -433,17 +449,22 @@ export default function StakingPage() {
           {/* Empty State */}
           {filteredPositions.length === 0 ? (
             <div
-              className="rounded-xl border border-white/[0.08] p-12 text-center relative overflow-hidden"
+              className="rounded-xl p-12 text-center relative overflow-hidden"
               style={{
-                background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                background: isDark
+                  ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                  : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                boxShadow: isDark
+                  ? '0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                  : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
               }}
             >
-              <Coins className="w-12 h-12 text-text-muted mx-auto mb-3" />
-              <h3 className="text-sm font-semibold text-text-primary mb-1">
+              <Coins className={cn("w-12 h-12 mx-auto mb-3", isDark ? "text-white/30" : "text-gray-500")} />
+              <h3 className={cn("text-sm font-semibold mb-1", isDark ? "text-white" : "text-gray-900")}>
                 Nenhuma posição encontrada
               </h3>
-              <p className="text-[11px] text-text-muted mb-4">
+              <p className={cn("text-[11px] mb-4", isDark ? "text-white/30" : "text-gray-500")}>
                 {selectedClientId
                   ? 'Este cliente não possui posições de staking'
                   : 'Não há posições de staking com os filtros selecionados'}
@@ -469,25 +490,34 @@ export default function StakingPage() {
                 return (
                   <div
                     key={position.id}
-                    className="rounded-xl border border-white/[0.08] p-4 relative overflow-hidden"
+                    className="rounded-xl p-4 relative overflow-hidden"
                     style={{
-                      background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                      boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                      background: isDark
+                        ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                        : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                      border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                      boxShadow: isDark
+                        ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                        : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                     }}
                   >
                     <div
                       className="absolute inset-x-0 top-0 h-[1px]"
-                      style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)' }}
+                      style={{
+                        background: isDark
+                          ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+                          : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
+                      }}
                     />
                     {/* Position Header */}
-                    <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
+                    <div className={cn("flex items-center justify-between pb-3 mb-3 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-white/[0.05] flex items-center justify-center text-[12px] font-bold text-text-secondary">
+                        <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-[12px] font-bold", isDark ? "bg-white/[0.05] text-white/50" : "bg-gray-100 text-gray-600")}>
                           {position.symbol}
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <h3 className="text-[14px] font-semibold text-text-primary">{position.asset}</h3>
+                            <h3 className={cn("text-[14px] font-semibold", isDark ? "text-white" : "text-gray-900")}>{position.asset}</h3>
                             <span className={cn('px-2 py-0.5 rounded text-[9px] font-medium', typeInfo.bg, typeInfo.color)}>
                               <TypeIcon className="w-3 h-3 inline mr-1" />
                               {typeInfo.label}
@@ -509,14 +539,14 @@ export default function StakingPage() {
                               className="w-2 h-2 rounded-full"
                               style={{ backgroundColor: position.chainColor }}
                             />
-                            <span className="text-[10px] text-text-muted">{position.chain}</span>
-                            <span className="text-[10px] text-text-muted">·</span>
-                            <span className="text-[10px] text-text-secondary">{position.protocol}</span>
+                            <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>{position.chain}</span>
+                            <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>·</span>
+                            <span className={cn("text-[10px]", isDark ? "text-white/50" : "text-gray-600")}>{position.protocol}</span>
                           </div>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-[18px] font-semibold text-text-primary tabular-nums">
+                        <p className={cn("text-[18px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                           ${position.stakedValue.toLocaleString()}
                         </p>
                         <div className="flex items-center justify-end gap-2">
@@ -532,47 +562,47 @@ export default function StakingPage() {
 
                     {/* Position Details */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                      <div className="p-2.5 rounded-lg bg-white/[0.02]">
-                        <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Staked Amount</p>
-                        <p className="text-[13px] font-medium text-text-primary tabular-nums">
+                      <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                        <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Staked Amount</p>
+                        <p className={cn("text-[13px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                           {position.stakedAmount.toLocaleString()} {position.symbol}
                         </p>
                       </div>
-                      <div className="p-2.5 rounded-lg bg-white/[0.02]">
-                        <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Pending Rewards</p>
+                      <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                        <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Pending Rewards</p>
                         <p className="text-[13px] font-medium text-status-success tabular-nums">
                           +{position.rewards.toLocaleString()} {position.symbol}
                         </p>
-                        <p className="text-[9px] text-text-muted">${position.rewardsValue.toLocaleString()}</p>
+                        <p className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>${position.rewardsValue.toLocaleString()}</p>
                       </div>
                       {position.type === 'locked' ? (
                         <>
-                          <div className="p-2.5 rounded-lg bg-white/[0.02]">
-                            <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Lock Period</p>
+                          <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                            <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Lock Period</p>
                             <div className="flex items-center gap-1.5">
                               <Timer className="w-3 h-3 text-accent-orange" />
-                              <p className="text-[13px] font-medium text-text-primary">{position.lockPeriod}</p>
+                              <p className={cn("text-[13px] font-medium", isDark ? "text-white" : "text-gray-900")}>{position.lockPeriod}</p>
                             </div>
                           </div>
-                          <div className="p-2.5 rounded-lg bg-white/[0.02]">
-                            <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Unlock Date</p>
+                          <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                            <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Unlock Date</p>
                             <div className="flex items-center gap-1.5">
                               <Clock className="w-3 h-3 text-accent-yellow" />
-                              <p className="text-[13px] font-medium text-text-primary">{position.unlockDate}</p>
+                              <p className={cn("text-[13px] font-medium", isDark ? "text-white" : "text-gray-900")}>{position.unlockDate}</p>
                             </div>
                           </div>
                         </>
                       ) : (
                         <>
-                          <div className="p-2.5 rounded-lg bg-white/[0.02]">
-                            <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Est. Yearly</p>
-                            <p className="text-[13px] font-medium text-text-primary tabular-nums">
+                          <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                            <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Est. Yearly</p>
+                            <p className={cn("text-[13px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                               ${((position.stakedValue * position.apy) / 100).toLocaleString()}
                             </p>
                           </div>
-                          <div className="p-2.5 rounded-lg bg-white/[0.02]">
-                            <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Est. Monthly</p>
-                            <p className="text-[13px] font-medium text-text-primary tabular-nums">
+                          <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                            <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Est. Monthly</p>
+                            <p className={cn("text-[13px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                               ${Math.round((position.stakedValue * position.apy) / 100 / 12).toLocaleString()}
                             </p>
                           </div>
@@ -581,7 +611,7 @@ export default function StakingPage() {
                     </div>
 
                     {/* Actions */}
-                    <div className="mt-3 pt-3 border-t border-white/[0.03] flex items-center justify-between">
+                    <div className={cn("mt-3 pt-3 border-t flex items-center justify-between", isDark ? "border-white/[0.03]" : "border-gray-100")}>
                       <div className="flex items-center gap-2">
                         {position.type === 'liquid' && (
                           <span className="text-[9px] text-status-success flex items-center gap-1">
@@ -624,48 +654,57 @@ export default function StakingPage() {
           {/* Staking Summary */}
           {filteredPositions.length > 0 && (
             <div
-              className="mt-5 rounded-xl border border-white/[0.08] p-4 relative overflow-hidden"
+              className="mt-5 rounded-xl p-4 relative overflow-hidden"
               style={{
-                background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                background: isDark
+                  ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                  : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                boxShadow: isDark
+                  ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                  : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
               }}
             >
               <div
                 className="absolute inset-x-0 top-0 h-[1px]"
-                style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)' }}
+                style={{
+                  background: isDark
+                    ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+                    : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
+                }}
               />
-              <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
-                <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+              <div className={cn("flex items-center justify-between pb-3 mb-3 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                <h3 className={cn("text-[12px] font-semibold uppercase tracking-wider", isDark ? "text-white" : "text-gray-900")}>
                   Staking Rewards Summary
                   {selectedClientId && (
-                    <span className="text-text-muted font-normal ml-2">
+                    <span className={cn("font-normal ml-2", isDark ? "text-white/30" : "text-gray-500")}>
                       • {getClientById(selectedClientId)?.name}
                     </span>
                   )}
                 </h3>
-                <span className="text-[10px] text-text-muted">Last 30 days</span>
+                <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>Last 30 days</span>
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
-                  <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">Total Earned</p>
+                  <p className={cn("text-[10px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Total Earned</p>
                   <p className="text-[16px] font-semibold text-status-success tabular-nums">
                     +${Math.round(stats.totalRewards * 1.2).toLocaleString()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">Claimed</p>
-                  <p className="text-[16px] font-semibold text-text-primary tabular-nums">
+                  <p className={cn("text-[10px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Claimed</p>
+                  <p className={cn("text-[16px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                     ${Math.round(stats.totalRewards * 0.4).toLocaleString()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">Pending</p>
+                  <p className={cn("text-[10px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Pending</p>
                   <p className="text-[16px] font-semibold text-accent-cyan tabular-nums">
                     ${stats.totalRewards.toLocaleString()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">Auto-Compounded</p>
+                  <p className={cn("text-[10px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Auto-Compounded</p>
                   <p className="text-[16px] font-semibold text-accent-purple tabular-nums">
                     ${Math.round(stats.totalRewards * 0.3).toLocaleString()}
                   </p>

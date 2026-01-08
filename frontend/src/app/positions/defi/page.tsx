@@ -32,6 +32,7 @@ import type { NetworkType } from '@/components/defi/pools/types';
 import { useWallet, formatAddress } from '@/contexts/wallet-context';
 import { usePoolPositions } from '@/hooks/usePoolPositions';
 import { WalletConnectModal } from '@/components/wallet';
+import { useTheme } from '@/contexts/theme-context';
 
 type ViewTab = 'pools' | 'protocols' | 'discover';
 
@@ -118,6 +119,9 @@ const categoryConfig = {
 };
 
 export default function DeFiPage() {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+
   const [activeTab, setActiveTab] = useState<ViewTab>('pools');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [networkFilter, setNetworkFilter] = useState<NetworkType | 'all'>('all');
@@ -166,21 +170,25 @@ export default function DeFiPage() {
     <div
       className="min-h-screen"
       style={{
-        background: 'linear-gradient(135deg, #0a0a0f 0%, #0d0d14 20%, #0f1018 40%, #0d0e15 60%, #0a0b10 80%, #08090d 100%)',
+        background: isDark
+          ? 'linear-gradient(135deg, #0a0a0f 0%, #0d0d14 20%, #0f1018 40%, #0d0e15 60%, #0a0b10 80%, #08090d 100%)'
+          : '#ffffff',
       }}
     >
       {/* Futuristic gradient overlays */}
-      <div
-        className="fixed inset-0 pointer-events-none"
-        style={{
-          background: `
-            radial-gradient(ellipse at 0% 0%, rgba(59, 130, 246, 0.04) 0%, transparent 50%),
-            radial-gradient(ellipse at 100% 0%, rgba(139, 92, 246, 0.03) 0%, transparent 50%),
-            radial-gradient(ellipse at 50% 100%, rgba(6, 182, 212, 0.02) 0%, transparent 40%),
-            linear-gradient(180deg, rgba(255, 255, 255, 0.01) 0%, transparent 30%)
-          `,
-        }}
-      />
+      {isDark && (
+        <div
+          className="fixed inset-0 pointer-events-none"
+          style={{
+            background: `
+              radial-gradient(ellipse at 0% 0%, rgba(59, 130, 246, 0.04) 0%, transparent 50%),
+              radial-gradient(ellipse at 100% 0%, rgba(139, 92, 246, 0.03) 0%, transparent 50%),
+              radial-gradient(ellipse at 50% 100%, rgba(6, 182, 212, 0.02) 0%, transparent 40%),
+              linear-gradient(180deg, rgba(255, 255, 255, 0.01) 0%, transparent 30%)
+            `,
+          }}
+        />
+      )}
 
       <Sidebar />
 
@@ -191,26 +199,26 @@ export default function DeFiPage() {
           {/* Page Title */}
           <div className="flex items-center justify-between mb-5">
             <div>
-              <div className="flex items-center gap-2 text-[11px] text-text-muted mb-1">
+              <div className={cn("flex items-center gap-2 text-[11px] mb-1", isDark ? "text-white/30" : "text-gray-500")}>
                 <span>Positions</span>
                 <ChevronRight className="w-3 h-3" />
-                <span className="text-text-secondary">DeFi</span>
+                <span className={isDark ? "text-white/50" : "text-gray-600"}>DeFi</span>
               </div>
-              <h1 className="text-lg font-semibold text-text-primary">DeFi Positions</h1>
-              <p className="text-[11px] text-text-muted mt-0.5">
+              <h1 className={cn("text-lg font-semibold", isDark ? "text-white" : "text-gray-900")}>DeFi Positions</h1>
+              <p className={cn("text-[11px] mt-0.5", isDark ? "text-white/30" : "text-gray-500")}>
                 Gerencie suas posições em protocolos DeFi, lending e liquidity pools
               </p>
             </div>
             <div className="flex items-center gap-3">
               {/* View Tabs */}
-              <div className="flex items-center gap-1 p-1 rounded-lg bg-white/[0.03]">
+              <div className={cn("flex items-center gap-1 p-1 rounded-lg", isDark ? "bg-white/[0.03]" : "bg-gray-100")}>
                 <button
                   onClick={() => setActiveTab('pools')}
                   className={cn(
                     'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-medium transition-colors',
                     activeTab === 'pools'
                       ? 'bg-accent-purple/20 text-accent-purple'
-                      : 'text-text-muted hover:text-text-secondary'
+                      : isDark ? 'text-white/30 hover:text-white/50' : 'text-gray-500 hover:text-gray-600'
                   )}
                 >
                   <Droplets className="w-3.5 h-3.5" />
@@ -222,7 +230,7 @@ export default function DeFiPage() {
                     'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-medium transition-colors',
                     activeTab === 'protocols'
                       ? 'bg-accent-purple/20 text-accent-purple'
-                      : 'text-text-muted hover:text-text-secondary'
+                      : isDark ? 'text-white/30 hover:text-white/50' : 'text-gray-500 hover:text-gray-600'
                   )}
                 >
                   <Layers className="w-3.5 h-3.5" />
@@ -234,7 +242,7 @@ export default function DeFiPage() {
                     'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-medium transition-colors',
                     activeTab === 'discover'
                       ? 'bg-accent-purple/20 text-accent-purple'
-                      : 'text-text-muted hover:text-text-secondary'
+                      : isDark ? 'text-white/30 hover:text-white/50' : 'text-gray-500 hover:text-gray-600'
                   )}
                 >
                   <LayoutGrid className="w-3.5 h-3.5" />
@@ -255,15 +263,23 @@ export default function DeFiPage() {
               <div className="grid grid-cols-2 gap-3">
                 {/* EVM Wallet Card */}
                 <div
-                  className="rounded-xl border border-white/[0.08] p-4 relative overflow-hidden"
+                  className="rounded-xl p-4 relative overflow-hidden"
                   style={{
-                    background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                    boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                    background: isDark
+                      ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                      : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                    border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                    boxShadow: isDark
+                      ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                      : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                   }}
                 >
                   <div
                     className="absolute inset-x-0 top-0 h-[1px]"
-                    style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)' }}
+                    style={{ background: isDark
+                      ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+                      : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)'
+                    }}
                   />
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
@@ -271,8 +287,8 @@ export default function DeFiPage() {
                         <span className="w-3 h-3 rounded-full bg-[#627eea]" />
                       </div>
                       <div>
-                        <h3 className="text-[12px] font-semibold text-text-primary">EVM Networks</h3>
-                        <p className="text-[9px] text-text-muted">Ethereum, Arbitrum, Base, Polygon...</p>
+                        <h3 className={cn("text-[12px] font-semibold", isDark ? "text-white" : "text-gray-900")}>EVM Networks</h3>
+                        <p className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>Ethereum, Arbitrum, Base, Polygon...</p>
                       </div>
                     </div>
                     {isEVMConnected ? (
@@ -295,19 +311,19 @@ export default function DeFiPage() {
 
                   {isEVMConnected && evmWallet && (
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/[0.03]">
+                      <div className={cn("flex items-center justify-between p-2.5 rounded-lg", isDark ? "bg-white/[0.03]" : "bg-gray-100")}>
                         <div className="flex items-center gap-2">
                           <span className="text-lg">{evmWallet.icon}</span>
                           <div>
-                            <p className="text-[10px] font-medium text-text-primary">{evmWallet.label}</p>
-                            <code className="text-[9px] text-text-muted font-mono">
+                            <p className={cn("text-[10px] font-medium", isDark ? "text-white" : "text-gray-900")}>{evmWallet.label}</p>
+                            <code className={cn("text-[9px] font-mono", isDark ? "text-white/30" : "text-gray-500")}>
                               {formatAddress(evmWallet.address, 6)}
                             </code>
                           </div>
                         </div>
                         <button
                           onClick={() => openWalletModal('evm')}
-                          className="text-[9px] text-text-muted hover:text-text-primary"
+                          className={cn("text-[9px]", isDark ? "text-white/30 hover:text-white" : "text-gray-500 hover:text-gray-900")}
                         >
                           Change
                         </button>
@@ -319,12 +335,12 @@ export default function DeFiPage() {
                           {isLoadingEVM ? (
                             <>
                               <Loader2 className="w-3 h-3 text-accent-blue animate-spin" />
-                              <span className="text-[9px] text-text-muted">Fetching positions...</span>
+                              <span className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>Fetching positions...</span>
                             </>
                           ) : fetchState.evm.status === 'success' ? (
                             <>
                               <CheckCircle className="w-3 h-3 text-status-success" />
-                              <span className="text-[9px] text-text-muted">
+                              <span className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                                 {evmCount} positions found
                               </span>
                             </>
@@ -336,7 +352,7 @@ export default function DeFiPage() {
                           ) : null}
                         </div>
                         {fetchState.evm.lastFetched && (
-                          <div className="flex items-center gap-1 text-[9px] text-text-muted">
+                          <div className={cn("flex items-center gap-1 text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                             <Clock className="w-3 h-3" />
                             {fetchState.evm.lastFetched.toLocaleTimeString()}
                           </div>
@@ -348,15 +364,23 @@ export default function DeFiPage() {
 
                 {/* Solana Wallet Card */}
                 <div
-                  className="rounded-xl border border-white/[0.08] p-4 relative overflow-hidden"
+                  className="rounded-xl p-4 relative overflow-hidden"
                   style={{
-                    background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                    boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                    background: isDark
+                      ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                      : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                    border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                    boxShadow: isDark
+                      ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                      : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                   }}
                 >
                   <div
                     className="absolute inset-x-0 top-0 h-[1px]"
-                    style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)' }}
+                    style={{ background: isDark
+                      ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+                      : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)'
+                    }}
                   />
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
@@ -364,8 +388,8 @@ export default function DeFiPage() {
                         <span className="w-3 h-3 rounded-full bg-[#9945ff]" />
                       </div>
                       <div>
-                        <h3 className="text-[12px] font-semibold text-text-primary">Solana Network</h3>
-                        <p className="text-[9px] text-text-muted">Orca, Raydium, Meteora, Jupiter...</p>
+                        <h3 className={cn("text-[12px] font-semibold", isDark ? "text-white" : "text-gray-900")}>Solana Network</h3>
+                        <p className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>Orca, Raydium, Meteora, Jupiter...</p>
                       </div>
                     </div>
                     {isSolanaConnected ? (
@@ -388,19 +412,19 @@ export default function DeFiPage() {
 
                   {isSolanaConnected && solanaWallet && (
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/[0.03]">
+                      <div className={cn("flex items-center justify-between p-2.5 rounded-lg", isDark ? "bg-white/[0.03]" : "bg-gray-100")}>
                         <div className="flex items-center gap-2">
                           <span className="text-lg">{solanaWallet.icon}</span>
                           <div>
-                            <p className="text-[10px] font-medium text-text-primary">{solanaWallet.label}</p>
-                            <code className="text-[9px] text-text-muted font-mono">
+                            <p className={cn("text-[10px] font-medium", isDark ? "text-white" : "text-gray-900")}>{solanaWallet.label}</p>
+                            <code className={cn("text-[9px] font-mono", isDark ? "text-white/30" : "text-gray-500")}>
                               {formatAddress(solanaWallet.address, 6)}
                             </code>
                           </div>
                         </div>
                         <button
                           onClick={() => openWalletModal('solana')}
-                          className="text-[9px] text-text-muted hover:text-text-primary"
+                          className={cn("text-[9px]", isDark ? "text-white/30 hover:text-white" : "text-gray-500 hover:text-gray-900")}
                         >
                           Change
                         </button>
@@ -412,12 +436,12 @@ export default function DeFiPage() {
                           {isLoadingSolana ? (
                             <>
                               <Loader2 className="w-3 h-3 text-accent-purple animate-spin" />
-                              <span className="text-[9px] text-text-muted">Fetching positions...</span>
+                              <span className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>Fetching positions...</span>
                             </>
                           ) : fetchState.solana.status === 'success' ? (
                             <>
                               <CheckCircle className="w-3 h-3 text-status-success" />
-                              <span className="text-[9px] text-text-muted">
+                              <span className={cn("text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                                 {solanaCount} positions found
                               </span>
                             </>
@@ -429,7 +453,7 @@ export default function DeFiPage() {
                           ) : null}
                         </div>
                         {fetchState.solana.lastFetched && (
-                          <div className="flex items-center gap-1 text-[9px] text-text-muted">
+                          <div className={cn("flex items-center gap-1 text-[9px]", isDark ? "text-white/30" : "text-gray-500")}>
                             <Clock className="w-3 h-3" />
                             {fetchState.solana.lastFetched.toLocaleTimeString()}
                           </div>
@@ -443,20 +467,25 @@ export default function DeFiPage() {
               {/* Not Connected State */}
               {!isAnyConnected && (
                 <div
-                  className="rounded-xl border border-white/[0.08] p-8 relative overflow-hidden"
+                  className="rounded-xl p-8 relative overflow-hidden"
                   style={{
-                    background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                    boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                    background: isDark
+                      ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                      : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                    border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                    boxShadow: isDark
+                      ? '0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                      : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                   }}
                 >
                   <div className="flex flex-col items-center justify-center text-center">
                     <div className="w-16 h-16 rounded-2xl bg-accent-purple/10 flex items-center justify-center mb-4">
                       <Wallet className="w-8 h-8 text-accent-purple" />
                     </div>
-                    <h3 className="text-[14px] font-semibold text-text-primary mb-1">
+                    <h3 className={cn("text-[14px] font-semibold mb-1", isDark ? "text-white" : "text-gray-900")}>
                       Connect Your Wallets
                     </h3>
-                    <p className="text-[11px] text-text-muted max-w-md mb-4">
+                    <p className={cn("text-[11px] max-w-md mb-4", isDark ? "text-white/30" : "text-gray-500")}>
                       Connect your EVM and Solana wallets to automatically discover and track your
                       liquidity positions across all supported protocols
                     </p>
@@ -483,18 +512,23 @@ export default function DeFiPage() {
               {/* Loading State */}
               {isAnyConnected && isLoading && positions.length === 0 && (
                 <div
-                  className="rounded-xl border border-white/[0.08] p-8 relative overflow-hidden"
+                  className="rounded-xl p-8 relative overflow-hidden"
                   style={{
-                    background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-                    boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                    background: isDark
+                      ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                      : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                    border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+                    boxShadow: isDark
+                      ? '0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                      : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                   }}
                 >
                   <div className="flex flex-col items-center justify-center text-center">
                     <Loader2 className="w-10 h-10 text-accent-purple animate-spin mb-4" />
-                    <h3 className="text-[14px] font-semibold text-text-primary mb-1">
+                    <h3 className={cn("text-[14px] font-semibold mb-1", isDark ? "text-white" : "text-gray-900")}>
                       Fetching Your Positions
                     </h3>
-                    <p className="text-[11px] text-text-muted max-w-md">
+                    <p className={cn("text-[11px] max-w-md", isDark ? "text-white/30" : "text-gray-500")}>
                       Scanning protocols for your liquidity positions...
                     </p>
                     <div className="flex items-center gap-4 mt-4">
@@ -525,18 +559,18 @@ export default function DeFiPage() {
                   <div>
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-3">
-                        <h2 className="text-[12px] font-semibold text-text-primary uppercase tracking-wider">
+                        <h2 className={cn("text-[12px] font-semibold uppercase tracking-wider", isDark ? "text-white" : "text-gray-900")}>
                           Your LP Positions ({filteredPoolPositions.length})
                         </h2>
                         {/* Network Filter */}
-                        <div className="flex items-center gap-1 p-1 rounded-lg bg-white/[0.03]">
+                        <div className={cn("flex items-center gap-1 p-1 rounded-lg", isDark ? "bg-white/[0.03]" : "bg-gray-100")}>
                           <button
                             onClick={() => setNetworkFilter('all')}
                             className={cn(
                               'flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-medium transition-colors',
                               networkFilter === 'all'
                                 ? 'bg-accent-blue/20 text-accent-blue'
-                                : 'text-text-muted hover:text-text-secondary'
+                                : isDark ? 'text-white/30 hover:text-white/50' : 'text-gray-500 hover:text-gray-600'
                             )}
                           >
                             <Globe className="w-3 h-3" />
@@ -548,7 +582,7 @@ export default function DeFiPage() {
                               'px-2 py-1 rounded-md text-[9px] font-medium transition-colors',
                               networkFilter === 'evm'
                                 ? 'bg-[#627eea]/20 text-[#627eea]'
-                                : 'text-text-muted hover:text-text-secondary'
+                                : isDark ? 'text-white/30 hover:text-white/50' : 'text-gray-500 hover:text-gray-600'
                             )}
                           >
                             EVM ({evmCount})
@@ -559,7 +593,7 @@ export default function DeFiPage() {
                               'px-2 py-1 rounded-md text-[9px] font-medium transition-colors',
                               networkFilter === 'solana'
                                 ? 'bg-[#9945ff]/20 text-[#9945ff]'
-                                : 'text-text-muted hover:text-text-secondary'
+                                : isDark ? 'text-white/30 hover:text-white/50' : 'text-gray-500 hover:text-gray-600'
                             )}
                           >
                             Solana ({solanaCount})
@@ -569,7 +603,12 @@ export default function DeFiPage() {
                       <button
                         onClick={refreshPositions}
                         disabled={isLoading}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.03] text-text-muted hover:text-text-primary hover:bg-white/[0.05] text-[10px] font-medium transition-colors disabled:opacity-50"
+                        className={cn(
+                          "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-medium transition-colors disabled:opacity-50",
+                          isDark
+                            ? "bg-white/[0.03] text-white/30 hover:text-white hover:bg-white/[0.05]"
+                            : "bg-gray-100 text-gray-500 hover:text-gray-900 hover:bg-gray-200"
+                        )}
                       >
                         <RefreshCw className={cn('w-3.5 h-3.5', isLoading && 'animate-spin')} />
                         Refresh
@@ -587,9 +626,9 @@ export default function DeFiPage() {
                       ))}
                       {filteredPoolPositions.length === 0 && (
                         <div className="flex flex-col items-center justify-center py-12 text-center">
-                          <Droplets className="w-10 h-10 text-text-muted mb-3" />
-                          <p className="text-[12px] text-text-secondary">No positions found</p>
-                          <p className="text-[10px] text-text-muted">
+                          <Droplets className={cn("w-10 h-10 mb-3", isDark ? "text-white/30" : "text-gray-400")} />
+                          <p className={cn("text-[12px]", isDark ? "text-white/50" : "text-gray-600")}>No positions found</p>
+                          <p className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>
                             {networkFilter !== 'all'
                               ? `No ${networkFilter === 'solana' ? 'Solana' : 'EVM'} positions yet`
                               : 'Add your first liquidity position'}
@@ -616,17 +655,22 @@ export default function DeFiPage() {
                 ].map((card) => (
                   <div
                     key={card.label}
-                    className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+                    className="backdrop-blur-md rounded-xl p-4"
                     style={{
-                      background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-                      boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+                      background: isDark
+                        ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+                        : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                      border: isDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(203, 213, 225, 0.6)',
+                      boxShadow: isDark
+                        ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+                        : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                     }}
                   >
                     <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center mb-2', card.bg)}>
                       <card.icon className={cn('w-4 h-4', card.color)} />
                     </div>
-                    <p className="text-[10px] text-text-muted uppercase tracking-wider">{card.label}</p>
-                    <p className="text-[20px] font-semibold text-text-primary tabular-nums">
+                    <p className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>{card.label}</p>
+                    <p className={cn("text-[20px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                       ${card.value.toLocaleString()}
                     </p>
                   </div>
@@ -635,7 +679,7 @@ export default function DeFiPage() {
 
               {/* Filter Pills */}
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-text-muted">Category:</span>
+                <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>Category:</span>
                 {['all', 'lending', 'dex', 'yield', 'derivatives'].map((cat) => (
                   <button
                     key={cat}
@@ -644,7 +688,9 @@ export default function DeFiPage() {
                       'px-3 py-1.5 rounded-lg text-[10px] font-medium capitalize transition-colors',
                       filterCategory === cat
                         ? 'bg-accent-purple/20 text-accent-purple'
-                        : 'bg-white/[0.03] text-text-secondary hover:bg-white/[0.05]'
+                        : isDark
+                          ? 'bg-white/[0.03] text-white/50 hover:bg-white/[0.05]'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                     )}
                   >
                     {cat === 'dex' ? 'DEX/LP' : cat}
@@ -660,21 +706,26 @@ export default function DeFiPage() {
                   return (
                     <div
                       key={protocol.id}
-                      className="backdrop-blur-md rounded-xl border border-white/[0.06] p-4"
+                      className="backdrop-blur-md rounded-xl p-4"
                       style={{
-                        background: 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)',
-                        boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+                        background: isDark
+                          ? 'linear-gradient(135deg, rgba(22, 24, 32, 0.9) 0%, rgba(18, 20, 28, 0.85) 100%)'
+                          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                        border: isDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(203, 213, 225, 0.6)',
+                        boxShadow: isDark
+                          ? '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03)'
+                          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                       }}
                     >
                       {/* Protocol Header */}
-                      <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.06]">
+                      <div className={cn("flex items-center justify-between pb-3 mb-3 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-white/[0.05] flex items-center justify-center text-[12px] font-bold text-text-secondary">
+                          <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-[12px] font-bold", isDark ? "bg-white/[0.05] text-white/50" : "bg-gray-100 text-gray-600")}>
                             {protocol.logo}
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <h3 className="text-[14px] font-semibold text-text-primary">{protocol.name}</h3>
+                              <h3 className={cn("text-[14px] font-semibold", isDark ? "text-white" : "text-gray-900")}>{protocol.name}</h3>
                               <span className={cn('px-2 py-0.5 rounded text-[9px] font-medium', category.bg, category.color)}>
                                 {category.label}
                               </span>
@@ -684,16 +735,16 @@ export default function DeFiPage() {
                                 className="w-2 h-2 rounded-full"
                                 style={{ backgroundColor: protocol.chainColor }}
                               />
-                              <span className="text-[10px] text-text-muted">{protocol.chain}</span>
-                              <span className="text-[10px] text-text-muted">·</span>
-                              <span className="text-[10px] text-text-secondary">
+                              <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>{protocol.chain}</span>
+                              <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>·</span>
+                              <span className={cn("text-[10px]", isDark ? "text-white/50" : "text-gray-600")}>
                                 TVL: ${(protocol.tvl / 1000000000).toFixed(1)}B
                               </span>
                             </div>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-[18px] font-semibold text-text-primary tabular-nums">
+                          <p className={cn("text-[18px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                             ${protocol.userValue.toLocaleString()}
                           </p>
                           <div className="flex items-center justify-end gap-2">
@@ -728,15 +779,18 @@ export default function DeFiPage() {
 
                       {/* Positions */}
                       <div>
-                        <p className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Active Positions</p>
+                        <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Active Positions</p>
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                           {protocol.positions.map((pos, idx) => (
                             <div
                               key={idx}
-                              className="p-2.5 rounded-lg bg-white/[0.02] hover:bg-white/[0.03] transition-colors cursor-pointer"
+                              className={cn(
+                                "p-2.5 rounded-lg transition-colors cursor-pointer",
+                                isDark ? "bg-white/[0.02] hover:bg-white/[0.03]" : "bg-gray-50 hover:bg-gray-100"
+                              )}
                             >
                               <div className="flex items-center justify-between mb-1">
-                                <span className="text-[10px] font-medium text-text-primary">{pos.asset}</span>
+                                <span className={cn("text-[10px] font-medium", isDark ? "text-white" : "text-gray-900")}>{pos.asset}</span>
                                 <span
                                   className={cn(
                                     'px-1.5 py-0.5 rounded text-[8px] font-medium',
@@ -750,7 +804,7 @@ export default function DeFiPage() {
                                   {pos.type}
                                 </span>
                               </div>
-                              <p className="text-[11px] font-medium text-text-primary tabular-nums">
+                              <p className={cn("text-[11px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                                 ${Math.abs(pos.value).toLocaleString()}
                               </p>
                               <span
@@ -768,8 +822,8 @@ export default function DeFiPage() {
 
                       {/* Rewards */}
                       {protocol.rewards > 0 && (
-                        <div className="mt-3 pt-3 border-t border-white/[0.03] flex items-center justify-between">
-                          <span className="text-[10px] text-text-muted">Pending Rewards</span>
+                        <div className={cn("mt-3 pt-3 border-t flex items-center justify-between", isDark ? "border-white/[0.03]" : "border-gray-200")}>
+                          <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>Pending Rewards</span>
                           <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-cyan/10 text-accent-cyan text-[10px] font-medium hover:bg-accent-cyan/20 transition-colors">
                             <Droplets className="w-3 h-3" />
                             Claim ${protocol.rewards.toLocaleString()}

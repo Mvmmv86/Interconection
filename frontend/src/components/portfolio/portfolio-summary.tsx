@@ -2,6 +2,7 @@
 
 import { TrendingUp, TrendingDown, Wallet, PiggyBank, Coins, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 interface SummaryCardProps {
   label: string;
@@ -29,26 +30,32 @@ const iconBgColors = {
 };
 
 function SummaryCard({ label, value, change, subValue, icon, accentColor }: SummaryCardProps) {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const isPositive = change !== undefined && change >= 0;
 
   return (
     <div
       className="relative backdrop-blur-sm rounded-xl p-4 overflow-hidden group hover:scale-[1.02] transition-all duration-300"
       style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
+        background: isDark
+          ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark
+          ? '1px solid rgba(255, 255, 255, 0.08)'
+          : '1px solid rgba(203, 213, 225, 0.6)',
+        boxShadow: isDark
+          ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+          : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
       }}
     >
       {/* Top shine effect */}
       <div
         className="absolute inset-x-0 top-0 h-[1px]"
         style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
+          background: isDark
+            ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+            : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
         }}
       />
 
@@ -62,8 +69,18 @@ function SummaryCard({ label, value, change, subValue, icon, accentColor }: Summ
 
       <div className="relative flex items-start justify-between">
         <div className="space-y-1">
-          <p className="text-[10px] font-medium text-text-muted uppercase tracking-wider">{label}</p>
-          <p className="text-xl font-semibold text-text-primary tabular-nums">{value}</p>
+          <p className={cn(
+            'text-[10px] font-medium uppercase tracking-wider',
+            isDark ? 'text-white/40' : 'text-gray-500'
+          )}>
+            {label}
+          </p>
+          <p className={cn(
+            'text-xl font-semibold tabular-nums',
+            isDark ? 'text-white' : 'text-gray-900'
+          )}>
+            {value}
+          </p>
           {change !== undefined && (
             <div className="flex items-center gap-1">
               {isPositive ? (
@@ -80,7 +97,12 @@ function SummaryCard({ label, value, change, subValue, icon, accentColor }: Summ
                 {isPositive ? '+' : ''}{change.toFixed(2)}%
               </span>
               {subValue && (
-                <span className="text-[10px] text-text-muted ml-1">{subValue}</span>
+                <span className={cn(
+                  'text-[10px] ml-1',
+                  isDark ? 'text-white/30' : 'text-gray-500'
+                )}>
+                  {subValue}
+                </span>
               )}
             </div>
           )}

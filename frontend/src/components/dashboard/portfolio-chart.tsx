@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import { cn } from '@/lib/utils';
+import { ThemedCard, useThemedText } from '@/components/ui/themed-card';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
@@ -35,6 +36,7 @@ const periods: Period[] = ['24h', '7d', '30d', '90d', '1y'];
 
 export function PortfolioChart() {
   const [period, setPeriod] = useState<Period>('30d');
+  const { isDark, label } = useThemedText();
 
   const chartOptions: ApexCharts.ApexOptions = {
     chart: {
@@ -43,45 +45,57 @@ export function PortfolioChart() {
       toolbar: { show: false },
       animations: { enabled: true, speed: 500 },
       zoom: { enabled: false },
+      parentHeightOffset: 0,
+      sparkline: { enabled: false },
     },
     colors: ['#3b82f6'],
-    stroke: { curve: 'smooth', width: 1.5 },
+    stroke: { curve: 'smooth', width: 2 },
     fill: {
       type: 'gradient',
       gradient: {
         shadeIntensity: 1,
-        opacityFrom: 0.25,
+        opacityFrom: isDark ? 0.3 : 0.4,
         opacityTo: 0,
         stops: [0, 100],
         colorStops: [
-          { offset: 0, color: '#3b82f6', opacity: 0.25 },
+          { offset: 0, color: '#3b82f6', opacity: isDark ? 0.3 : 0.4 },
           { offset: 100, color: '#3b82f6', opacity: 0 },
         ],
       },
     },
     grid: {
-      borderColor: 'rgba(255, 255, 255, 0.03)',
+      borderColor: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.06)',
       strokeDashArray: 0,
       xaxis: { lines: { show: false } },
       yaxis: { lines: { show: true } },
-      padding: { left: 0, right: 0 },
+      padding: { left: 10, right: 10, top: 0, bottom: 0 },
     },
     xaxis: {
       type: 'datetime',
       labels: {
-        style: { colors: 'rgba(255, 255, 255, 0.25)', fontSize: '10px', fontFamily: 'Inter' },
+        style: {
+          colors: isDark ? 'rgba(255, 255, 255, 0.4)' : '#64748b',
+          fontSize: '10px',
+          fontFamily: 'Inter',
+          fontWeight: 500,
+        },
       },
       axisBorder: { show: false },
       axisTicks: { show: false },
     },
     yaxis: {
       labels: {
-        style: { colors: 'rgba(255, 255, 255, 0.25)', fontSize: '10px', fontFamily: 'Inter' },
+        style: {
+          colors: isDark ? 'rgba(255, 255, 255, 0.4)' : '#64748b',
+          fontSize: '10px',
+          fontFamily: 'Inter',
+          fontWeight: 500,
+        },
         formatter: (value: number) => `$${(value / 1000000).toFixed(2)}M`,
       },
     },
     tooltip: {
-      theme: 'dark',
+      theme: isDark ? 'dark' : 'light',
       x: { format: 'MMM dd, yyyy' },
       y: { formatter: (value: number) => `$${value.toLocaleString()}` },
       style: { fontSize: '11px', fontFamily: 'Inter' },
@@ -92,34 +106,22 @@ export function PortfolioChart() {
   const chartSeries = [{ name: 'Portfolio', data: periodData[period] }];
 
   return (
-    <div
-      className="col-span-2 rounded-xl p-4 relative overflow-hidden"
-      style={{
-        background: 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: `
-          0 4px 24px rgba(0, 0, 0, 0.3),
-          0 1px 2px rgba(0, 0, 0, 0.2),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05)
-        `,
-      }}
-    >
-      {/* Top shine effect */}
-      <div
-        className="absolute inset-x-0 top-0 h-[1px]"
-        style={{
-          background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)',
-        }}
-      />
-
+    <ThemedCard className="col-span-2 flex flex-col h-[480px]">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3 relative z-10">
-        <span className="text-[11px] font-medium text-text-secondary uppercase tracking-wider">Portfolio Evolution</span>
+      <div className="flex items-center justify-between mb-2 relative z-10 flex-shrink-0">
+        <span className={cn('text-[11px] font-semibold uppercase tracking-wider', label)}>
+          Portfolio Evolution
+        </span>
         <div
-          className="flex items-center gap-0.5 p-0.5 rounded-md"
+          className="flex items-center gap-0.5 p-0.5 rounded-lg"
           style={{
-            background: 'rgba(255, 255, 255, 0.04)',
-            border: '1px solid rgba(255, 255, 255, 0.06)',
+            background: isDark
+              ? 'linear-gradient(145deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.02) 100%)'
+              : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 100%)',
+            border: isDark
+              ? '1px solid rgba(255, 255, 255, 0.06)'
+              : '1px solid rgba(0, 0, 0, 0.08)',
+            boxShadow: isDark ? 'none' : 'inset 0 1px 2px rgba(0, 0, 0, 0.04)',
           }}
         >
           {periods.map((p) => (
@@ -127,11 +129,17 @@ export function PortfolioChart() {
               key={p}
               onClick={() => setPeriod(p)}
               className={cn(
-                'px-2.5 py-1 text-[10px] font-medium rounded transition-all',
+                'px-2.5 py-1 text-[10px] font-semibold rounded-md transition-all',
                 period === p
-                  ? 'bg-accent-blue text-white'
-                  : 'text-text-muted hover:text-text-secondary'
+                  ? 'text-white'
+                  : isDark
+                    ? 'text-white/30 hover:text-white/70'
+                    : 'text-slate-500 hover:text-slate-900'
               )}
+              style={period === p ? {
+                background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)',
+              } : undefined}
             >
               {p}
             </button>
@@ -139,10 +147,10 @@ export function PortfolioChart() {
         </div>
       </div>
 
-      {/* Chart */}
-      <div className="h-[260px]">
-        <Chart options={chartOptions} series={chartSeries} type="area" height="100%" />
+      {/* Chart - fills remaining vertical space */}
+      <div className="flex-1 min-h-0 -mx-2 -mb-2">
+        <Chart options={chartOptions} series={chartSeries} type="area" height="100%" width="100%" />
       </div>
-    </div>
+    </ThemedCard>
   );
 }
