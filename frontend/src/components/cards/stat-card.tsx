@@ -8,6 +8,7 @@ interface StatCardProps {
   label: string;
   value: string | number;
   change?: number;
+  format?: 'currency' | 'percent';
   icon?: ReactNode;
   accentColor?: 'orange' | 'purple' | 'blue' | 'green' | 'cyan';
   className?: string;
@@ -17,6 +18,7 @@ export function StatCard({
   label,
   value,
   change,
+  format = 'currency',
   icon,
   accentColor = 'blue',
   className,
@@ -100,7 +102,7 @@ export function StatCard({
               'text-2xl font-bold tabular-nums tracking-tight',
               isDark ? 'text-white' : 'text-slate-900'
             )}>
-              {typeof value === 'number' ? formatValue(value) : value}
+              {typeof value === 'number' ? formatValue(value, format) : value}
             </p>
 
             {/* Change */}
@@ -145,15 +147,15 @@ export function StatCard({
   );
 }
 
-function formatValue(value: number): string {
+function formatValue(value: number, format: 'currency' | 'percent'): string {
+  if (format === 'percent') {
+    return `${value.toFixed(2)}%`;
+  }
   if (value >= 1000000) {
     return `$${(value / 1000000).toFixed(2)}M`;
   }
   if (value >= 1000) {
     return `$${(value / 1000).toFixed(2)}K`;
   }
-  if (value < 100) {
-    return `${value.toFixed(2)}%`;
-  }
-  return `$${value.toLocaleString()}`;
+  return `$${value.toFixed(2)}`;
 }

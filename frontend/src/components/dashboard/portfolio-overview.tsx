@@ -27,6 +27,7 @@ export function PortfolioOverview({
       label: 'Total Portfolio',
       value: isLoading ? 0 : totalValue,
       change: isLoading ? undefined : pnlTodayPercent,
+      format: 'currency' as const,
       icon: <Wallet className="w-4 h-4" />,
       accentColor: 'blue' as const,
     },
@@ -34,6 +35,7 @@ export function PortfolioOverview({
       label: 'P&L Today',
       value: isLoading ? 0 : pnlToday,
       change: isLoading ? undefined : pnlTodayPercent,
+      format: 'currency' as const,
       icon: <TrendingUp className="w-4 h-4" />,
       accentColor: 'green' as const,
     },
@@ -41,6 +43,7 @@ export function PortfolioOverview({
       label: 'P&L This Month',
       value: isLoading ? 0 : pnlMonth,
       change: isLoading ? undefined : pnlMonthPercent,
+      format: 'currency' as const,
       icon: <BarChart3 className="w-4 h-4" />,
       accentColor: 'cyan' as const,
     },
@@ -48,6 +51,7 @@ export function PortfolioOverview({
       label: 'Avg. Yield (APY)',
       value: isLoading ? 0 : avgApy,
       change: undefined,
+      format: 'percent' as const,
       icon: <Percent className="w-4 h-4" />,
       accentColor: 'purple' as const,
     },
@@ -61,6 +65,7 @@ export function PortfolioOverview({
           label={stat.label}
           value={stat.value}
           change={stat.change}
+          format={stat.format}
           icon={stat.icon}
           accentColor={stat.accentColor}
         />

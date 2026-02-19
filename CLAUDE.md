@@ -337,10 +337,22 @@ async def list_examples(
 
 ## Variáveis de Ambiente
 
-### Frontend (.env.local)
+### Frontend (.env.local) — Desenvolvimento Local
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8002
 NEXT_PUBLIC_WS_URL=ws://localhost:8002
+NEXT_PUBLIC_ZERION_API_KEY=<key>
+NEXT_PUBLIC_MORALIS_API_KEY=<key>
+NEXT_PUBLIC_HELIUS_API_KEY=<key>
+ANTHROPIC_API_KEY=<key>           # server-only
+OPENAI_API_KEY=<key>              # server-only, fallback
+```
+
+### Frontend (.env.local) — Produção (Servidor)
+```env
+NEXT_PUBLIC_API_URL=http://134.122.48.143
+NEXT_PUBLIC_WS_URL=ws://134.122.48.143
+# (mesmas API keys acima)
 ```
 
 ### Backend (.env)
@@ -351,6 +363,121 @@ SECRET_KEY=your-secret-key-here
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 ```
+
+---
+
+## Deploy — Produção (DigitalOcean)
+
+### Servidor
+| Info | Valor |
+|------|-------|
+| **Provedor** | DigitalOcean Droplet |
+| **Nome** | interconection-prod |
+| **IP** | 134.122.48.143 |
+| **OS** | Ubuntu 24.04 |
+| **RAM** | 2GB |
+| **Região** | AMS3 (Amsterdam) |
+| **Node.js** | v20.20.0 (via nvm) |
+
+### Acesso SSH
+```bash
+ssh root@134.122.48.143
+# Chave SSH: ~/.ssh/id_ed25519 (marcus@interconection)
+# Após conectar, sempre carregar nvm:
+source ~/.nvm/nvm.sh
+```
+
+### Estrutura no Servidor
+```
+/var/www/interconection/          # Raiz do projeto (clone do GitHub)
+├── frontend/                     # Next.js app
+│   ├── .env.local                # Variáveis de ambiente (NÃO versionado)
+│   ├── .next/                    # Build de produção
+│   ├── ecosystem.config.js       # Configuração PM2
+│   ├── start.sh                  # Script de inicialização
+│   └── node_modules/
+└── backend/                      # FastAPI (futuro)
+```
+
+### Serviços e Portas (Produção)
+| Serviço | Porta | Gerenciado por |
+|---------|-------|----------------|
+| Nginx (proxy reverso) | **80** | systemd |
+| Frontend (Next.js) | **3003** | PM2 |
+| Backend (FastAPI) | **8002** | (futuro) |
+
+### Nginx
+- **Config:** `/etc/nginx/sites-enabled/interconection`
+- Proxy `/` → `localhost:3003` (Frontend)
+- Proxy `/api/defi/` → `localhost:3003` (Next.js API routes)
+- Proxy `/api/` → `localhost:8002` (Backend FastAPI)
+- Proxy `/docs` → `localhost:8002` (Swagger)
+
+### PM2
+- **Processo:** `interconection-frontend`
+- **Config:** `/var/www/interconection/frontend/ecosystem.config.js`
+- **Start script:** `/var/www/interconection/frontend/start.sh`
+- **Startup automático:** Configurado via `pm2 startup` (systemd)
+- **Logs:** `/root/.pm2/logs/interconection-frontend-*.log`
+
+### Deploy Rápido (atualização)
+```bash
+ssh root@134.122.48.143
+source ~/.nvm/nvm.sh
+cd /var/www/interconection
+git pull origin main
+cd frontend
+npm install
+npm run build
+pm2 restart interconection-frontend
+pm2 logs --lines 10 --nostream   # Verificar se subiu OK
+```
+
+### Deploy Completo (do zero)
+```bash
+ssh root@134.122.48.143
+source ~/.nvm/nvm.sh
+
+# 1. Clonar repo
+cd /var/www
+git clone https://github.com/Mvmmv86/Interconection.git interconection
+
+# 2. Configurar env
+# Copiar .env.local para /var/www/interconection/frontend/.env.local
+# (usar valores de produção: NEXT_PUBLIC_API_URL=http://134.122.48.143)
+
+# 3. Instalar e buildar
+cd interconection/frontend
+npm install
+npm run build
+
+# 4. Iniciar com PM2
+pm2 start ecosystem.config.js
+pm2 save
+pm2 startup
+
+# 5. Verificar
+curl http://localhost:3003   # Deve retornar 200
+```
+
+### Comandos Úteis (Servidor)
+```bash
+source ~/.nvm/nvm.sh              # Sempre rodar após SSH
+pm2 list                          # Ver processos
+pm2 logs interconection-frontend  # Ver logs em tempo real
+pm2 restart interconection-frontend  # Reiniciar app
+pm2 stop interconection-frontend  # Parar app
+pm2 monit                         # Monitor interativo
+nginx -t                          # Testar config nginx
+systemctl restart nginx           # Reiniciar nginx
+ss -tlnp | grep 3003              # Verificar se porta está em uso
+```
+
+### Troubleshooting
+- **EADDRINUSE porta 3003:** Processo next-server órfão. Rodar `fuser -k 3003/tcp` antes de reiniciar PM2.
+- **PM2 restart loop:** O Next.js cria processos filhos que sobrevivem ao SIGINT. O `start.sh` resolve isso matando a porta antes de iniciar.
+- **pino-pretty warning no build:** Aviso benigno do WalletConnect, pode ignorar.
+- **PM2 command not found:** Esqueceu de rodar `source ~/.nvm/nvm.sh`.
 
 ---
 
@@ -517,4 +644,4 @@ Para dúvidas sobre o projeto, consulte primeiro o PRD e esta documentação.
 
 ---
 
-*Última atualização: Janeiro 2026*
+*Última atualização: Fevereiro 2026*

@@ -36,9 +36,8 @@ nul
 .claude/settings.local.json
 .claude/plans/
 
-# Temp files
-tmpclaude-*
-frontend/tmpclaude-*
+# Temp files (Claude Code)
+**/tmpclaude-*
 
 # Deploy artifacts
 *-deploy.tar.gz
