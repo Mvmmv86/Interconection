@@ -107,6 +107,75 @@ export function RiskReportModal({
     const marginBottom = 25;
     let y = marginTop;
 
+    // ═══════════════════════════════════════════
+    // Emoji → colored circle mapping for PDF
+    // jsPDF can't render emoji chars, so we draw shapes instead
+    // Using literal emoji strings (ES5-compatible, no unicode regex flag)
+    // ═══════════════════════════════════════════
+    const emojiList: Array<{ emoji: string; color: [number, number, number] }> = [
+      { emoji: '\uD83D\uDD34', color: [239, 68, 68] },    // 🔴 red
+      { emoji: '\uD83D\uDFE2', color: [34, 197, 94] },    // 🟢 green
+      { emoji: '\uD83D\uDFE1', color: [234, 179, 8] },    // 🟡 yellow
+      { emoji: '\uD83D\uDFE0', color: [249, 115, 22] },   // 🟠 orange
+      { emoji: '\uD83D\uDD35', color: [59, 130, 246] },    // 🔵 blue
+      { emoji: '\u2705', color: [34, 197, 94] },            // ✅ green checkmark
+      { emoji: '\u274C', color: [239, 68, 68] },            // ❌ red X
+      { emoji: '\u26A0\uFE0F', color: [234, 179, 8] },     // ⚠️ yellow warning
+      { emoji: '\u26A0', color: [234, 179, 8] },            // ⚠ yellow warning (no variant)
+    ];
+
+    /** Strip all emoji from text (for clean jsPDF rendering) */
+    const stripEmojis = (text: string): string => {
+      let result = text;
+      for (let i = 0; i < emojiList.length; i++) {
+        // Replace all occurrences of each emoji
+        while (result.indexOf(emojiList[i].emoji) !== -1) {
+          result = result.replace(emojiList[i].emoji, '');
+        }
+      }
+      return result.replace(/^\s+/, '');
+    };
+
+    /** Detect leading emoji and return its color, or null */
+    const getLeadingEmojiColor = (text: string): [number, number, number] | null => {
+      const trimmed = text.replace(/^\s+/, '');
+      for (let i = 0; i < emojiList.length; i++) {
+        if (trimmed.indexOf(emojiList[i].emoji) === 0) {
+          return emojiList[i].color;
+        }
+      }
+      return null;
+    };
+
+    /**
+     * Draw text with emoji support. If the text starts with an emoji,
+     * draws a colored circle at (x, y) and shifts text to the right.
+     * Returns the number of lines rendered.
+     */
+    const drawTextWithEmoji = (
+      text: string,
+      x: number,
+      textY: number,
+      maxWidth: number,
+      options?: { isTableCell?: boolean }
+    ): number => {
+      const emojiColor = getLeadingEmojiColor(text);
+      const cleanText = stripEmojis(text);
+      let textX = x;
+
+      if (emojiColor) {
+        const radius = options?.isTableCell ? 1.0 : 1.2;
+        const circleY = textY - (options?.isTableCell ? 0.8 : 1.0);
+        doc.setFillColor(emojiColor[0], emojiColor[1], emojiColor[2]);
+        doc.circle(textX + radius, circleY, radius, 'F');
+        textX += radius * 2 + 1.5;
+      }
+
+      const lines = doc.splitTextToSize(cleanText, maxWidth - (textX - x));
+      doc.text(lines, textX, textY);
+      return Array.isArray(lines) ? lines.length : 1;
+    };
+
     const addPageIfNeeded = (spaceNeeded: number) => {
       if (y + spaceNeeded > pageHeight - marginBottom) {
         doc.addPage();
@@ -134,7 +203,16 @@ export function RiskReportModal({
     const elements = parseMarkdownToElements(reportContent);
 
     for (const el of elements) {
-      const plainText = el.content
+      // Strip markdown formatting AND emojis for plain text
+      const plainText = stripEmojis(
+        el.content
+          .replace(/\*\*(.+?)\*\*/g, '$1')
+          .replace(/\*(.+?)\*/g, '$1')
+          .replace(/`(.+?)`/g, '$1')
+      );
+
+      // Raw text (with emojis) for emoji-aware rendering
+      const rawText = el.content
         .replace(/\*\*(.+?)\*\*/g, '$1')
         .replace(/\*(.+?)\*/g, '$1')
         .replace(/`(.+?)`/g, '$1');
@@ -177,9 +255,8 @@ export function RiskReportModal({
           doc.setFontSize(10);
           doc.setFont('helvetica', 'bold');
           doc.setTextColor(80, 80, 80);
-          const h3Lines = doc.splitTextToSize(plainText, contentWidth);
-          doc.text(h3Lines, marginLeft, y);
-          y += h3Lines.length * 4.5 + 3;
+          const lineCount = drawTextWithEmoji(rawText, marginLeft, y, contentWidth);
+          y += lineCount * 4.5 + 3;
           break;
         }
         case 'bullet': {
@@ -187,10 +264,18 @@ export function RiskReportModal({
           doc.setFontSize(9);
           doc.setFont('helvetica', 'normal');
           doc.setTextColor(60, 60, 60);
-          const bulletLines = doc.splitTextToSize(plainText, contentWidth - 8);
-          // Bullet point
-          doc.setFillColor(168, 85, 247);
+
+          // Use emoji color for the bullet if present, otherwise purple
+          const bulletEmojiColor = getLeadingEmojiColor(rawText);
+          const bulletClean = stripEmojis(rawText);
+          if (bulletEmojiColor) {
+            doc.setFillColor(bulletEmojiColor[0], bulletEmojiColor[1], bulletEmojiColor[2]);
+          } else {
+            doc.setFillColor(168, 85, 247);
+          }
           doc.circle(marginLeft + 2, y - 1, 0.8, 'F');
+
+          const bulletLines = doc.splitTextToSize(bulletClean, contentWidth - 8);
           doc.text(bulletLines, marginLeft + 6, y);
           y += bulletLines.length * 4 + 2;
           break;
@@ -206,7 +291,8 @@ export function RiskReportModal({
           doc.setFillColor(80, 80, 100);
           doc.rect(marginLeft, y - 4, contentWidth, 6, 'F');
           el.cells.forEach((cell, i) => {
-            const cellText = doc.splitTextToSize(cell, colWidth - 4);
+            const cleanCell = stripEmojis(cell);
+            const cellText = doc.splitTextToSize(cleanCell, colWidth - 4);
             doc.text(cellText[0] || '', marginLeft + i * colWidth + 2, y);
           });
           y += 5;
@@ -218,13 +304,13 @@ export function RiskReportModal({
           const colW = contentWidth / el.cells.length;
           doc.setFontSize(8);
           doc.setFont('helvetica', 'normal');
-          doc.setTextColor(60, 60, 60);
           // Alternate row background
           doc.setFillColor(245, 245, 250);
           doc.rect(marginLeft, y - 3.5, contentWidth, 5, 'F');
+          doc.setTextColor(60, 60, 60);
           el.cells.forEach((cell, i) => {
-            const cellText = doc.splitTextToSize(cell, colW - 4);
-            doc.text(cellText[0] || '', marginLeft + i * colW + 2, y);
+            const cellX = marginLeft + i * colW + 2;
+            drawTextWithEmoji(cell, cellX, y, colW - 4, { isTableCell: true });
           });
           y += 5;
           break;
@@ -237,9 +323,8 @@ export function RiskReportModal({
           doc.setFontSize(9);
           doc.setFont('helvetica', 'normal');
           doc.setTextColor(50, 50, 50);
-          const pLines = doc.splitTextToSize(plainText, contentWidth);
-          doc.text(pLines, marginLeft, y);
-          y += pLines.length * 4 + 2;
+          const lineCount = drawTextWithEmoji(rawText, marginLeft, y, contentWidth);
+          y += lineCount * 4 + 2;
           break;
         }
         case 'empty':
