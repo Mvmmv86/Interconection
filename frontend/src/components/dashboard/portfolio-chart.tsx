@@ -31,11 +31,13 @@ export function PortfolioChart({ positions, totalValue, isLoading: isLoadingPosi
   const [period, setPeriod] = useState<Period>('30d');
   const { isDark, label } = useThemedText();
 
-  // Get top spot positions with known symbols for price history
+  // Get top spot-like positions with known symbols for price history
+  // Exclude futures (their value isn't simply quantity * price)
   const topAssets = useMemo(() => {
     if (!positions || positions.length === 0) return [];
     const spotPositions = positions
       .filter(p => p.symbol && SYMBOL_TO_COINGECKO[p.symbol.toUpperCase()])
+      .filter(p => p.category !== 'futures')
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
 
@@ -71,16 +73,32 @@ export function PortfolioChart({ positions, totalValue, isLoading: isLoadingPosi
     const firstCoinId = Object.keys(chartData.data)[0];
     if (!firstCoinId) return [];
     const timestamps: number[] = chartData.data[firstCoinId]?.prices?.map((p: [number, number]) => p[0]) || [];
+    if (timestamps.length === 0) return [];
+
+    // Derive effective quantities: if quantity is 0, use value / latest CoinGecko price
+    const assetsWithQuantity = topAssets.map(asset => {
+      if (asset.quantity > 0) return asset;
+      // Derive quantity from the latest price in the chart data
+      const coinId = SYMBOL_TO_COINGECKO[asset.symbol];
+      const coinData = chartData.data[coinId];
+      if (!coinData?.prices?.length) return asset;
+      const latestPrice = coinData.prices[coinData.prices.length - 1][1];
+      if (latestPrice <= 0) return asset;
+      return { ...asset, quantity: asset.value / latestPrice };
+    });
 
     // Value of assets without price history (stablecoins, DeFi, etc.)
-    const trackedValue = topAssets.reduce((sum, a) => sum + a.value, 0);
+    const trackedValue = assetsWithQuantity
+      .filter(a => a.quantity > 0)
+      .reduce((sum, a) => sum + a.value, 0);
     const untrackedValue = Math.max(0, totalValue - trackedValue);
 
     // For each timestamp, calculate total portfolio value
     return timestamps.map((ts: number) => {
       let portfolioValue = untrackedValue; // Add untracked value as constant
 
-      for (const asset of topAssets) {
+      for (const asset of assetsWithQuantity) {
+        if (asset.quantity <= 0) continue;
         const coinId = SYMBOL_TO_COINGECKO[asset.symbol];
         const coinData = chartData.data[coinId];
         if (!coinData?.prices) continue;
