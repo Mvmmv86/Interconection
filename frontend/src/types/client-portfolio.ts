@@ -10,6 +10,17 @@ export interface Client {
   color: string; // For UI identification
 }
 
+export interface WalletToken {
+  symbol: string;
+  name: string;
+  contractAddress: string | null;
+  balance: number;
+  balanceUsd: number;
+  priceUsd: number;
+  priceChange24h: number;
+  logoUrl: string | null;
+}
+
 export interface ClientWallet {
   id: string;
   clientId: string;
@@ -19,6 +30,27 @@ export interface ClientWallet {
   label: string;
   isActive: boolean;
   addedAt: string;
+  totalValueUsd?: number;
+  tokenCount?: number;
+  tokens?: WalletToken[];
+}
+
+export interface ExchangeBalance {
+  asset: string;
+  free: number;
+  locked: number;
+  total: number;
+  valueUsd: number;
+  priceUsd: number;
+  change24h: number;
+  // PnL fields
+  entryPrice?: number | null;
+  costBasis?: number | null;
+  unrealizedPnl: number;
+  unrealizedPnlPercent: number;
+  // Yield fields
+  apy?: number | null;
+  positionType?: string; // "spot", "staking", "earn"
 }
 
 export interface ClientExchange {
@@ -30,6 +62,10 @@ export interface ClientExchange {
   isActive: boolean;
   addedAt: string;
   lastSync?: string;
+  syncError?: string;
+  totalValueUsd?: number;
+  assetCount?: number;
+  balances?: ExchangeBalance[];
 }
 
 export interface ManualAsset {
@@ -70,6 +106,25 @@ export interface DetectedStakingPosition {
   autoCompound: boolean;
   detectedAt: string;
   lastUpdated: string;
+}
+
+// Unified position type for displaying all positions in one table
+export interface UnifiedPosition {
+  id: string;
+  symbol: string;
+  name: string;
+  quantity: number;
+  valueUsd: number;
+  priceUsd: number;
+  priceChange24h: number;
+  source: 'wallet' | 'exchange' | 'manual';
+  sourceId: string;
+  sourceName: string; // e.g., "Bybit", "Main Wallet", "Manual"
+  type: 'holding' | 'staking' | 'lending' | 'lp';
+  pnl?: number;
+  pnlPercent?: number;
+  apy?: number;
+  logoUrl?: string | null;
 }
 
 export interface ClientPortfolioSummary {

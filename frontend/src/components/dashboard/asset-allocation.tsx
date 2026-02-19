@@ -1,19 +1,38 @@
 'use client';
 
+import { useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { cn } from '@/lib/utils';
 import { ThemedCard, useThemedText } from '@/components/ui/themed-card';
+import type { DistributionByType } from '@/types/positions';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-const allocationData = {
-  series: [35, 25, 20, 12, 8],
-  labels: ['Bitcoin', 'Ethereum', 'Stablecoins', 'DeFi', 'Other'],
-  colors: ['#3b82f6', '#8b5cf6', '#22c55e', '#06b6d4', '#f97316'],
-};
+interface AssetAllocationProps {
+  data: DistributionByType[];
+  totalValue: number;
+  isLoading: boolean;
+}
 
-export function AssetAllocation() {
+export function AssetAllocation({ data, totalValue, isLoading }: AssetAllocationProps) {
   const { isDark, label } = useThemedText();
+
+  const allocationData = useMemo(() => {
+    if (!data || data.length === 0) {
+      return { series: [], labels: [], colors: [] };
+    }
+    return {
+      series: data.map(d => d.value), // percentage values
+      labels: data.map(d => d.label),
+      colors: data.map(d => d.color),
+    };
+  }, [data]);
+
+  const formattedTotal = useMemo(() => {
+    if (totalValue >= 1000000) return `$${(totalValue / 1000000).toFixed(2)}M`;
+    if (totalValue >= 1000) return `$${(totalValue / 1000).toFixed(1)}K`;
+    return `$${totalValue.toFixed(0)}`;
+  }, [totalValue]);
 
   const chartOptions: ApexCharts.ApexOptions = {
     chart: {
@@ -47,7 +66,7 @@ export function AssetAllocation() {
               fontWeight: 700,
               color: isDark ? '#ffffff' : '#0f172a',
               offsetY: 4,
-              formatter: () => '$2.45M',
+              formatter: () => formattedTotal,
             },
             total: {
               show: true,
@@ -55,7 +74,7 @@ export function AssetAllocation() {
               fontSize: '10px',
               fontFamily: 'Inter',
               color: isDark ? 'rgba(255, 255, 255, 0.4)' : '#64748b',
-              formatter: () => '$2.45M',
+              formatter: () => formattedTotal,
             },
           },
         },
@@ -70,6 +89,8 @@ export function AssetAllocation() {
     },
   };
 
+  const hasData = allocationData.series.length > 0 && !isLoading;
+
   return (
     <ThemedCard className="h-[480px] flex flex-col">
       <span className={cn('text-[11px] font-semibold uppercase tracking-wider relative z-10 flex-shrink-0', label)}>
@@ -78,19 +99,30 @@ export function AssetAllocation() {
 
       {/* Chart */}
       <div className="flex-1 mt-2 relative z-10 min-h-0">
-        <Chart
-          options={chartOptions}
-          series={allocationData.series}
-          type="donut"
-          height="100%"
-        />
+        {hasData ? (
+          <Chart
+            options={chartOptions}
+            series={allocationData.series}
+            type="donut"
+            height="100%"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <div className={cn(
+              'text-[11px]',
+              isDark ? 'text-white/30' : 'text-slate-400'
+            )}>
+              {isLoading ? 'Loading allocation data...' : 'No allocation data'}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Custom Legend */}
       <div className="mt-3 space-y-1.5 relative z-10 flex-shrink-0">
-        {allocationData.labels.map((label, index) => (
+        {allocationData.labels.map((labelText, index) => (
           <div
-            key={label}
+            key={labelText}
             className="flex items-center justify-between p-2 rounded-lg transition-all"
             style={{
               background: isDark
@@ -113,7 +145,7 @@ export function AssetAllocation() {
                 'text-[11px] font-medium',
                 isDark ? 'text-white/80' : 'text-slate-700'
               )}>
-                {label}
+                {labelText}
               </span>
             </div>
             <span

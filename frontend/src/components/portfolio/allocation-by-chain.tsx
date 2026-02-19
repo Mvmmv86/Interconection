@@ -1,31 +1,44 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-interface ChainData {
-  chain: string;
-  value: number;
-  percentage: number;
-  color: string;
-  logo: string;
+export interface AllocationByChainProps {
+  data: Array<{ label: string; value: number; amount: number; color: string }>;
+  totalValue: number;
+  isLoading?: boolean;
 }
 
-const chainData: ChainData[] = [
-  { chain: 'Ethereum', value: 1200000, percentage: 49, color: '#627eea', logo: 'ETH' },
-  { chain: 'Bitcoin', value: 600000, percentage: 24, color: '#f7931a', logo: 'BTC' },
-  { chain: 'Solana', value: 300000, percentage: 12, color: '#00ffa3', logo: 'SOL' },
-  { chain: 'Arbitrum', value: 180000, percentage: 7, color: '#28a0f0', logo: 'ARB' },
-  { chain: 'Polygon', value: 120000, percentage: 5, color: '#8247e5', logo: 'MATIC' },
-  { chain: 'Others', value: 56789, percentage: 3, color: '#64748b', logo: '...' },
-];
-
-export function AllocationByChain() {
+export function AllocationByChain({ data, totalValue, isLoading }: AllocationByChainProps) {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
+
+  // Derive chart data from props
+  const categories = data.map(d => d.label);
+  const chartColors = data.map(d => d.color);
+  const chartValues = data.map(d => d.amount);
+
+  // Compute quick stats
+  const mainChain = data.length > 0 ? data[0].label : '--';
+  const l2Chains = ['Arbitrum', 'Optimism', 'Base', 'Polygon', 'Scroll', 'Linea', 'zkSync Era'];
+  const l2Exposure = totalValue > 0
+    ? data.filter(d => l2Chains.some(l2 => d.label.toLowerCase().includes(l2.toLowerCase())))
+        .reduce((sum, d) => sum + d.value, 0)
+    : 0;
+  const networkCount = data.length;
+
+  // Determine xaxis formatter based on max value
+  const maxVal = Math.max(...chartValues, 0);
+  const xFormatter = (val: string | number) => {
+    const num = Number(val);
+    if (maxVal >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`;
+    if (maxVal >= 1_000) return `$${(num / 1_000).toFixed(0)}K`;
+    return `$${num.toFixed(0)}`;
+  };
 
   const chartOptions: ApexCharts.ApexOptions = {
     chart: {
@@ -33,7 +46,7 @@ export function AllocationByChain() {
       background: 'transparent',
       toolbar: { show: false },
     },
-    colors: chainData.map((c) => c.color),
+    colors: chartColors,
     plotOptions: {
       bar: {
         horizontal: true,
@@ -44,14 +57,14 @@ export function AllocationByChain() {
     },
     dataLabels: { enabled: false },
     xaxis: {
-      categories: chainData.map((c) => c.chain),
+      categories,
       labels: {
         style: {
           colors: isDark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.4)',
           fontSize: '10px',
           fontFamily: 'Inter'
         },
-        formatter: (val) => `$${(Number(val) / 1000000).toFixed(1)}M`,
+        formatter: xFormatter,
       },
       axisBorder: { show: false },
       axisTicks: { show: false },
@@ -78,7 +91,44 @@ export function AllocationByChain() {
     },
   };
 
-  const chartSeries = [{ name: 'Value', data: chainData.map((c) => c.value) }];
+  const chartSeries = [{ name: 'Value', data: chartValues }];
+
+  if (isLoading) {
+    return (
+      <div
+        className="backdrop-blur-sm rounded-xl p-4 relative overflow-hidden flex items-center justify-center h-[300px]"
+        style={{
+          background: isDark
+            ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+            : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+          border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+        }}
+      >
+        <Loader2 className="w-6 h-6 animate-spin text-white/20" />
+      </div>
+    );
+  }
+
+  if (data.length === 0) {
+    return (
+      <div
+        className="backdrop-blur-sm rounded-xl p-4 relative overflow-hidden flex flex-col items-center justify-center h-[300px]"
+        style={{
+          background: isDark
+            ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+            : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+          border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(203, 213, 225, 0.6)',
+        }}
+      >
+        <p className={cn('text-xs', isDark ? 'text-white/30' : 'text-gray-400')}>
+          No chain data available
+        </p>
+        <p className={cn('text-[10px] mt-1', isDark ? 'text-white/20' : 'text-gray-300')}>
+          Connect a wallet or exchange to see chain allocation
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -119,7 +169,7 @@ export function AllocationByChain() {
         <span className={cn(
           'text-[10px]',
           isDark ? 'text-white/30' : 'text-gray-500'
-        )}>6 networks</span>
+        )}>{networkCount} network{networkCount !== 1 ? 's' : ''}</span>
       </div>
 
       <div className="h-[180px]">
@@ -133,15 +183,15 @@ export function AllocationByChain() {
       )}>
         <div className="text-center">
           <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>Main Chain</p>
-          <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>Ethereum</p>
+          <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{mainChain}</p>
         </div>
         <div className="text-center">
           <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>L2 Exposure</p>
-          <p className="text-[11px] font-medium text-accent-blue">12%</p>
+          <p className="text-[11px] font-medium text-accent-blue">{l2Exposure.toFixed(1)}%</p>
         </div>
         <div className="text-center">
           <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>Networks</p>
-          <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>6</p>
+          <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{networkCount}</p>
         </div>
       </div>
     </div>

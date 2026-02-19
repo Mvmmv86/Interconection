@@ -1,30 +1,19 @@
 'use client';
 
-import { Building2, Wallet, Layers, Coins, ExternalLink } from 'lucide-react';
+import { Building2, Wallet, Layers, Coins, ExternalLink, Loader2, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
+import { useAllPositions } from '@/hooks/useAllPositions';
 import Link from 'next/link';
 
-interface LocationGroup {
-  id: string;
-  name: string;
-  type: 'exchange' | 'defi' | 'wallet' | 'staking';
-  value: number;
-  positions: number;
-  change24h: number;
-  topAssets: string[];
+function formatCurrency(value: number): string {
+  if (value >= 1000000) {
+    return `$${(value / 1000000).toFixed(2)}M`;
+  } else if (value >= 1000) {
+    return `$${(value / 1000).toFixed(0)}K`;
+  }
+  return `$${value.toFixed(2)}`;
 }
-
-const locationGroups: LocationGroup[] = [
-  { id: '1', name: 'Binance', type: 'exchange', value: 456000, positions: 12, change24h: 2.3, topAssets: ['BTC', 'ETH', 'UNI'] },
-  { id: '2', name: 'Aave V3', type: 'defi', value: 350000, positions: 5, change24h: 3.8, topAssets: ['ETH', 'USDC', 'WBTC'] },
-  { id: '3', name: 'Coinbase', type: 'exchange', value: 234000, positions: 8, change24h: 1.8, topAssets: ['SOL', 'ETH', 'BTC'] },
-  { id: '4', name: 'Lido', type: 'staking', value: 200000, positions: 2, change24h: 4.2, topAssets: ['stETH'] },
-  { id: '5', name: 'Ledger Nano', type: 'wallet', value: 180000, positions: 6, change24h: 2.1, topAssets: ['BTC', 'ETH', 'MATIC'] },
-  { id: '6', name: 'Uniswap V3', type: 'defi', value: 176000, positions: 4, change24h: 5.2, topAssets: ['ARB/ETH', 'USDC/ETH'] },
-  { id: '7', name: 'Kraken', type: 'exchange', value: 140000, positions: 5, change24h: -0.5, topAssets: ['LINK', 'DOT', 'XRP'] },
-  { id: '8', name: 'Eigenlayer', type: 'staking', value: 80000, positions: 1, change24h: 6.8, topAssets: ['ETH'] },
-];
 
 const typeConfig = {
   exchange: { icon: Building2, color: 'text-accent-blue', bg: 'bg-accent-blue/10', link: '/positions/exchanges' },
@@ -36,112 +25,409 @@ const typeConfig = {
 export function PositionsByLocation() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
-  const groupedByType = locationGroups.reduce((acc, loc) => {
-    if (!acc[loc.type]) acc[loc.type] = [];
-    acc[loc.type].push(loc);
-    return acc;
-  }, {} as Record<string, LocationGroup[]>);
+  const {
+    exchanges,
+    protocols,
+    wallets,
+    stakingPositions,
+    isLoading,
+  } = useAllPositions();
+
+  const cardStyle = {
+    background: isDark
+      ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+      : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+    border: isDark
+      ? '1px solid rgba(255, 255, 255, 0.08)'
+      : '1px solid rgba(203, 213, 225, 0.6)',
+    boxShadow: isDark
+      ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+      : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
+  };
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {[1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className="backdrop-blur-sm rounded-xl p-4"
+            style={cardStyle}
+          >
+            <div className="flex items-center justify-center h-[200px]">
+              <Loader2 className={cn('w-6 h-6 animate-spin', isDark ? 'text-white/30' : 'text-gray-400')} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Calculate totals for each section
+  const exchangesTotal = exchanges.reduce((sum, e) => sum + e.totalValue, 0);
+  const protocolsTotal = protocols.reduce((sum, p) => sum + p.totalValue, 0);
+  const walletsTotal = wallets.reduce((sum, w) => sum + w.totalValue, 0);
+  const stakingTotal = stakingPositions.reduce((sum, s) => sum + s.stakedValue, 0);
+
+  // Empty state component
+  const EmptyState = ({ message, link, linkLabel }: { message: string; link: string; linkLabel: string }) => (
+    <div className="flex flex-col items-center justify-center py-6 text-center">
+      <AlertCircle className={cn('w-8 h-8 mb-2', isDark ? 'text-white/20' : 'text-gray-300')} />
+      <p className={cn('text-[11px] mb-3', isDark ? 'text-white/40' : 'text-gray-500')}>
+        {message}
+      </p>
+      <Link
+        href={link}
+        className="text-[10px] text-accent-blue hover:underline"
+      >
+        {linkLabel} →
+      </Link>
+    </div>
+  );
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-      {(['exchange', 'defi', 'staking', 'wallet'] as const).map((type) => {
-        const config = typeConfig[type];
-        const Icon = config.icon;
-        const locations = groupedByType[type] || [];
-        const totalValue = locations.reduce((sum, l) => sum + l.value, 0);
-
-        return (
-          <div
-            key={type}
-            className="backdrop-blur-sm rounded-xl p-4"
-            style={{
-              background: isDark
-                ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
-                : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
-              border: isDark
-                ? '1px solid rgba(255, 255, 255, 0.08)'
-                : '1px solid rgba(203, 213, 225, 0.6)',
-              boxShadow: isDark
-                ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
-                : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
-            }}
-          >
-            {/* Header */}
-            <div className={cn('flex items-center justify-between pb-3 mb-3 border-b', isDark ? 'border-white/[0.06]' : 'border-gray-200')}>
-              <div className="flex items-center gap-2">
-                <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center', config.bg)}>
-                  <Icon className={cn('w-4 h-4', config.color)} />
-                </div>
-                <div>
-                  <h3 className={cn('text-[12px] font-semibold uppercase tracking-wider capitalize', isDark ? 'text-white' : 'text-gray-900')}>
-                    {type === 'defi' ? 'DeFi Protocols' : type === 'staking' ? 'Staking' : type === 'exchange' ? 'Exchanges' : 'Wallets'}
-                  </h3>
-                  <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>{locations.length} connected</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className={cn('text-[14px] font-semibold tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
-                  ${(totalValue / 1000).toFixed(0)}K
-                </p>
-              </div>
+      {/* Exchanges Card */}
+      <div className="backdrop-blur-sm rounded-xl p-4" style={cardStyle}>
+        <div className={cn('flex items-center justify-between pb-3 mb-3 border-b', isDark ? 'border-white/[0.06]' : 'border-gray-200')}>
+          <div className="flex items-center gap-2">
+            <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center', typeConfig.exchange.bg)}>
+              <Building2 className={cn('w-4 h-4', typeConfig.exchange.color)} />
             </div>
+            <div>
+              <h3 className={cn('text-[12px] font-semibold uppercase tracking-wider', isDark ? 'text-white' : 'text-gray-900')}>
+                Exchanges
+              </h3>
+              <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+                {exchanges.length} connected
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className={cn('text-[14px] font-semibold tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
+              {formatCurrency(exchangesTotal)}
+            </p>
+          </div>
+        </div>
 
-            {/* List */}
-            <div className="space-y-2">
-              {locations.slice(0, 3).map((location) => (
-                <div
-                  key={location.id}
-                  className={cn(
-                    'flex items-center justify-between p-2.5 rounded-lg transition-colors cursor-pointer',
-                    isDark ? 'bg-white/[0.02] hover:bg-white/[0.04]' : 'bg-gray-50 hover:bg-gray-100'
-                  )}
-                >
-                  <div className="flex items-center gap-2.5">
+        {exchanges.length > 0 ? (
+          <div className="space-y-2">
+            {exchanges.slice(0, 3).map((exchange) => (
+              <div
+                key={exchange.id}
+                className={cn(
+                  'flex items-center justify-between p-2.5 rounded-lg transition-colors cursor-pointer',
+                  isDark ? 'bg-white/[0.02] hover:bg-white/[0.04]' : 'bg-gray-50 hover:bg-gray-100'
+                )}
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className={cn(
+                    'w-8 h-8 rounded-lg flex items-center justify-center text-[9px] font-bold',
+                    isDark ? 'bg-white/[0.05] text-white/70' : 'bg-gray-100 text-gray-600'
+                  )}>
+                    {exchange.logo || exchange.name.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{exchange.name}</p>
+                    <div className={cn('flex items-center gap-1.5 text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+                      <span>{exchange.positionCount} positions</span>
+                      {exchange.topAssets.length > 0 && (
+                        <>
+                          <span>·</span>
+                          <span className={isDark ? 'text-white/70' : 'text-gray-700'}>
+                            {exchange.topAssets.slice(0, 3).map(a => a.symbol).join(', ')}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className={cn('text-[11px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
+                    {formatCurrency(exchange.totalValue)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            message="No exchanges connected"
+            link="/positions/exchanges"
+            linkLabel="Add exchange"
+          />
+        )}
+
+        <div className={cn('mt-3 pt-3 border-t', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
+          <Link
+            href={typeConfig.exchange.link}
+            className="flex items-center justify-center gap-1.5 text-[10px] text-accent-blue hover:underline"
+          >
+            View all exchanges
+            <ExternalLink className="w-3 h-3" />
+          </Link>
+        </div>
+      </div>
+
+      {/* DeFi Protocols Card */}
+      <div className="backdrop-blur-sm rounded-xl p-4" style={cardStyle}>
+        <div className={cn('flex items-center justify-between pb-3 mb-3 border-b', isDark ? 'border-white/[0.06]' : 'border-gray-200')}>
+          <div className="flex items-center gap-2">
+            <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center', typeConfig.defi.bg)}>
+              <Layers className={cn('w-4 h-4', typeConfig.defi.color)} />
+            </div>
+            <div>
+              <h3 className={cn('text-[12px] font-semibold uppercase tracking-wider', isDark ? 'text-white' : 'text-gray-900')}>
+                DeFi Protocols
+              </h3>
+              <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+                {protocols.length} protocol{protocols.length !== 1 ? 's' : ''}
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className={cn('text-[14px] font-semibold tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
+              {formatCurrency(protocolsTotal)}
+            </p>
+          </div>
+        </div>
+
+        {protocols.length > 0 ? (
+          <div className="space-y-2">
+            {protocols.slice(0, 3).map((protocol) => (
+              <div
+                key={protocol.id}
+                className={cn(
+                  'flex items-center justify-between p-2.5 rounded-lg transition-colors cursor-pointer',
+                  isDark ? 'bg-white/[0.02] hover:bg-white/[0.04]' : 'bg-gray-50 hover:bg-gray-100'
+                )}
+              >
+                <div className="flex items-center gap-2.5">
+                  {protocol.icon ? (
+                    <img
+                      src={protocol.icon}
+                      alt={protocol.name}
+                      className="w-8 h-8 rounded-lg"
+                    />
+                  ) : (
                     <div className={cn(
                       'w-8 h-8 rounded-lg flex items-center justify-center text-[9px] font-bold',
                       isDark ? 'bg-white/[0.05] text-white/70' : 'bg-gray-100 text-gray-600'
                     )}>
-                      {location.name.slice(0, 2).toUpperCase()}
+                      {protocol.name.slice(0, 2).toUpperCase()}
                     </div>
-                    <div>
-                      <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{location.name}</p>
-                      <div className={cn('flex items-center gap-1.5 text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>
-                        <span>{location.positions} positions</span>
-                        <span>·</span>
-                        <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{location.topAssets.join(', ')}</span>
-                      </div>
+                  )}
+                  <div>
+                    <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>{protocol.name}</p>
+                    <div className={cn('flex items-center gap-1.5 text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+                      <span>{protocol.positionCount} position{protocol.positionCount !== 1 ? 's' : ''}</span>
+                      <span>·</span>
+                      <span className={isDark ? 'text-white/70' : 'text-gray-700'}>
+                        {protocol.chains.join(', ')}
+                      </span>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <p className={cn('text-[11px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
-                      ${(location.value / 1000).toFixed(0)}K
-                    </p>
-                    <span
-                      className={cn(
-                        'text-[9px] font-medium tabular-nums',
-                        location.change24h >= 0 ? 'text-status-success' : 'text-status-error'
-                      )}
-                    >
-                      {location.change24h >= 0 ? '+' : ''}{location.change24h}%
-                    </span>
                   </div>
                 </div>
-              ))}
-            </div>
+                <div className="text-right">
+                  <p className={cn('text-[11px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
+                    {formatCurrency(protocol.totalValue)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            message="No DeFi positions"
+            link="/positions/defi"
+            linkLabel="View DeFi"
+          />
+        )}
 
-            {/* Footer */}
-            <div className={cn('mt-3 pt-3 border-t', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
-              <Link
-                href={config.link}
-                className="flex items-center justify-center gap-1.5 text-[10px] text-accent-blue hover:underline"
-              >
-                View all {type === 'defi' ? 'protocols' : type + 's'}
-                <ExternalLink className="w-3 h-3" />
-              </Link>
+        <div className={cn('mt-3 pt-3 border-t', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
+          <Link
+            href={typeConfig.defi.link}
+            className="flex items-center justify-center gap-1.5 text-[10px] text-accent-blue hover:underline"
+          >
+            View all protocols
+            <ExternalLink className="w-3 h-3" />
+          </Link>
+        </div>
+      </div>
+
+      {/* Staking Card */}
+      <div className="backdrop-blur-sm rounded-xl p-4" style={cardStyle}>
+        <div className={cn('flex items-center justify-between pb-3 mb-3 border-b', isDark ? 'border-white/[0.06]' : 'border-gray-200')}>
+          <div className="flex items-center gap-2">
+            <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center', typeConfig.staking.bg)}>
+              <Coins className={cn('w-4 h-4', typeConfig.staking.color)} />
+            </div>
+            <div>
+              <h3 className={cn('text-[12px] font-semibold uppercase tracking-wider', isDark ? 'text-white' : 'text-gray-900')}>
+                Staking
+              </h3>
+              <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+                {stakingPositions.length} position{stakingPositions.length !== 1 ? 's' : ''}
+              </p>
             </div>
           </div>
-        );
-      })}
+          <div className="text-right">
+            <p className={cn('text-[14px] font-semibold tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
+              {formatCurrency(stakingTotal)}
+            </p>
+          </div>
+        </div>
+
+        {stakingPositions.length > 0 ? (
+          <div className="space-y-2">
+            {stakingPositions.slice(0, 3).map((staking) => (
+              <div
+                key={staking.id}
+                className={cn(
+                  'flex items-center justify-between p-2.5 rounded-lg transition-colors cursor-pointer',
+                  isDark ? 'bg-white/[0.02] hover:bg-white/[0.04]' : 'bg-gray-50 hover:bg-gray-100'
+                )}
+              >
+                <div className="flex items-center gap-2.5">
+                  {staking.protocolIcon ? (
+                    <img
+                      src={staking.protocolIcon}
+                      alt={staking.protocol}
+                      className="w-8 h-8 rounded-lg"
+                    />
+                  ) : (
+                    <div className={cn(
+                      'w-8 h-8 rounded-lg flex items-center justify-center text-[9px] font-bold',
+                      isDark ? 'bg-white/[0.05] text-white/70' : 'bg-gray-100 text-gray-600'
+                    )}>
+                      {staking.symbol.slice(0, 2)}
+                    </div>
+                  )}
+                  <div>
+                    <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>
+                      {staking.symbol} on {staking.protocol}
+                    </p>
+                    <div className={cn('flex items-center gap-1.5 text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+                      <span>{staking.stakedAmount.toLocaleString()} staked</span>
+                      {staking.apy && (
+                        <>
+                          <span>·</span>
+                          <span className="text-status-success">{staking.apy.toFixed(1)}% APY</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className={cn('text-[11px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
+                    {formatCurrency(staking.stakedValue)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            message="No staking positions"
+            link="/positions/staking"
+            linkLabel="View staking"
+          />
+        )}
+
+        <div className={cn('mt-3 pt-3 border-t', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
+          <Link
+            href={typeConfig.staking.link}
+            className="flex items-center justify-center gap-1.5 text-[10px] text-accent-blue hover:underline"
+          >
+            View all staking
+            <ExternalLink className="w-3 h-3" />
+          </Link>
+        </div>
+      </div>
+
+      {/* Wallets Card */}
+      <div className="backdrop-blur-sm rounded-xl p-4" style={cardStyle}>
+        <div className={cn('flex items-center justify-between pb-3 mb-3 border-b', isDark ? 'border-white/[0.06]' : 'border-gray-200')}>
+          <div className="flex items-center gap-2">
+            <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center', typeConfig.wallet.bg)}>
+              <Wallet className={cn('w-4 h-4', typeConfig.wallet.color)} />
+            </div>
+            <div>
+              <h3 className={cn('text-[12px] font-semibold uppercase tracking-wider', isDark ? 'text-white' : 'text-gray-900')}>
+                Wallets
+              </h3>
+              <p className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+                {wallets.length} connected
+              </p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className={cn('text-[14px] font-semibold tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
+              {formatCurrency(walletsTotal)}
+            </p>
+          </div>
+        </div>
+
+        {wallets.length > 0 ? (
+          <div className="space-y-2">
+            {wallets.slice(0, 3).map((wallet) => (
+              <div
+                key={wallet.id}
+                className={cn(
+                  'flex items-center justify-between p-2.5 rounded-lg transition-colors cursor-pointer',
+                  isDark ? 'bg-white/[0.02] hover:bg-white/[0.04]' : 'bg-gray-50 hover:bg-gray-100'
+                )}
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className={cn(
+                    'w-8 h-8 rounded-lg flex items-center justify-center text-[9px] font-bold',
+                    isDark ? 'bg-white/[0.05] text-white/70' : 'bg-gray-100 text-gray-600'
+                  )}>
+                    {wallet.name?.slice(0, 2) || wallet.address.slice(2, 4).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className={cn('text-[11px] font-medium', isDark ? 'text-white' : 'text-gray-900')}>
+                      {wallet.name || `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`}
+                    </p>
+                    <div className={cn('flex items-center gap-1.5 text-[9px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+                      <span>{wallet.positionCount} position{wallet.positionCount !== 1 ? 's' : ''}</span>
+                      {wallet.topAssets.length > 0 && (
+                        <>
+                          <span>·</span>
+                          <span className={isDark ? 'text-white/70' : 'text-gray-700'}>
+                            {wallet.topAssets.slice(0, 3).map(a => a.symbol).join(', ')}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className={cn('text-[11px] font-medium tabular-nums', isDark ? 'text-white' : 'text-gray-900')}>
+                    {formatCurrency(wallet.totalValue)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            message="No wallets tracked"
+            link="/positions/wallets"
+            linkLabel="Add wallet"
+          />
+        )}
+
+        <div className={cn('mt-3 pt-3 border-t', isDark ? 'border-white/[0.03]' : 'border-gray-100')}>
+          <Link
+            href={typeConfig.wallet.link}
+            className="flex items-center justify-center gap-1.5 text-[10px] text-accent-blue hover:underline"
+          >
+            View all wallets
+            <ExternalLink className="w-3 h-3" />
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }

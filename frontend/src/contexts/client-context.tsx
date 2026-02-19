@@ -1,265 +1,170 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import {
   Client,
   ClientWallet,
   ClientExchange,
   ManualAsset,
-  DetectedStakingPosition,
   ClientPortfolio,
   ClientPortfolioSummary,
   getRandomClientColor,
 } from '@/types/client-portfolio';
+import { api, ClientListItem, ClientPortfolioData } from '@/lib/api/client';
+import { useAuth } from '@/contexts/auth-context';
 
-// Mock data for demonstration
-const MOCK_CLIENTS: Client[] = [
-  {
-    id: 'client-1',
-    name: 'Fundo Alpha',
-    email: 'alpha@fund.com',
-    notes: 'Principal cliente - foco em ETH staking',
-    createdAt: '2024-01-15T10:00:00Z',
-    updatedAt: '2024-12-01T10:00:00Z',
-    color: '#4ECDC4',
-  },
-  {
-    id: 'client-2',
-    name: 'Carteira Beta',
-    email: 'beta@invest.com',
-    notes: 'Diversificado entre SOL e ETH',
-    createdAt: '2024-03-20T10:00:00Z',
-    updatedAt: '2024-11-28T10:00:00Z',
-    color: '#FF6B6B',
-  },
-  {
-    id: 'client-3',
-    name: 'Treasury Gamma',
-    notes: 'Treasury corporativo - conservador',
-    createdAt: '2024-06-10T10:00:00Z',
-    updatedAt: '2024-11-15T10:00:00Z',
-    color: '#45B7D1',
-  },
-];
+// ========================
+// Transform API responses → frontend types
+// ========================
 
-const MOCK_WALLETS: ClientWallet[] = [
-  {
-    id: 'wallet-1',
-    clientId: 'client-1',
-    address: '0x742d35Cc6634C0532925a3b844Bc9e7595f2bD28',
-    network: 'evm',
-    chain: 'ethereum',
-    label: 'Main ETH Wallet',
-    isActive: true,
-    addedAt: '2024-01-15T10:00:00Z',
-  },
-  {
-    id: 'wallet-2',
-    clientId: 'client-1',
-    address: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU',
-    network: 'solana',
-    label: 'SOL Holdings',
-    isActive: true,
-    addedAt: '2024-02-20T10:00:00Z',
-  },
-  {
-    id: 'wallet-3',
-    clientId: 'client-2',
-    address: 'DYw8jCTfwHNRJhhmFcbXvVDTqWMEVFBX6ZKUmG5CNSKK',
-    network: 'solana',
-    label: 'Staking Wallet',
-    isActive: true,
-    addedAt: '2024-03-20T10:00:00Z',
-  },
-];
+function transformClientListItem(item: ClientListItem): Client {
+  return {
+    id: item.id,
+    name: item.name,
+    email: item.email || undefined,
+    color: item.color,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
 
-const MOCK_EXCHANGES: ClientExchange[] = [
-  {
-    id: 'exchange-1',
-    clientId: 'client-1',
-    exchange: 'binance',
-    label: 'Binance Principal',
-    apiKeyMasked: '****7a2f',
-    isActive: true,
-    addedAt: '2024-01-15T10:00:00Z',
-    lastSync: '2024-12-01T08:00:00Z',
-  },
-  {
-    id: 'exchange-2',
-    clientId: 'client-3',
-    exchange: 'coinbase',
-    label: 'Coinbase Treasury',
-    apiKeyMasked: '****9b3c',
-    isActive: true,
-    addedAt: '2024-06-10T10:00:00Z',
-    lastSync: '2024-11-30T12:00:00Z',
-  },
-];
+function transformClientListItemToSummary(item: ClientListItem): ClientPortfolioSummary {
+  return {
+    clientId: item.id,
+    totalValueUsd: Number(item.total_value_usd),
+    totalStakedUsd: 0,
+    totalHoldingUsd: Number(item.total_value_usd),
+    totalLpUsd: 0,
+    totalPnlUsd: 0,
+    totalPnlPercent: Number(item.pnl_24h_percent),
+    pendingRewardsUsd: Number(item.pending_rewards_usd),
+    averageApy: Number(item.average_apy),
+    assetCount: item.position_count,
+    walletCount: item.wallet_count,
+    exchangeCount: item.exchange_count,
+  };
+}
 
-const MOCK_MANUAL_ASSETS: ManualAsset[] = [
-  {
-    id: 'asset-1',
-    clientId: 'client-1',
-    token: 'ETH',
-    tokenName: 'Ethereum',
-    network: 'evm',
-    quantity: 45.5,
-    purchasePrice: 2800,
-    purchaseDate: '2024-01-20T10:00:00Z',
-    currentPrice: 3500,
-    type: 'staking',
-    stakingProvider: 'Lido',
-    apy: 4.2,
-    addedAt: '2024-01-20T10:00:00Z',
-    updatedAt: '2024-12-01T10:00:00Z',
-  },
-  {
-    id: 'asset-2',
-    clientId: 'client-1',
-    token: 'SOL',
-    tokenName: 'Solana',
-    network: 'solana',
-    quantity: 850,
-    purchasePrice: 95,
-    purchaseDate: '2024-02-15T10:00:00Z',
-    currentPrice: 150,
-    type: 'staking',
-    stakingProvider: 'Marinade',
-    apy: 7.8,
-    addedAt: '2024-02-15T10:00:00Z',
-    updatedAt: '2024-12-01T10:00:00Z',
-  },
-  {
-    id: 'asset-3',
-    clientId: 'client-2',
-    token: 'SOL',
-    tokenName: 'Solana',
-    network: 'solana',
-    quantity: 1200,
-    purchasePrice: 120,
-    purchaseDate: '2024-03-25T10:00:00Z',
-    currentPrice: 150,
-    type: 'staking',
-    stakingProvider: 'Jito',
-    apy: 8.5,
-    addedAt: '2024-03-25T10:00:00Z',
-    updatedAt: '2024-12-01T10:00:00Z',
-  },
-  {
-    id: 'asset-4',
-    clientId: 'client-2',
-    token: 'ETH',
-    tokenName: 'Ethereum',
-    network: 'evm',
-    quantity: 25,
-    purchasePrice: 3200,
-    purchaseDate: '2024-04-10T10:00:00Z',
-    currentPrice: 3500,
-    type: 'holding',
-    addedAt: '2024-04-10T10:00:00Z',
-    updatedAt: '2024-12-01T10:00:00Z',
-  },
-  {
-    id: 'asset-5',
-    clientId: 'client-3',
-    token: 'ATOM',
-    tokenName: 'Cosmos',
-    network: 'other',
-    quantity: 5000,
-    purchasePrice: 8,
-    purchaseDate: '2024-06-15T10:00:00Z',
-    currentPrice: 9,
-    type: 'staking',
-    stakingProvider: 'Stride',
-    apy: 18.5,
-    addedAt: '2024-06-15T10:00:00Z',
-    updatedAt: '2024-12-01T10:00:00Z',
-  },
-  {
-    id: 'asset-6',
-    clientId: 'client-3',
-    token: 'BTC',
-    tokenName: 'Bitcoin',
-    network: 'bitcoin',
-    quantity: 2.5,
-    purchasePrice: 42000,
-    purchaseDate: '2024-07-01T10:00:00Z',
-    currentPrice: 98000,
-    type: 'holding',
-    addedAt: '2024-07-01T10:00:00Z',
-    updatedAt: '2024-12-01T10:00:00Z',
-  },
-];
+function transformPortfolio(data: ClientPortfolioData): ClientPortfolio {
+  const client: Client = {
+    id: data.client.id,
+    name: data.client.name,
+    email: data.client.email || undefined,
+    notes: data.client.notes || undefined,
+    color: data.client.color,
+    createdAt: data.client.created_at,
+    updatedAt: data.client.updated_at,
+  };
 
-const MOCK_DETECTED_POSITIONS: DetectedStakingPosition[] = [
-  {
-    id: 'detected-1',
-    clientId: 'client-1',
-    walletId: 'wallet-1',
-    protocol: 'Lido',
-    token: 'ETH',
-    stakedToken: 'stETH',
-    amount: 45.5,
-    valueUsd: 159250,
-    apy: 4.2,
-    rewards: {
-      pending: 1.92,
-      pendingUsd: 6720,
-      claimed: 3.5,
-    },
-    type: 'liquid',
-    autoCompound: true,
-    detectedAt: '2024-01-20T10:00:00Z',
-    lastUpdated: '2024-12-01T10:00:00Z',
-  },
-  {
-    id: 'detected-2',
-    clientId: 'client-1',
-    walletId: 'wallet-2',
-    protocol: 'Marinade',
-    token: 'SOL',
-    stakedToken: 'mSOL',
-    amount: 850,
-    valueUsd: 127500,
-    apy: 7.8,
-    rewards: {
-      pending: 66.3,
-      pendingUsd: 9945,
-      claimed: 45,
-    },
-    type: 'liquid',
-    autoCompound: true,
-    detectedAt: '2024-02-20T10:00:00Z',
-    lastUpdated: '2024-12-01T10:00:00Z',
-  },
-  {
-    id: 'detected-3',
-    clientId: 'client-2',
-    walletId: 'wallet-3',
-    protocol: 'Jito',
-    token: 'SOL',
-    stakedToken: 'JitoSOL',
-    amount: 1200,
-    valueUsd: 180000,
-    apy: 8.5,
-    rewards: {
-      pending: 102,
-      pendingUsd: 15300,
-      claimed: 80,
-    },
-    type: 'liquid',
-    autoCompound: true,
-    detectedAt: '2024-03-25T10:00:00Z',
-    lastUpdated: '2024-12-01T10:00:00Z',
-  },
-];
+  const wallets: ClientWallet[] = data.wallets.map((w) => ({
+    id: w.id,
+    clientId: w.client_id,
+    address: w.address,
+    network: w.network as 'evm' | 'solana',
+    chain: w.chain,
+    label: w.label,
+    isActive: w.is_active,
+    addedAt: w.added_at,
+    totalValueUsd: Number(w.total_value_usd),
+    tokenCount: w.token_count,
+    tokens: w.tokens.map((t) => ({
+      symbol: t.symbol,
+      name: t.name,
+      contractAddress: t.contract_address,
+      balance: Number(t.balance),
+      balanceUsd: Number(t.balance_usd),
+      priceUsd: Number(t.price_usd),
+      priceChange24h: Number(t.price_change_24h),
+      logoUrl: t.logo_url,
+    })),
+  }));
+
+  const exchanges: ClientExchange[] = data.exchanges.map((e) => ({
+    id: e.id,
+    clientId: e.client_id,
+    exchange: e.exchange,
+    label: e.label,
+    apiKeyMasked: e.api_key_masked,
+    isActive: e.is_active,
+    addedAt: e.added_at,
+    lastSync: e.last_sync_at || undefined,
+    syncError: e.sync_error || undefined,
+    totalValueUsd: Number(e.total_value_usd),
+    assetCount: e.asset_count,
+    balances: e.balances.map((b) => ({
+      asset: b.asset,
+      free: Number(b.free),
+      locked: Number(b.locked),
+      total: Number(b.total),
+      valueUsd: Number(b.value_usd),
+      priceUsd: Number(b.price_usd),
+      change24h: Number(b.change_24h),
+      entryPrice: b.entry_price ? Number(b.entry_price) : null,
+      costBasis: b.cost_basis ? Number(b.cost_basis) : null,
+      unrealizedPnl: Number(b.unrealized_pnl || 0),
+      unrealizedPnlPercent: Number(b.unrealized_pnl_percent || 0),
+      apy: b.apy ? Number(b.apy) : null,
+      positionType: b.position_type || 'spot',
+    })),
+  }));
+
+  const manualAssets: ManualAsset[] = data.manual_assets.map((a) => ({
+    id: a.id,
+    clientId: a.client_id,
+    token: a.token,
+    tokenName: a.token_name,
+    network: a.network as 'evm' | 'solana' | 'bitcoin' | 'other',
+    quantity: Number(a.quantity),
+    purchasePrice: Number(a.purchase_price),
+    purchaseDate: a.purchase_date,
+    currentPrice: a.current_price ? Number(a.current_price) : undefined,
+    type: a.type as 'holding' | 'staking' | 'lending' | 'lp',
+    stakingProvider: a.staking_provider || undefined,
+    apy: a.apy ? Number(a.apy) : undefined,
+    notes: a.notes || undefined,
+    addedAt: a.created_at,
+    updatedAt: a.updated_at,
+  }));
+
+  const s = data.summary;
+  const summary: ClientPortfolioSummary = {
+    clientId: data.client.id,
+    totalValueUsd: Number(s.total_value_usd),
+    totalStakedUsd: Number(s.total_staking_usd),
+    totalHoldingUsd: Number(s.total_holding_usd),
+    totalLpUsd: Number(s.total_lp_usd),
+    totalPnlUsd: Number(s.total_pnl_usd),
+    totalPnlPercent: Number(s.total_pnl_percent),
+    pendingRewardsUsd: Number(s.pending_rewards_usd),
+    averageApy: Number(s.average_apy),
+    assetCount: s.asset_count,
+    walletCount: s.wallet_count,
+    exchangeCount: s.exchange_count,
+  };
+
+  return {
+    client,
+    wallets,
+    exchanges,
+    manualAssets,
+    detectedPositions: [],
+    summary,
+  };
+}
+
+// ========================
+// Context
+// ========================
 
 interface ClientContextType {
   // Data
   clients: Client[];
+  clientSummaries: ClientPortfolioSummary[];
   selectedClientId: string | null;
   selectedClient: ClientPortfolio | null;
   isLoading: boolean;
+  isLoadingPortfolio: boolean;
+  error: string | null;
 
   // Actions
   selectClient: (clientId: string | null) => void;
@@ -270,10 +175,12 @@ interface ClientContextType {
   // Wallet actions
   addWallet: (clientId: string, wallet: Omit<ClientWallet, 'id' | 'clientId' | 'addedAt'>) => Promise<void>;
   removeWallet: (walletId: string) => Promise<void>;
+  scanWallet: (clientId: string, walletId: string) => Promise<void>;
 
   // Exchange actions
-  addExchange: (clientId: string, exchange: Omit<ClientExchange, 'id' | 'clientId' | 'addedAt'>) => Promise<void>;
+  addExchange: (clientId: string, exchange: { exchange: string; label: string; apiKey: string; apiSecret: string }) => Promise<void>;
   removeExchange: (exchangeId: string) => Promise<void>;
+  syncExchange: (clientId: string, exchangeId: string) => Promise<void>;
 
   // Asset actions
   addManualAsset: (clientId: string, asset: Omit<ManualAsset, 'id' | 'clientId' | 'addedAt' | 'updatedAt'>) => Promise<void>;
@@ -285,246 +192,397 @@ interface ClientContextType {
   getAllPortfoliosSummary: () => ClientPortfolioSummary[];
 
   // Refresh
+  refreshClients: () => Promise<void>;
   refreshClientData: (clientId: string) => Promise<void>;
 }
 
 const ClientContext = createContext<ClientContextType | undefined>(undefined);
 
-function calculateSummary(
-  clientId: string,
-  assets: ManualAsset[],
-  positions: DetectedStakingPosition[],
-  wallets: ClientWallet[],
-  exchanges: ClientExchange[]
-): ClientPortfolioSummary {
-  const clientAssets = assets.filter(a => a.clientId === clientId);
-  const clientPositions = positions.filter(p => p.clientId === clientId);
-  const clientWallets = wallets.filter(w => w.clientId === clientId);
-  const clientExchanges = exchanges.filter(e => e.clientId === clientId);
-
-  let totalStakedUsd = 0;
-  let totalHoldingUsd = 0;
-  let totalLpUsd = 0;
-  let totalPnlUsd = 0;
-  let totalCost = 0;
-  let pendingRewardsUsd = 0;
-  let weightedApy = 0;
-  let totalWeightedValue = 0;
-
-  // Calculate from manual assets
-  clientAssets.forEach(asset => {
-    const currentValue = asset.quantity * (asset.currentPrice || asset.purchasePrice);
-    const costBasis = asset.quantity * asset.purchasePrice;
-
-    totalCost += costBasis;
-    totalPnlUsd += currentValue - costBasis;
-
-    if (asset.type === 'staking') {
-      totalStakedUsd += currentValue;
-      if (asset.apy) {
-        weightedApy += asset.apy * currentValue;
-        totalWeightedValue += currentValue;
-      }
-    } else if (asset.type === 'lp') {
-      totalLpUsd += currentValue;
-    } else {
-      totalHoldingUsd += currentValue;
-    }
-  });
-
-  // Calculate from detected positions
-  clientPositions.forEach(pos => {
-    totalStakedUsd += pos.valueUsd;
-    pendingRewardsUsd += pos.rewards.pendingUsd;
-    weightedApy += pos.apy * pos.valueUsd;
-    totalWeightedValue += pos.valueUsd;
-  });
-
-  const totalValueUsd = totalStakedUsd + totalHoldingUsd + totalLpUsd;
-  const averageApy = totalWeightedValue > 0 ? weightedApy / totalWeightedValue : 0;
-  const totalPnlPercent = totalCost > 0 ? (totalPnlUsd / totalCost) * 100 : 0;
-
-  return {
-    clientId,
-    totalValueUsd,
-    totalStakedUsd,
-    totalHoldingUsd,
-    totalLpUsd,
-    totalPnlUsd,
-    totalPnlPercent,
-    pendingRewardsUsd,
-    averageApy,
-    assetCount: clientAssets.length + clientPositions.length,
-    walletCount: clientWallets.length,
-    exchangeCount: clientExchanges.length,
-  };
-}
-
 export function ClientProvider({ children }: { children: ReactNode }) {
-  const [clients, setClients] = useState<Client[]>(MOCK_CLIENTS);
-  const [wallets, setWallets] = useState<ClientWallet[]>(MOCK_WALLETS);
-  const [exchanges, setExchanges] = useState<ClientExchange[]>(MOCK_EXCHANGES);
-  const [manualAssets, setManualAssets] = useState<ManualAsset[]>(MOCK_MANUAL_ASSETS);
-  const [detectedPositions, setDetectedPositions] = useState<DetectedStakingPosition[]>(MOCK_DETECTED_POSITIONS);
+  const { isAuthenticated: isAuthed, isLoading: isAuthLoading } = useAuth();
+  const [clients, setClients] = useState<Client[]>([]);
+  const [clientSummaries, setClientSummaries] = useState<ClientPortfolioSummary[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [selectedClientPortfolio, setSelectedClientPortfolio] = useState<ClientPortfolio | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingPortfolio, setIsLoadingPortfolio] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch clients list from API
+  const fetchClients = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+
+    const result = await api.getClients();
+    if (result.success && result.data) {
+      setClients(result.data.map(transformClientListItem));
+      setClientSummaries(result.data.map(transformClientListItemToSummary));
+    } else {
+      setError(result.error || 'Failed to fetch clients');
+    }
+
+    setIsLoading(false);
+  }, []);
+
+  // Fetch portfolio for selected client
+  const fetchPortfolio = useCallback(async (clientId: string) => {
+    setIsLoadingPortfolio(true);
+    setError(null);
+
+    const result = await api.getClientPortfolio(clientId);
+    if (result.success && result.data) {
+      setSelectedClientPortfolio(transformPortfolio(result.data));
+    } else {
+      console.error('Failed to fetch portfolio:', result.error);
+      setError(result.error || 'Failed to fetch portfolio');
+      setSelectedClientPortfolio(null);
+    }
+
+    setIsLoadingPortfolio(false);
+  }, []);
+
+  // Auto-fetch clients when auth is verified
+  useEffect(() => {
+    // Wait for auth verification to complete
+    if (isAuthLoading) {
+      return;
+    }
+
+    if (isAuthed && api.isAuthenticated()) {
+      fetchClients();
+    } else {
+      setIsLoading(false);
+      setClients([]);
+      setClientSummaries([]);
+    }
+  }, [isAuthed, isAuthLoading, fetchClients]);
+
+  // Auto-fetch portfolio when client is selected (only when authenticated)
+  useEffect(() => {
+    // Wait for auth verification to complete
+    if (isAuthLoading) {
+      return;
+    }
+
+    if (selectedClientId && isAuthed) {
+      fetchPortfolio(selectedClientId);
+    } else {
+      setSelectedClientPortfolio(null);
+    }
+  }, [selectedClientId, isAuthed, isAuthLoading, fetchPortfolio]);
 
   const selectClient = useCallback((clientId: string | null) => {
     setSelectedClientId(clientId);
   }, []);
 
   const getClientPortfolio = useCallback((clientId: string): ClientPortfolio | null => {
-    const client = clients.find(c => c.id === clientId);
-    if (!client) return null;
+    if (selectedClientPortfolio && selectedClientPortfolio.client.id === clientId) {
+      return selectedClientPortfolio;
+    }
+    return null;
+  }, [selectedClientPortfolio]);
 
-    return {
-      client,
-      wallets: wallets.filter(w => w.clientId === clientId),
-      exchanges: exchanges.filter(e => e.clientId === clientId),
-      manualAssets: manualAssets.filter(a => a.clientId === clientId),
-      detectedPositions: detectedPositions.filter(p => p.clientId === clientId),
-      summary: calculateSummary(clientId, manualAssets, detectedPositions, wallets, exchanges),
-    };
-  }, [clients, wallets, exchanges, manualAssets, detectedPositions]);
+  const getAllPortfoliosSummary = useCallback((): ClientPortfolioSummary[] => {
+    return clientSummaries;
+  }, [clientSummaries]);
 
-  const selectedClient = selectedClientId ? getClientPortfolio(selectedClientId) : null;
+  // ========================
+  // CRUD Actions
+  // ========================
 
   const createClient = useCallback(async (data: Omit<Client, 'id' | 'createdAt' | 'updatedAt' | 'color'>): Promise<Client> => {
-    await new Promise(r => setTimeout(r, 500)); // Simulate API call
+    const color = getRandomClientColor();
+    const result = await api.createClient(data.name, data.email, data.notes, color);
 
-    const newClient: Client = {
-      ...data,
-      id: `client-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      color: getRandomClientColor(),
+    if (!result.success || !result.data) {
+      throw new Error(result.error || 'Failed to create client');
+    }
+
+    await fetchClients();
+
+    return {
+      id: result.data.id,
+      name: result.data.name,
+      email: result.data.email || undefined,
+      color: result.data.color || color,
+      createdAt: result.data.created_at,
+      updatedAt: result.data.created_at,
     };
-
-    setClients(prev => [...prev, newClient]);
-    return newClient;
-  }, []);
+  }, [fetchClients]);
 
   const updateClient = useCallback(async (clientId: string, data: Partial<Client>): Promise<void> => {
-    await new Promise(r => setTimeout(r, 500));
+    const result = await api.updateClient(clientId, {
+      name: data.name,
+      email: data.email,
+      notes: data.notes,
+      color: data.color,
+    });
 
-    setClients(prev => prev.map(c =>
-      c.id === clientId
-        ? { ...c, ...data, updatedAt: new Date().toISOString() }
-        : c
-    ));
-  }, []);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to update client');
+    }
+
+    await fetchClients();
+  }, [fetchClients]);
 
   const deleteClient = useCallback(async (clientId: string): Promise<void> => {
-    await new Promise(r => setTimeout(r, 500));
+    const result = await api.deleteClient(clientId);
 
-    setClients(prev => prev.filter(c => c.id !== clientId));
-    setWallets(prev => prev.filter(w => w.clientId !== clientId));
-    setExchanges(prev => prev.filter(e => e.clientId !== clientId));
-    setManualAssets(prev => prev.filter(a => a.clientId !== clientId));
-    setDetectedPositions(prev => prev.filter(p => p.clientId !== clientId));
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete client');
+    }
 
     if (selectedClientId === clientId) {
       setSelectedClientId(null);
+      setSelectedClientPortfolio(null);
     }
-  }, [selectedClientId]);
+
+    await fetchClients();
+  }, [selectedClientId, fetchClients]);
+
+  // ========================
+  // Wallet Actions
+  // ========================
 
   const addWallet = useCallback(async (clientId: string, wallet: Omit<ClientWallet, 'id' | 'clientId' | 'addedAt'>): Promise<void> => {
-    await new Promise(r => setTimeout(r, 500));
-
-    const newWallet: ClientWallet = {
-      ...wallet,
-      id: `wallet-${Date.now()}`,
+    const result = await api.createWallet(
       clientId,
-      addedAt: new Date().toISOString(),
-    };
+      wallet.address,
+      wallet.chain || 'ethereum',
+      wallet.label,
+      wallet.network,
+    );
 
-    setWallets(prev => [...prev, newWallet]);
-  }, []);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to add wallet');
+    }
+
+    // Auto-scan the new wallet
+    if (result.data) {
+      try {
+        await api.scanWallet(clientId, result.data.id);
+      } catch {
+        // Don't fail wallet creation if scan fails
+      }
+    }
+
+    if (selectedClientId === clientId) {
+      await fetchPortfolio(clientId);
+    }
+    await fetchClients();
+  }, [selectedClientId, fetchPortfolio, fetchClients]);
 
   const removeWallet = useCallback(async (walletId: string): Promise<void> => {
-    await new Promise(r => setTimeout(r, 500));
-    setWallets(prev => prev.filter(w => w.id !== walletId));
-  }, []);
+    if (!selectedClientId) return;
 
-  const addExchange = useCallback(async (clientId: string, exchange: Omit<ClientExchange, 'id' | 'clientId' | 'addedAt'>): Promise<void> => {
-    await new Promise(r => setTimeout(r, 500));
+    const result = await api.deleteWallet(selectedClientId, walletId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete wallet');
+    }
 
-    const newExchange: ClientExchange = {
-      ...exchange,
-      id: `exchange-${Date.now()}`,
-      clientId,
-      addedAt: new Date().toISOString(),
-    };
+    await fetchPortfolio(selectedClientId);
+    await fetchClients();
+  }, [selectedClientId, fetchPortfolio, fetchClients]);
 
-    setExchanges(prev => [...prev, newExchange]);
-  }, []);
+  const scanWalletAction = useCallback(async (clientId: string, walletId: string): Promise<void> => {
+    await api.scanWallet(clientId, walletId);
+
+    if (selectedClientId === clientId) {
+      await fetchPortfolio(clientId);
+    }
+    await fetchClients();
+  }, [selectedClientId, fetchPortfolio, fetchClients]);
+
+  // ========================
+  // Exchange Actions
+  // ========================
+
+  const addExchange = useCallback(async (
+    clientId: string,
+    exchange: { exchange: string; label: string; apiKey: string; apiSecret: string }
+  ): Promise<void> => {
+    const result = await api.createClientExchange(clientId, {
+      exchange: exchange.exchange,
+      label: exchange.label,
+      api_key: exchange.apiKey,
+      api_secret: exchange.apiSecret,
+    });
+
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to add exchange');
+    }
+
+    if (selectedClientId === clientId) {
+      await fetchPortfolio(clientId);
+    }
+    await fetchClients();
+  }, [selectedClientId, fetchPortfolio, fetchClients]);
 
   const removeExchange = useCallback(async (exchangeId: string): Promise<void> => {
-    await new Promise(r => setTimeout(r, 500));
-    setExchanges(prev => prev.filter(e => e.id !== exchangeId));
-  }, []);
+    if (!selectedClientId) return;
+
+    const result = await api.deleteClientExchange(selectedClientId, exchangeId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete exchange');
+    }
+
+    await fetchPortfolio(selectedClientId);
+    await fetchClients();
+  }, [selectedClientId, fetchPortfolio, fetchClients]);
+
+  const syncExchange = useCallback(async (clientId: string, exchangeId: string): Promise<void> => {
+    await api.syncClientExchange(clientId, exchangeId);
+
+    if (selectedClientId === clientId) {
+      await fetchPortfolio(clientId);
+    }
+    await fetchClients();
+  }, [selectedClientId, fetchPortfolio, fetchClients]);
+
+  // ========================
+  // Manual Asset Actions
+  // ========================
 
   const addManualAsset = useCallback(async (clientId: string, asset: Omit<ManualAsset, 'id' | 'clientId' | 'addedAt' | 'updatedAt'>): Promise<void> => {
-    await new Promise(r => setTimeout(r, 500));
+    const result = await api.createManualAsset(clientId, {
+      token: asset.token,
+      token_name: asset.tokenName,
+      network: asset.network,
+      quantity: asset.quantity,
+      purchase_price: asset.purchasePrice,
+      purchase_date: asset.purchaseDate,
+      current_price: asset.currentPrice,
+      type: asset.type,
+      staking_provider: asset.stakingProvider,
+      apy: asset.apy,
+      notes: asset.notes,
+    });
 
-    const newAsset: ManualAsset = {
-      ...asset,
-      id: `asset-${Date.now()}`,
-      clientId,
-      addedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to add manual asset');
+    }
 
-    setManualAssets(prev => [...prev, newAsset]);
-  }, []);
+    if (selectedClientId === clientId) {
+      await fetchPortfolio(clientId);
+    }
+    await fetchClients();
+  }, [selectedClientId, fetchPortfolio, fetchClients]);
 
   const updateManualAsset = useCallback(async (assetId: string, data: Partial<ManualAsset>): Promise<void> => {
-    await new Promise(r => setTimeout(r, 500));
+    if (!selectedClientId) return;
 
-    setManualAssets(prev => prev.map(a =>
-      a.id === assetId
-        ? { ...a, ...data, updatedAt: new Date().toISOString() }
-        : a
-    ));
-  }, []);
+    const result = await api.updateManualAsset(selectedClientId, assetId, {
+      token: data.token,
+      token_name: data.tokenName,
+      network: data.network,
+      quantity: data.quantity,
+      purchase_price: data.purchasePrice,
+      purchase_date: data.purchaseDate,
+      current_price: data.currentPrice,
+      type: data.type,
+      staking_provider: data.stakingProvider,
+      apy: data.apy,
+      notes: data.notes,
+    });
+
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to update manual asset');
+    }
+
+    await fetchPortfolio(selectedClientId);
+    await fetchClients();
+  }, [selectedClientId, fetchPortfolio, fetchClients]);
 
   const removeManualAsset = useCallback(async (assetId: string): Promise<void> => {
-    await new Promise(r => setTimeout(r, 500));
-    setManualAssets(prev => prev.filter(a => a.id !== assetId));
-  }, []);
+    if (!selectedClientId) return;
 
-  const getAllPortfoliosSummary = useCallback((): ClientPortfolioSummary[] => {
-    return clients.map(client =>
-      calculateSummary(client.id, manualAssets, detectedPositions, wallets, exchanges)
-    );
-  }, [clients, manualAssets, detectedPositions, wallets, exchanges]);
+    const result = await api.deleteManualAsset(selectedClientId, assetId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete manual asset');
+    }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    await fetchPortfolio(selectedClientId);
+    await fetchClients();
+  }, [selectedClientId, fetchPortfolio, fetchClients]);
+
+  // ========================
+  // Refresh
+  // ========================
+
+  const refreshClients = useCallback(async (): Promise<void> => {
+    await fetchClients();
+  }, [fetchClients]);
+
   const refreshClientData = useCallback(async (clientId: string): Promise<void> => {
-    setIsLoading(true);
-    // Simulate fetching fresh data from wallets and exchanges
-    await new Promise(r => setTimeout(r, 2000));
-    setIsLoading(false);
-  }, []);
+    setIsLoadingPortfolio(true);
+
+    try {
+      // First, get the current portfolio to know what to sync
+      const portfolioResult = await api.getClientPortfolio(clientId);
+
+      if (portfolioResult.success && portfolioResult.data) {
+        const portfolio = portfolioResult.data;
+
+        // Sync all exchanges for this client (this recalculates PNL from trade history)
+        console.log(`Syncing ${portfolio.exchanges.length} exchanges...`);
+        for (const exchange of portfolio.exchanges) {
+          try {
+            console.log(`Syncing exchange: ${exchange.label || exchange.exchange}`);
+            const syncResult = await api.syncClientExchange(clientId, exchange.id);
+            if (syncResult.success) {
+              console.log(`Exchange synced: ${syncResult.data?.assets_synced} assets, $${syncResult.data?.total_value_usd}`);
+            }
+          } catch (err) {
+            console.error(`Failed to sync exchange ${exchange.id}:`, err);
+            // Continue syncing others
+          }
+        }
+
+        // Scan all wallets
+        console.log(`Scanning ${portfolio.wallets.length} wallets...`);
+        for (const wallet of portfolio.wallets) {
+          try {
+            await api.scanWallet(clientId, wallet.id);
+          } catch {
+            // Continue scanning others
+          }
+        }
+      }
+
+      // Re-fetch portfolio data with updated PNL values
+      await fetchPortfolio(clientId);
+      await fetchClients();
+    } catch (err) {
+      console.error('Error refreshing client data:', err);
+    } finally {
+      setIsLoadingPortfolio(false);
+    }
+  }, [fetchPortfolio, fetchClients]);
 
   const value: ClientContextType = {
     clients,
+    clientSummaries,
     selectedClientId,
-    selectedClient,
+    selectedClient: selectedClientPortfolio,
     isLoading,
+    isLoadingPortfolio,
+    error,
     selectClient,
     createClient,
     updateClient,
     deleteClient,
     addWallet,
     removeWallet,
+    scanWallet: scanWalletAction,
     addExchange,
     removeExchange,
+    syncExchange,
     addManualAsset,
     updateManualAsset,
     removeManualAsset,
     getClientPortfolio,
     getAllPortfoliosSummary,
+    refreshClients,
     refreshClientData,
   };
 

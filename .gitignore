@@ -34,3 +34,11 @@ venv/
 *.tsbuildinfo
 nul
 .claude/settings.local.json
+.claude/plans/
+
+# Temp files
+tmpclaude-*
+frontend/tmpclaude-*
+
+# Deploy artifacts
+*-deploy.tar.gz

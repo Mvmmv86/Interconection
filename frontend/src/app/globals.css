@@ -73,3 +73,16 @@
     box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent-purple);
   }
 }
+
+/* Login page — rotating border glow */
+@property --border-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes rotateBorder {
+  to {
+    --border-angle: 360deg;
+  }
+}

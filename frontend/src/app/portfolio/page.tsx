@@ -1,9 +1,14 @@
 'use client';
 
+import { useMemo, useState, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { useTheme } from '@/contexts/theme-context';
 import { cn } from '@/lib/utils';
+import { useAllPositions } from '@/hooks/useAllPositions';
+import { useMultiWalletDeFiPositions } from '@/hooks/defi';
+import { usePortfolioRisk } from '@/hooks/usePortfolioRisk';
 import {
   PortfolioSummary,
   AllocationByType,
@@ -11,14 +16,153 @@ import {
   TopHoldings,
   ExchangePositions,
   DeFiPositions,
-  StakingPositions,
   LiquidityPositions,
   DerivativesPositions,
   RiskExposure,
 } from '@/components/portfolio';
 
+// Lazy load modais pesados - só carregam quando abertos
+const RiskSettingsModal = dynamic(
+  () => import('@/components/portfolio/risk-settings-modal').then(m => ({ default: m.RiskSettingsModal })),
+  { ssr: false }
+);
+const RiskReportModal = dynamic(
+  () => import('@/components/portfolio/risk-report-modal').then(m => ({ default: m.RiskReportModal })),
+  { ssr: false }
+);
+
 export default function PortfolioPage() {
   const { theme } = useTheme();
+
+  // ═══════════════════════════════════════════
+  // Real data from all sources
+  // ═══════════════════════════════════════════
+  const {
+    positions,
+    summary,
+    distributionByType,
+    distributionByChain,
+    exchanges,
+    isLoading,
+    isLoadingExchanges,
+  } = useAllPositions();
+
+  // Raw DeFi positions for DeFi & LP cards (React Query caches, no double fetch)
+  const {
+    positions: rawDefiPositions,
+    isLoading: isLoadingDefiRaw,
+  } = useMultiWalletDeFiPositions();
+
+  // ═══════════════════════════════════════════
+  // Risk metrics from real calculations
+  // ═══════════════════════════════════════════
+  const {
+    metrics: riskMetrics,
+    riskScore,
+    thresholds: riskThresholds,
+    updateThresholds,
+    resetThresholds,
+    isLoading: isLoadingRisk,
+    hasData: hasRiskData,
+    hasPriceHistory,
+  } = usePortfolioRisk(positions, summary);
+
+  const [isRiskSettingsOpen, setIsRiskSettingsOpen] = useState(false);
+
+  // ═══════════════════════════════════════════
+  // Report modal state
+  // ═══════════════════════════════════════════
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportContent, setReportContent] = useState('');
+  const [reportGeneratedAt, setReportGeneratedAt] = useState('');
+  const [reportSummary, setReportSummary] = useState<{
+    totalAum: number;
+    positionCount: number;
+    riskStatus: string;
+    riskScoreValue: number;
+  } | null>(null);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
+  const handleGenerateReport = useCallback(async () => {
+    setIsReportModalOpen(true);
+    setIsGeneratingReport(true);
+    setReportContent('');
+
+    try {
+      const context = {
+        summary,
+        topPositions: positions.slice(0, 10),
+        riskMetrics,
+        riskScore,
+        distributionByType,
+        distributionByChain,
+      };
+
+      const response = await fetch('/api/ai/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha ao gerar relatório');
+      }
+
+      const data = await response.json();
+      setReportContent(data.content || '');
+      setReportGeneratedAt(data.generatedAt || new Date().toISOString());
+      setReportSummary(data.summary || null);
+    } catch (error) {
+      console.error('Report generation error:', error);
+      setReportContent('Erro ao gerar o relatório. Tente novamente.');
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  }, [summary, positions, riskMetrics, riskScore, distributionByType, distributionByChain]);
+
+  // ═══════════════════════════════════════════
+  // Spot positions for Top Holdings
+  // ═══════════════════════════════════════════
+  const spotPositions = useMemo(() => {
+    return positions.filter(p => p.category === 'spot');
+  }, [positions]);
+
+  const totalSpotValue = useMemo(() => {
+    return spotPositions.reduce((sum, p) => sum + p.value, 0);
+  }, [spotPositions]);
+
+  // ═══════════════════════════════════════════
+  // Derived metrics for summary cards
+  // ═══════════════════════════════════════════
+  const derivedMetrics = useMemo(() => {
+    // Unrealized P&L: sum of all 24h changes across positions
+    const unrealizedPnl = positions.reduce((sum, p) => sum + (p.pnl || 0), 0);
+    const unrealizedPnlPercent = summary.totalValue > 0
+      ? (unrealizedPnl / summary.totalValue) * 100
+      : 0;
+
+    // 24h AUM change percentage
+    const aumChange24h = unrealizedPnlPercent;
+
+    // Yield earnings: projected annual yield from positions with APY
+    const yieldEarnings = positions.reduce((sum, p) => {
+      if (p.apy && p.apy > 0) {
+        return sum + (p.value * p.apy) / 100;
+      }
+      return sum;
+    }, 0);
+
+    // Weighted average APY
+    const avgApy = summary.avgApy || 0;
+
+    return {
+      unrealizedPnl,
+      unrealizedPnlPercent,
+      aumChange24h,
+      yieldEarnings,
+      avgApy,
+    };
+  }, [positions, summary]);
 
   return (
     <div
@@ -65,34 +209,97 @@ export default function PortfolioPage() {
           </div>
 
           {/* Summary Cards */}
-          <PortfolioSummary />
+          <PortfolioSummary
+            totalAum={summary.totalValue}
+            aumChange24h={derivedMetrics.aumChange24h}
+            unrealizedPnl={derivedMetrics.unrealizedPnl}
+            unrealizedPnlPercent={derivedMetrics.unrealizedPnlPercent}
+            realizedPnl={null}
+            yieldEarnings={derivedMetrics.yieldEarnings}
+            avgApy={derivedMetrics.avgApy}
+            activePositions={summary.totalPositionCount}
+            isLoading={isLoading}
+          />
 
           {/* Allocation Charts Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-5">
-            <AllocationByType />
-            <AllocationByChain />
+            <AllocationByType
+              data={distributionByType}
+              totalValue={summary.totalValue}
+              isLoading={isLoading}
+            />
+            <AllocationByChain
+              data={distributionByChain}
+              totalValue={summary.totalValue}
+              isLoading={isLoading}
+            />
           </div>
 
           {/* Risk & Exchange Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-5">
-            <RiskExposure />
-            <ExchangePositions />
+            <RiskExposure
+              metrics={riskMetrics}
+              riskScore={riskScore}
+              thresholds={riskThresholds}
+              isLoading={isLoading || isLoadingRisk}
+              hasData={hasRiskData}
+              hasPriceHistory={hasPriceHistory}
+              onOpenSettings={() => setIsRiskSettingsOpen(true)}
+              onGenerateReport={handleGenerateReport}
+            />
+            <ExchangePositions
+              exchanges={exchanges}
+              totalValue={summary.exchangeHoldings}
+              isLoading={isLoadingExchanges}
+            />
           </div>
 
-          {/* Top Holdings */}
+          {/* Risk Settings Modal - lazy loaded, only mounts when open */}
+          {isRiskSettingsOpen && (
+            <RiskSettingsModal
+              isOpen={isRiskSettingsOpen}
+              onClose={() => setIsRiskSettingsOpen(false)}
+              thresholds={riskThresholds}
+              onSave={updateThresholds}
+              onReset={resetThresholds}
+            />
+          )}
+
+          {/* Risk Report Modal - lazy loaded, only mounts when open */}
+          {isReportModalOpen && (
+            <RiskReportModal
+              isOpen={isReportModalOpen}
+              onClose={() => setIsReportModalOpen(false)}
+              reportContent={reportContent}
+              generatedAt={reportGeneratedAt}
+              summary={reportSummary}
+              isLoading={isGeneratingReport}
+            />
+          )}
+
+          {/* Top Holdings (Spot Only) */}
           <div className="mt-5">
-            <TopHoldings />
+            <TopHoldings
+              positions={spotPositions}
+              totalSpotValue={totalSpotValue}
+              isLoading={isLoading}
+            />
           </div>
 
-          {/* DeFi Positions */}
+          {/* DeFi & Liquidity Pools */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-5">
-            <DeFiPositions />
-            <StakingPositions />
+            <DeFiPositions
+              positions={rawDefiPositions}
+              isLoading={isLoadingDefiRaw}
+            />
+            <LiquidityPositions
+              positions={rawDefiPositions}
+              isLoading={isLoadingDefiRaw}
+            />
           </div>
 
-          {/* Liquidity & Derivatives */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-5">
-            <LiquidityPositions />
+          {/* Derivatives */}
+          <div className="mt-5">
             <DerivativesPositions />
           </div>
         </main>

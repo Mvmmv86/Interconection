@@ -2,13 +2,17 @@
 
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { User, Settings, LogOut, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/avatar';
+import { useAuth } from '@/contexts/auth-context';
 
 export function UserMenu() {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const { logout, user } = useAuth();
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -31,10 +35,10 @@ export function UserMenu() {
           'hover:bg-white/5 transition-all duration-base'
         )}
       >
-        <Avatar fallback="John Doe" size="sm" />
+        <Avatar fallback={user?.name || 'User'} size="sm" />
         <div className="hidden md:block text-left">
-          <p className="text-body-sm text-text-primary font-medium">John Doe</p>
-          <p className="text-caption text-text-tertiary">Admin</p>
+          <p className="text-body-sm text-text-primary font-medium">{user?.name || 'User'}</p>
+          <p className="text-caption text-text-tertiary">{user?.role || 'admin'}</p>
         </div>
         <ChevronDown
           className={cn(
@@ -55,8 +59,8 @@ export function UserMenu() {
           )}
         >
           <div className="p-4 border-b border-border-subtle">
-            <p className="text-body-sm text-text-primary font-medium">John Doe</p>
-            <p className="text-caption text-text-tertiary">john@interconection.io</p>
+            <p className="text-body-sm text-text-primary font-medium">{user?.name || 'User'}</p>
+            <p className="text-caption text-text-tertiary">{user?.email || ''}</p>
           </div>
 
           <div className="p-2">
@@ -93,10 +97,14 @@ export function UserMenu() {
                 'text-body-sm text-status-error',
                 'hover:bg-status-error/10 transition-all duration-base'
               )}
-              onClick={() => setIsOpen(false)}
+              onClick={() => {
+                setIsOpen(false);
+                logout();
+                router.push('/login');
+              }}
             >
               <LogOut className="w-4 h-4" />
-              Log out
+              Sair
             </button>
           </div>
         </div>

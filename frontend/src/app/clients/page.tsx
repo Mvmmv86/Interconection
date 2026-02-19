@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Plus,
   Search,
@@ -20,6 +21,7 @@ import { Header } from '@/components/layout/header';
 import { cn } from '@/lib/utils';
 import { useClients } from '@/contexts/client-context';
 import { useTheme } from '@/contexts/theme-context';
+import { useAuth } from '@/contexts/auth-context';
 import { Client, ClientPortfolioSummary } from '@/types/client-portfolio';
 
 // Create/Edit Client Modal
@@ -30,6 +32,7 @@ function ClientModal({
   onSave,
   isLoading,
   isDark,
+  error,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -37,6 +40,7 @@ function ClientModal({
   onSave: (data: { name: string; email?: string; notes?: string }) => Promise<void>;
   isLoading: boolean;
   isDark: boolean;
+  error?: string | null;
 }) {
   const [name, setName] = useState(client?.name || '');
   const [email, setEmail] = useState(client?.email || '');
@@ -47,7 +51,6 @@ function ClientModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await onSave({ name, email: email || undefined, notes: notes || undefined });
-    onClose();
   };
 
   return (
@@ -149,6 +152,12 @@ function ClientModal({
               )}
             />
           </div>
+
+          {error && (
+            <div className="p-3 rounded-lg bg-status-error/10 border border-status-error/20">
+              <p className="text-xs text-status-error">{error}</p>
+            </div>
+          )}
 
           <div className="flex gap-3 pt-2">
             <button
@@ -517,14 +526,27 @@ function SummaryStats({ summaries, isDark }: { summaries: ClientPortfolioSummary
 }
 
 export default function ClientsPage() {
+  const router = useRouter();
+  const { isAuthenticated: isAuthed, isLoading: isAuthLoading } = useAuth();
   const { theme } = useTheme();
   const isDark = theme === 'dark';
+
+  useEffect(() => {
+    if (!isAuthed && !isAuthLoading) {
+      router.push('/login');
+    }
+  }, [isAuthed, isAuthLoading, router]);
+
   const {
     clients,
+    clientSummaries,
     createClient,
     updateClient,
     deleteClient,
     getAllPortfoliosSummary,
+    isLoading: isLoadingClients,
+    error: clientsError,
+    refreshClients,
   } = useClients();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -533,8 +555,23 @@ export default function ClientsPage() {
   const [deletingClient, setDeletingClient] = useState<Client | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const summaries = getAllPortfoliosSummary();
+  const summaries = clientSummaries.length > 0 ? clientSummaries : getAllPortfoliosSummary();
   const summaryMap = new Map(summaries.map(s => [s.clientId, s]));
+
+  const defaultSummary: ClientPortfolioSummary = {
+    clientId: '',
+    totalValueUsd: 0,
+    totalStakedUsd: 0,
+    totalHoldingUsd: 0,
+    totalLpUsd: 0,
+    totalPnlUsd: 0,
+    totalPnlPercent: 0,
+    pendingRewardsUsd: 0,
+    averageApy: 0,
+    assetCount: 0,
+    walletCount: 0,
+    exchangeCount: 0,
+  };
 
   const filteredClients = clients.filter(client =>
     client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -542,10 +579,16 @@ export default function ClientsPage() {
     client.notes?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const [actionError, setActionError] = useState<string | null>(null);
+
   const handleCreate = async (data: { name: string; email?: string; notes?: string }) => {
     setIsLoading(true);
+    setActionError(null);
     try {
       await createClient(data);
+      setIsCreateModalOpen(false);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Erro ao criar cliente. Verifique se está logado.');
     } finally {
       setIsLoading(false);
     }
@@ -650,9 +693,29 @@ export default function ClientsPage() {
             />
           </div>
 
+          {/* Loading / Error states */}
+          {isLoadingClients && (
+            <div className="mt-5 text-center py-10">
+              <RefreshCw className={cn("w-6 h-6 mx-auto mb-3 animate-spin", isDark ? "text-white/40" : "text-gray-400")} />
+              <p className={cn("text-sm", isDark ? "text-white/50" : "text-gray-500")}>Carregando clientes...</p>
+            </div>
+          )}
+
+          {clientsError && (
+            <div className="mt-5 text-center py-8">
+              <p className="text-sm text-status-error mb-2">{clientsError}</p>
+              <button
+                onClick={() => refreshClients()}
+                className="text-sm text-accent-blue hover:underline"
+              >
+                Tentar novamente
+              </button>
+            </div>
+          )}
+
           {/* Clients Grid */}
           <div className="mt-5">
-            {filteredClients.length === 0 ? (
+            {!isLoadingClients && filteredClients.length === 0 ? (
               <div className="text-center py-16">
                 <div className={cn(
                   "w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center",
@@ -690,7 +753,7 @@ export default function ClientsPage() {
                   <ClientCard
                     key={client.id}
                     client={client}
-                    summary={summaryMap.get(client.id)!}
+                    summary={summaryMap.get(client.id) || defaultSummary}
                     onEdit={() => setEditingClient(client)}
                     onDelete={() => setDeletingClient(client)}
                     isDark={isDark}
@@ -703,10 +766,11 @@ export default function ClientsPage() {
           {/* Modals */}
           <ClientModal
             isOpen={isCreateModalOpen}
-            onClose={() => setIsCreateModalOpen(false)}
+            onClose={() => { setIsCreateModalOpen(false); setActionError(null); }}
             onSave={handleCreate}
             isLoading={isLoading}
             isDark={isDark}
+            error={actionError}
           />
 
           <ClientModal

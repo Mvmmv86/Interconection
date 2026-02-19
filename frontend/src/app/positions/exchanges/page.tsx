@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { useTheme } from '@/contexts/theme-context';
@@ -12,117 +13,131 @@ import {
   Search,
   Plus,
   ChevronRight,
+  Clock,
+  ArrowRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-interface ExchangeAccount {
-  id: string;
-  name: string;
-  logo: string;
-  status: 'connected' | 'syncing' | 'error';
-  lastSync: string;
-  totalValue: number;
-  spotValue: number;
-  marginValue: number;
-  futuresValue: number;
-  pnl24h: number;
-  positions: number;
-  topAssets: { symbol: string; value: number; change: number }[];
-}
-
-const mockExchanges: ExchangeAccount[] = [
-  {
-    id: '1',
-    name: 'Binance',
-    logo: 'BN',
-    status: 'connected',
-    lastSync: '2 min ago',
-    totalValue: 456000,
-    spotValue: 350000,
-    marginValue: 50000,
-    futuresValue: 56000,
-    pnl24h: 2.3,
-    positions: 12,
-    topAssets: [
-      { symbol: 'BTC', value: 200000, change: 3.2 },
-      { symbol: 'ETH', value: 100000, change: 2.8 },
-      { symbol: 'UNI', value: 50000, change: -1.2 },
-    ],
-  },
-  {
-    id: '2',
-    name: 'Coinbase',
-    logo: 'CB',
-    status: 'connected',
-    lastSync: '5 min ago',
-    totalValue: 234000,
-    spotValue: 234000,
-    marginValue: 0,
-    futuresValue: 0,
-    pnl24h: 1.8,
-    positions: 8,
-    topAssets: [
-      { symbol: 'SOL', value: 120000, change: 4.5 },
-      { symbol: 'ETH', value: 80000, change: 2.8 },
-      { symbol: 'BTC', value: 34000, change: 3.2 },
-    ],
-  },
-  {
-    id: '3',
-    name: 'Kraken',
-    logo: 'KR',
-    status: 'syncing',
-    lastSync: 'syncing...',
-    totalValue: 140000,
-    spotValue: 100000,
-    marginValue: 40000,
-    futuresValue: 0,
-    pnl24h: -0.5,
-    positions: 5,
-    topAssets: [
-      { symbol: 'LINK', value: 60000, change: 5.2 },
-      { symbol: 'DOT', value: 50000, change: -2.1 },
-      { symbol: 'XRP', value: 30000, change: 1.5 },
-    ],
-  },
-  {
-    id: '4',
-    name: 'OKX',
-    logo: 'OK',
-    status: 'connected',
-    lastSync: '1 min ago',
-    totalValue: 89000,
-    spotValue: 50000,
-    marginValue: 15000,
-    futuresValue: 24000,
-    pnl24h: 3.2,
-    positions: 6,
-    topAssets: [
-      { symbol: 'ETH', value: 40000, change: 2.8 },
-      { symbol: 'ARB', value: 30000, change: 6.1 },
-      { symbol: 'OP', value: 19000, change: 4.3 },
-    ],
-  },
-];
+import { AddExchangeModal } from '@/components/exchanges/add-exchange-modal';
+import {
+  useExchangePositions,
+  mockExchangeData,
+} from '@/hooks/useExchangePositions';
 
 const statusConfig = {
   connected: { icon: CheckCircle2, color: 'text-status-success', bg: 'bg-status-success/10', label: 'Connected' },
   syncing: { icon: RefreshCw, color: 'text-accent-yellow', bg: 'bg-accent-yellow/10', label: 'Syncing' },
   error: { icon: AlertCircle, color: 'text-status-error', bg: 'bg-status-error/10', label: 'Error' },
+  pending: { icon: Clock, color: 'text-white/30', bg: 'bg-white/5', label: 'Pending' },
 };
+
+// Use mock data in development mode when backend is not available
+const USE_MOCK_DATA = process.env.NODE_ENV === 'development';
 
 export default function ExchangesPage() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const [searchTerm, setSearchTerm] = useState('');
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
-  const totalValue = mockExchanges.reduce((sum, e) => sum + e.totalValue, 0);
-  const totalSpot = mockExchanges.reduce((sum, e) => sum + e.spotValue, 0);
-  const totalMargin = mockExchanges.reduce((sum, e) => sum + e.marginValue, 0);
-  const totalFutures = mockExchanges.reduce((sum, e) => sum + e.futuresValue, 0);
+  // Fetch real data from API
+  const {
+    exchanges: apiExchanges,
+    totalValue: apiTotalValue,
+    spotHoldings: apiSpotHoldings,
+    marginPositions: apiMarginPositions,
+    futuresPositions: apiFuturesPositions,
+    isLoading,
+    error,
+    refresh,
+    syncAllAndRefresh,
+  } = useExchangePositions();
 
-  const filteredExchanges = mockExchanges.filter((e) =>
+  // Use mock data in development if no real data available
+  const exchanges = USE_MOCK_DATA && apiExchanges.length === 0 ? mockExchangeData.exchanges : apiExchanges;
+  const totalValue = USE_MOCK_DATA && apiExchanges.length === 0 ? mockExchangeData.totalValue : apiTotalValue;
+  const totalSpot = USE_MOCK_DATA && apiExchanges.length === 0 ? mockExchangeData.spotHoldings : apiSpotHoldings;
+  const totalMargin = USE_MOCK_DATA && apiExchanges.length === 0 ? mockExchangeData.marginPositions : apiMarginPositions;
+  const totalFutures = USE_MOCK_DATA && apiExchanges.length === 0 ? mockExchangeData.futuresPositions : apiFuturesPositions;
+
+  const filteredExchanges = exchanges.filter((e) =>
     e.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleAddExchangeSuccess = () => {
+    setIsAddModalOpen(false);
+    refresh();
+  };
+
+  // Loading skeleton
+  const LoadingSkeleton = () => (
+    <div className="space-y-3">
+      {[1, 2, 3].map((i) => (
+        <div
+          key={i}
+          className="rounded-xl p-4 animate-pulse"
+          style={{
+            background: isDark
+              ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+              : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+            border: isDark
+              ? '1px solid rgba(255, 255, 255, 0.08)'
+              : '1px solid rgba(203, 213, 225, 0.6)',
+          }}
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <div className={cn("w-10 h-10 rounded-xl", isDark ? "bg-white/10" : "bg-gray-200")} />
+            <div className="flex-1">
+              <div className={cn("h-4 w-24 rounded mb-2", isDark ? "bg-white/10" : "bg-gray-200")} />
+              <div className={cn("h-3 w-32 rounded", isDark ? "bg-white/5" : "bg-gray-100")} />
+            </div>
+            <div className="text-right">
+              <div className={cn("h-5 w-20 rounded mb-1", isDark ? "bg-white/10" : "bg-gray-200")} />
+              <div className={cn("h-3 w-12 rounded", isDark ? "bg-white/5" : "bg-gray-100")} />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            {[1, 2, 3].map((j) => (
+              <div key={j} className={cn("p-3 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                <div className={cn("h-2 w-8 rounded mb-2", isDark ? "bg-white/10" : "bg-gray-200")} />
+                <div className={cn("h-4 w-12 rounded", isDark ? "bg-white/10" : "bg-gray-200")} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Empty state
+  const EmptyState = () => (
+    <div
+      className="rounded-xl p-12 text-center"
+      style={{
+        background: isDark
+          ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+          : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+        border: isDark
+          ? '1px solid rgba(255, 255, 255, 0.08)'
+          : '1px solid rgba(203, 213, 225, 0.6)',
+      }}
+    >
+      <div className={cn("w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4", isDark ? "bg-white/[0.05]" : "bg-gray-100")}>
+        <Building2 className={cn("w-8 h-8", isDark ? "text-white/30" : "text-gray-400")} />
+      </div>
+      <h3 className={cn("text-[16px] font-semibold mb-2", isDark ? "text-white" : "text-gray-900")}>
+        No exchanges connected
+      </h3>
+      <p className={cn("text-[12px] mb-6 max-w-sm mx-auto", isDark ? "text-white/50" : "text-gray-500")}>
+        Connect your first exchange to start tracking your positions, balances, and performance in real-time.
+      </p>
+      <button
+        onClick={() => setIsAddModalOpen(true)}
+        className="inline-flex items-center gap-2 h-10 px-6 rounded-lg bg-accent-purple text-white text-[12px] font-medium hover:bg-accent-purple/90 transition-colors"
+      >
+        <Plus className="w-4 h-4" />
+        Add Your First Exchange
+      </button>
+    </div>
   );
 
   return (
@@ -168,10 +183,30 @@ export default function ExchangesPage() {
                 Gerencie suas conexões com exchanges e visualize todas as posições
               </p>
             </div>
-            <button className="flex items-center gap-2 h-9 px-4 rounded-lg bg-accent-purple text-white text-[11px] font-medium hover:bg-accent-purple/90 transition-colors">
-              <Plus className="w-4 h-4" />
-              Add Exchange
-            </button>
+            <div className="flex items-center gap-2">
+              {exchanges.length > 0 && (
+                <button
+                  onClick={() => syncAllAndRefresh()}
+                  disabled={isLoading}
+                  className={cn(
+                    "flex items-center gap-2 h-9 px-3 rounded-lg text-[11px] font-medium transition-colors",
+                    isDark
+                      ? "bg-white/[0.05] text-white/70 hover:bg-white/[0.08]"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  )}
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", isLoading && "animate-spin")} />
+                  Refresh
+                </button>
+              )}
+              <button
+                onClick={() => setIsAddModalOpen(true)}
+                className="flex items-center gap-2 h-9 px-4 rounded-lg bg-accent-purple text-white text-[11px] font-medium hover:bg-accent-purple/90 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add Exchange
+              </button>
+            </div>
           </div>
 
           {/* Summary Cards */}
@@ -210,153 +245,203 @@ export default function ExchangesPage() {
                 </div>
                 <p className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>{card.label}</p>
                 <p className={cn("text-[20px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
-                  ${(card.value / 1000).toFixed(0)}K
+                  {isLoading ? (
+                    <span className={cn("inline-block w-16 h-6 rounded animate-pulse", isDark ? "bg-white/10" : "bg-gray-200")} />
+                  ) : (
+                    `$${(card.value / 1000).toFixed(0)}K`
+                  )}
                 </p>
               </div>
             ))}
           </div>
 
           {/* Search */}
-          <div className="mb-4">
-            <div className="relative w-64">
-              <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4", isDark ? "text-white/30" : "text-gray-400")} />
-              <input
-                type="text"
-                placeholder="Search exchanges..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className={cn(
-                  "w-full h-9 pl-10 pr-4 rounded-lg text-[11px] focus:outline-none focus:border-accent-purple/50",
-                  isDark
-                    ? "bg-white/[0.03] border border-white/[0.06] text-white placeholder:text-white/30"
-                    : "bg-gray-50 border border-gray-200 text-gray-900 placeholder:text-gray-400"
-                )}
-              />
+          {exchanges.length > 0 && (
+            <div className="mb-4">
+              <div className="relative w-64">
+                <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4", isDark ? "text-white/30" : "text-gray-400")} />
+                <input
+                  type="text"
+                  placeholder="Search exchanges..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className={cn(
+                    "w-full h-9 pl-10 pr-4 rounded-lg text-[11px] focus:outline-none focus:border-accent-purple/50",
+                    isDark
+                      ? "bg-white/[0.03] border border-white/[0.06] text-white placeholder:text-white/30"
+                      : "bg-gray-50 border border-gray-200 text-gray-900 placeholder:text-gray-400"
+                  )}
+                />
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Error State */}
+          {error && !USE_MOCK_DATA && (
+            <div className={cn("rounded-lg p-4 mb-4 flex items-center gap-3", isDark ? "bg-status-error/10" : "bg-red-50")}>
+              <AlertCircle className="w-5 h-5 text-status-error" />
+              <div>
+                <p className={cn("text-[12px] font-medium", isDark ? "text-white" : "text-gray-900")}>Error loading exchanges</p>
+                <p className={cn("text-[11px]", isDark ? "text-white/50" : "text-gray-500")}>{error}</p>
+              </div>
+              <button
+                onClick={() => refresh()}
+                className="ml-auto text-[11px] text-accent-purple hover:underline"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {/* Loading State */}
+          {isLoading && exchanges.length === 0 && <LoadingSkeleton />}
+
+          {/* Empty State */}
+          {!isLoading && exchanges.length === 0 && !USE_MOCK_DATA && <EmptyState />}
 
           {/* Exchange Cards */}
-          <div className="space-y-3">
-            {filteredExchanges.map((exchange) => {
-              const status = statusConfig[exchange.status];
-              const StatusIcon = status.icon;
+          {(exchanges.length > 0 || USE_MOCK_DATA) && (
+            <div className="space-y-3">
+              {filteredExchanges.map((exchange) => {
+                const status = statusConfig[exchange.status] || statusConfig.pending;
+                const StatusIcon = status.icon;
 
-              return (
-                <div
-                  key={exchange.id}
-                  className="rounded-xl p-4 relative overflow-hidden"
-                  style={{
-                    background: isDark
-                      ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
-                      : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
-                    border: isDark
-                      ? '1px solid rgba(255, 255, 255, 0.08)'
-                      : '1px solid rgba(203, 213, 225, 0.6)',
-                    boxShadow: isDark
-                      ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
-                      : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
-                  }}
-                >
+                return (
                   <div
-                    className="absolute inset-x-0 top-0 h-[1px]"
+                    key={exchange.id}
+                    className="rounded-xl p-4 relative overflow-hidden"
                     style={{
                       background: isDark
-                        ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
-                        : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
+                        ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
+                        : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+                      border: isDark
+                        ? '1px solid rgba(255, 255, 255, 0.08)'
+                        : '1px solid rgba(203, 213, 225, 0.6)',
+                      boxShadow: isDark
+                        ? '0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)'
+                        : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
                     }}
-                  />
-                  {/* Exchange Header */}
-                  <div className={cn("flex items-center justify-between pb-3 mb-3 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
-                    <div className="flex items-center gap-3">
-                      <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-[12px] font-bold", isDark ? "bg-white/[0.05] text-white/50" : "bg-gray-100 text-gray-600")}>
-                        {exchange.logo}
-                      </div>
-                      <div>
-                        <h3 className={cn("text-[14px] font-semibold", isDark ? "text-white" : "text-gray-900")}>{exchange.name}</h3>
-                        <div className="flex items-center gap-2">
-                          <StatusIcon
-                            className={cn(
-                              'w-3 h-3',
-                              status.color,
-                              exchange.status === 'syncing' && 'animate-spin'
-                            )}
-                          />
-                          <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>{exchange.lastSync}</span>
-                          <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>·</span>
-                          <span className={cn("text-[10px]", isDark ? "text-white/50" : "text-gray-600")}>{exchange.positions} positions</span>
+                  >
+                    <div
+                      className="absolute inset-x-0 top-0 h-[1px]"
+                      style={{
+                        background: isDark
+                          ? 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%)'
+                          : 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.6) 50%, transparent 100%)',
+                      }}
+                    />
+                    {/* Exchange Header */}
+                    <div className={cn("flex items-center justify-between pb-3 mb-3 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                      <div className="flex items-center gap-3">
+                        <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-[12px] font-bold", isDark ? "bg-white/[0.05] text-white/50" : "bg-gray-100 text-gray-600")}>
+                          {exchange.logo}
                         </div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className={cn("text-[18px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
-                        ${exchange.totalValue.toLocaleString()}
-                      </p>
-                      <span
-                        className={cn(
-                          'text-[11px] font-medium tabular-nums',
-                          exchange.pnl24h >= 0 ? 'text-status-success' : 'text-status-error'
-                        )}
-                      >
-                        {exchange.pnl24h >= 0 ? '+' : ''}{exchange.pnl24h}% 24h
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Balance Breakdown */}
-                  <div className="grid grid-cols-3 gap-4 mb-4">
-                    <div className={cn("p-3 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-                      <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Spot</p>
-                      <p className={cn("text-[14px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
-                        ${(exchange.spotValue / 1000).toFixed(0)}K
-                      </p>
-                    </div>
-                    <div className={cn("p-3 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-                      <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Margin</p>
-                      <p className={cn("text-[14px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
-                        ${(exchange.marginValue / 1000).toFixed(0)}K
-                      </p>
-                    </div>
-                    <div className={cn("p-3 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-                      <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Futures</p>
-                      <p className={cn("text-[14px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
-                        ${(exchange.futuresValue / 1000).toFixed(0)}K
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Top Assets */}
-                  <div>
-                    <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Top Assets</p>
-                    <div className="flex gap-2">
-                      {exchange.topAssets.map((asset) => (
-                        <div
-                          key={asset.symbol}
-                          className={cn("flex-1 p-2.5 rounded-lg transition-colors cursor-pointer", isDark ? "bg-white/[0.02] hover:bg-white/[0.03]" : "bg-gray-50 hover:bg-gray-100")}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className={cn("text-[11px] font-medium", isDark ? "text-white" : "text-gray-900")}>{asset.symbol}</span>
-                            <span
+                        <div>
+                          <h3 className={cn("text-[14px] font-semibold", isDark ? "text-white" : "text-gray-900")}>{exchange.name}</h3>
+                          <div className="flex items-center gap-2">
+                            <StatusIcon
                               className={cn(
-                                'text-[9px] font-medium tabular-nums',
-                                asset.change >= 0 ? 'text-status-success' : 'text-status-error'
+                                'w-3 h-3',
+                                status.color,
+                                exchange.status === 'syncing' && 'animate-spin'
+                              )}
+                            />
+                            <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>{exchange.lastSync}</span>
+                            <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>·</span>
+                            <Link
+                              href={`/positions/exchanges/${exchange.id}`}
+                              className={cn(
+                                "flex items-center gap-1 text-[10px] font-medium transition-colors group",
+                                isDark
+                                  ? "text-accent-purple hover:text-accent-purple/80"
+                                  : "text-accent-purple hover:text-accent-purple/70"
                               )}
                             >
-                              {asset.change >= 0 ? '+' : ''}{asset.change}%
-                            </span>
+                              <span>{exchange.positions} positions</span>
+                              <ArrowRight className="w-3 h-3 transition-transform group-hover:translate-x-0.5" />
+                            </Link>
                           </div>
-                          <p className={cn("text-[10px] tabular-nums", isDark ? "text-white/50" : "text-gray-600")}>
-                            ${(asset.value / 1000).toFixed(0)}K
-                          </p>
                         </div>
-                      ))}
+                      </div>
+                      <div className="text-right">
+                        <p className={cn("text-[18px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
+                          ${exchange.totalValue.toLocaleString()}
+                        </p>
+                        <span
+                          className={cn(
+                            'text-[11px] font-medium tabular-nums',
+                            exchange.pnl24h >= 0 ? 'text-status-success' : 'text-status-error'
+                          )}
+                        >
+                          {exchange.pnl24h >= 0 ? '+' : ''}{exchange.pnl24h}% 24h
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Balance Breakdown */}
+                    <div className="grid grid-cols-3 gap-4 mb-4">
+                      <div className={cn("p-3 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                        <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Spot</p>
+                        <p className={cn("text-[14px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
+                          ${(exchange.spotValue / 1000).toFixed(0)}K
+                        </p>
+                      </div>
+                      <div className={cn("p-3 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                        <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Margin</p>
+                        <p className={cn("text-[14px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
+                          ${(exchange.marginValue / 1000).toFixed(0)}K
+                        </p>
+                      </div>
+                      <div className={cn("p-3 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
+                        <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Futures</p>
+                        <p className={cn("text-[14px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
+                          ${(exchange.futuresValue / 1000).toFixed(0)}K
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Top Assets */}
+                    <div>
+                      <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Top Assets</p>
+                      <div className="flex gap-2">
+                        {exchange.topAssets.map((asset) => (
+                          <div
+                            key={asset.symbol}
+                            className={cn("flex-1 p-2.5 rounded-lg transition-colors cursor-pointer", isDark ? "bg-white/[0.02] hover:bg-white/[0.03]" : "bg-gray-50 hover:bg-gray-100")}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className={cn("text-[11px] font-medium", isDark ? "text-white" : "text-gray-900")}>{asset.symbol}</span>
+                              <span
+                                className={cn(
+                                  'text-[9px] font-medium tabular-nums',
+                                  asset.change >= 0 ? 'text-status-success' : 'text-status-error'
+                                )}
+                              >
+                                {asset.change >= 0 ? '+' : ''}{asset.change}%
+                              </span>
+                            </div>
+                            <p className={cn("text-[10px] tabular-nums", isDark ? "text-white/50" : "text-gray-600")}>
+                              ${(asset.value / 1000).toFixed(0)}K
+                            </p>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </main>
       </div>
+
+      {/* Add Exchange Modal */}
+      <AddExchangeModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        clientId="00000000-0000-0000-0000-000000000001"
+        onSuccess={handleAddExchangeSuccess}
+      />
     </div>
   );
 }

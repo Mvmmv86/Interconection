@@ -1,17 +1,23 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useCallback, ReactNode, useEffect, useState, useRef } from 'react';
+import { useAccount, useConnect, useDisconnect, useChainId, Connector } from 'wagmi';
+import { useWallet as useSolanaWallet } from '@solana/wallet-adapter-react';
+import { chainMetadata } from '@/lib/wallet/wagmi-config';
+import { SOLANA_WALLETS_METADATA } from '@/lib/wallet/solana-config';
+import { api } from '@/lib/api/client';
 
 // Wallet types
-export type EVMWalletType = 'metamask' | 'walletconnect' | 'coinbase' | 'rabby';
-export type SolanaWalletType = 'phantom' | 'solflare' | 'backpack' | 'glow';
+export type EVMWalletType = 'metamask' | 'walletconnect' | 'coinbase' | 'rabby' | 'injected';
+export type SolanaWalletType = 'phantom' | 'solflare' | 'backpack' | 'glow' | 'torus' | 'ledger';
 export type WalletType = EVMWalletType | SolanaWalletType;
 
 export interface ConnectedWallet {
   type: WalletType;
   address: string;
   network: 'evm' | 'solana';
-  chainId?: number; // For EVM
+  chainId?: number;
+  chainName?: string;
   label: string;
   icon: string;
 }
@@ -24,8 +30,8 @@ export interface WalletContextType {
   connectionError: string | null;
 
   // Actions
-  connectEVMWallet: (type: EVMWalletType) => Promise<void>;
-  connectSolanaWallet: (type: SolanaWalletType) => Promise<void>;
+  connectEVMWallet: (connectorId?: string) => Promise<void>;
+  connectSolanaWallet: () => Promise<void>;
   disconnectEVMWallet: () => void;
   disconnectSolanaWallet: () => void;
   disconnectAll: () => void;
@@ -34,119 +40,247 @@ export interface WalletContextType {
   isEVMConnected: boolean;
   isSolanaConnected: boolean;
   isAnyConnected: boolean;
+
+  // Raw access for advanced usage
+  evmChainId: number | undefined;
+  availableEVMConnectors: readonly Connector[];
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
 // Wallet configurations
-export const EVM_WALLETS: Record<EVMWalletType, { name: string; icon: string; color: string }> = {
+export const EVM_WALLETS: Record<string, { name: string; icon: string; color: string }> = {
+  injected: { name: 'Browser Wallet', icon: '🌐', color: '#4F46E5' },
+  'io.metamask': { name: 'MetaMask', icon: '🦊', color: '#E2761B' },
   metamask: { name: 'MetaMask', icon: '🦊', color: '#E2761B' },
-  walletconnect: { name: 'WalletConnect', icon: '🔗', color: '#3B99FC' },
-  coinbase: { name: 'Coinbase Wallet', icon: '🔵', color: '#0052FF' },
+  walletConnect: { name: 'WalletConnect', icon: '🔗', color: '#3B99FC' },
+  coinbaseWallet: { name: 'Coinbase Wallet', icon: '🔵', color: '#0052FF' },
+  'io.rabby': { name: 'Rabby', icon: '🐰', color: '#8697FF' },
   rabby: { name: 'Rabby', icon: '🐰', color: '#8697FF' },
 };
 
-export const SOLANA_WALLETS: Record<SolanaWalletType, { name: string; icon: string; color: string }> = {
+export const SOLANA_WALLETS: Record<string, { name: string; icon: string; color: string }> = {
   phantom: { name: 'Phantom', icon: '👻', color: '#AB9FF2' },
   solflare: { name: 'Solflare', icon: '🔥', color: '#FC822B' },
   backpack: { name: 'Backpack', icon: '🎒', color: '#E33E3F' },
   glow: { name: 'Glow', icon: '✨', color: '#00FFA3' },
-};
-
-// Mock addresses for demo
-const MOCK_EVM_ADDRESSES: Record<EVMWalletType, string> = {
-  metamask: '0x742d35Cc6634C0532925a3b844Bc9e7595f2bD28',
-  walletconnect: '0x8Ba1f109551bD432803012645Ac136ddd64DBA72',
-  coinbase: '0xdD2FD4581271e230360230F9337D5c0430Bf44C0',
-  rabby: '0x1234567890abcdef1234567890abcdef12345678',
-};
-
-const MOCK_SOLANA_ADDRESSES: Record<SolanaWalletType, string> = {
-  phantom: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU',
-  solflare: 'DYw8jCTfwHNRJhhmFcbXvVDTqWMEVFBX6ZKUmG5CNSKK',
-  backpack: '9WzDXwBbmPEi7Xck5n4JBh1VKsYxZMKgT8Vd3EUjweEk',
-  glow: 'HN7cABqLq46Es1jh92dQQisAi5YqpCEjqpQPKYL5qqYf',
+  torus: { name: 'Torus', icon: '🔷', color: '#0364FF' },
+  ledger: { name: 'Ledger', icon: '🔐', color: '#000000' },
 };
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [evmWallet, setEVMWallet] = useState<ConnectedWallet | null>(null);
-  const [solanaWallet, setSolanaWallet] = useState<ConnectedWallet | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [isManualConnecting, setIsManualConnecting] = useState(false);
 
-  const connectEVMWallet = useCallback(async (type: EVMWalletType) => {
-    setIsConnecting(true);
-    setConnectionError(null);
+  // EVM wallet state (wagmi)
+  const { address: evmAddress, isConnected: isEVMConnectedWagmi, connector } = useAccount();
+  const evmChainId = useChainId();
+  const { connect, connectors, isPending: isEVMConnecting, error: connectError } = useConnect();
+  const { disconnect: disconnectWagmi } = useDisconnect();
 
-    try {
-      // Simulate wallet connection delay
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+  // Solana wallet state (solana-wallet-adapter)
+  const {
+    publicKey: solanaPublicKey,
+    connected: isSolanaConnectedAdapter,
+    connecting: isSolanaConnecting,
+    wallet: solanaWalletAdapter,
+    connect: connectSolana,
+    disconnect: disconnectSolana,
+    select: selectSolanaWallet,
+    wallets: availableSolanaWallets,
+  } = useSolanaWallet();
 
-      // In real implementation, this would use ethers.js or wagmi
-      // const provider = new ethers.BrowserProvider(window.ethereum);
-      // const accounts = await provider.send('eth_requestAccounts', []);
-
-      const walletConfig = EVM_WALLETS[type];
-      setEVMWallet({
-        type,
-        address: MOCK_EVM_ADDRESSES[type],
-        network: 'evm',
-        chainId: 1, // Ethereum mainnet
-        label: walletConfig.name,
-        icon: walletConfig.icon,
-      });
-    } catch (error) {
-      setConnectionError(`Failed to connect ${EVM_WALLETS[type].name}`);
-      console.error('EVM wallet connection error:', error);
-    } finally {
-      setIsConnecting(false);
+  // Handle connect errors
+  useEffect(() => {
+    if (connectError) {
+      setConnectionError(connectError.message);
+      setIsManualConnecting(false);
     }
-  }, []);
+  }, [connectError]);
 
-  const connectSolanaWallet = useCallback(async (type: SolanaWalletType) => {
-    setIsConnecting(true);
+  // Derived EVM wallet info
+  const evmWallet: ConnectedWallet | null = isEVMConnectedWagmi && evmAddress
+    ? {
+        type: (connector?.id || 'injected') as EVMWalletType,
+        address: evmAddress,
+        network: 'evm',
+        chainId: evmChainId,
+        chainName: evmChainId ? chainMetadata[evmChainId]?.name : undefined,
+        label: connector?.name || EVM_WALLETS[connector?.id || 'injected']?.name || 'EVM Wallet',
+        icon: EVM_WALLETS[connector?.id || 'injected']?.icon || '🌐',
+      }
+    : null;
+
+  // Derived Solana wallet info
+  const solanaWallet: ConnectedWallet | null = isSolanaConnectedAdapter && solanaPublicKey
+    ? {
+        type: (solanaWalletAdapter?.adapter.name.toLowerCase() || 'phantom') as SolanaWalletType,
+        address: solanaPublicKey.toBase58(),
+        network: 'solana',
+        chainName: 'Solana',
+        label: solanaWalletAdapter?.adapter.name || 'Solana Wallet',
+        icon: SOLANA_WALLETS_METADATA[solanaWalletAdapter?.adapter.name.toLowerCase() as keyof typeof SOLANA_WALLETS_METADATA]?.icon || '👻',
+      }
+    : null;
+
+  // Connect EVM wallet
+  const connectEVMWallet = useCallback(
+    async (connectorId?: string) => {
+      setConnectionError(null);
+      setIsManualConnecting(true);
+
+      try {
+        // If connectors are available from wagmi, use them
+        if (connectors.length > 0) {
+          let selectedConnector = connectors[0];
+
+          if (connectorId) {
+            const found = connectors.find(
+              (c) => c.id === connectorId || c.id.toLowerCase().includes(connectorId.toLowerCase())
+            );
+            if (found) selectedConnector = found;
+          }
+
+          connect({ connector: selectedConnector });
+        } else {
+          // Fallback: Try to connect directly via window.ethereum
+          if (typeof window !== 'undefined' && (window as unknown as { ethereum?: { request: (args: { method: string }) => Promise<string[]> } }).ethereum) {
+            const ethereum = (window as unknown as { ethereum: { request: (args: { method: string }) => Promise<string[]> } }).ethereum;
+            await ethereum.request({ method: 'eth_requestAccounts' });
+          } else {
+            throw new Error('No Ethereum wallet found. Please install MetaMask or another wallet.');
+          }
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to connect EVM wallet';
+        setConnectionError(errorMessage);
+        console.error('EVM wallet connection error:', error);
+      } finally {
+        setIsManualConnecting(false);
+      }
+    },
+    [connect, connectors]
+  );
+
+  // Connect Solana wallet
+  const connectSolanaWallet = useCallback(async () => {
     setConnectionError(null);
+    setIsManualConnecting(true);
 
     try {
-      // Simulate wallet connection delay
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      // Check for available wallets
+      const installedWallets = availableSolanaWallets.filter(
+        (w) => w.readyState === 'Installed' || w.readyState === 'Loadable'
+      );
 
-      // In real implementation, this would use @solana/wallet-adapter
-      // const { publicKey } = useWallet();
+      if (installedWallets.length === 0) {
+        throw new Error('No Solana wallet found. Please install Phantom or Solflare.');
+      }
 
-      const walletConfig = SOLANA_WALLETS[type];
-      setSolanaWallet({
-        type,
-        address: MOCK_SOLANA_ADDRESSES[type],
-        network: 'solana',
-        label: walletConfig.name,
-        icon: walletConfig.icon,
-      });
+      // Prioritize Phantom, then Solflare
+      const phantomWallet = installedWallets.find(
+        (w) => w.adapter.name.toLowerCase() === 'phantom'
+      );
+      const solflareWallet = installedWallets.find(
+        (w) => w.adapter.name.toLowerCase() === 'solflare'
+      );
+
+      const walletToUse = phantomWallet || solflareWallet || installedWallets[0];
+
+      // Select and connect
+      selectSolanaWallet(walletToUse.adapter.name);
+
+      // Give time for selection to take effect
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      await connectSolana();
     } catch (error) {
-      setConnectionError(`Failed to connect ${SOLANA_WALLETS[type].name}`);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to connect Solana wallet';
+      setConnectionError(errorMessage);
       console.error('Solana wallet connection error:', error);
     } finally {
-      setIsConnecting(false);
+      setIsManualConnecting(false);
     }
-  }, []);
+  }, [availableSolanaWallets, selectSolanaWallet, connectSolana]);
 
+  // Disconnect functions
   const disconnectEVMWallet = useCallback(() => {
-    setEVMWallet(null);
-  }, []);
+    disconnectWagmi();
+  }, [disconnectWagmi]);
 
   const disconnectSolanaWallet = useCallback(() => {
-    setSolanaWallet(null);
-  }, []);
+    disconnectSolana();
+  }, [disconnectSolana]);
 
   const disconnectAll = useCallback(() => {
-    setEVMWallet(null);
-    setSolanaWallet(null);
-  }, []);
+    disconnectWagmi();
+    disconnectSolana();
+  }, [disconnectWagmi, disconnectSolana]);
+
+  // Track if we've already saved this wallet to avoid duplicates
+  const savedEVMWalletRef = useRef<string | null>(null);
+  const savedSolanaWalletRef = useRef<string | null>(null);
+
+  // Clear errors on successful EVM connection and save wallet to backend
+  useEffect(() => {
+    if (isEVMConnectedWagmi && evmAddress) {
+      setConnectionError(null);
+      setIsManualConnecting(false);
+
+      // Save wallet to backend if authenticated and not already saved
+      if (api.isAuthenticated() && savedEVMWalletRef.current !== evmAddress) {
+        savedEVMWalletRef.current = evmAddress;
+
+        // Get the first client and save wallet
+        api.getClients().then(async (result) => {
+          if (result.success && result.data && result.data.length > 0) {
+            const clientId = result.data[0].id;
+            const chainName = evmChainId ? (chainMetadata[evmChainId]?.name?.toLowerCase() || 'ethereum') : 'ethereum';
+            const walletLabel = connector?.name || 'Connected Wallet';
+
+            // Try to save wallet (will fail silently if already exists)
+            await api.createWallet(clientId, evmAddress, chainName, walletLabel, 'evm');
+            console.log('[Wallet] EVM saved to backend:', evmAddress);
+          }
+        }).catch((err) => {
+          console.error('[Wallet] Failed to save EVM to backend:', err);
+        });
+      }
+    }
+  }, [isEVMConnectedWagmi, evmAddress, evmChainId, connector]);
+
+  // Clear errors on successful Solana connection and save wallet to backend
+  useEffect(() => {
+    if (isSolanaConnectedAdapter && solanaPublicKey) {
+      const solanaAddress = solanaPublicKey.toBase58();
+      setConnectionError(null);
+      setIsManualConnecting(false);
+
+      // Save wallet to backend if authenticated and not already saved
+      if (api.isAuthenticated() && savedSolanaWalletRef.current !== solanaAddress) {
+        savedSolanaWalletRef.current = solanaAddress;
+
+        // Get the first client and save wallet
+        api.getClients().then(async (result) => {
+          if (result.success && result.data && result.data.length > 0) {
+            const clientId = result.data[0].id;
+            const walletLabel = solanaWalletAdapter?.adapter.name || 'Solana Wallet';
+
+            // Try to save wallet (will fail silently if already exists)
+            await api.createWallet(clientId, solanaAddress, 'solana', walletLabel, 'solana');
+            console.log('[Wallet] Solana saved to backend:', solanaAddress);
+          }
+        }).catch((err) => {
+          console.error('[Wallet] Failed to save Solana to backend:', err);
+        });
+      }
+    }
+  }, [isSolanaConnectedAdapter, solanaPublicKey, solanaWalletAdapter]);
 
   const value: WalletContextType = {
     evmWallet,
     solanaWallet,
-    isConnecting,
+    isConnecting: isEVMConnecting || isSolanaConnecting || isManualConnecting,
     connectionError,
     connectEVMWallet,
     connectSolanaWallet,
@@ -156,6 +290,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     isEVMConnected: !!evmWallet,
     isSolanaConnected: !!solanaWallet,
     isAnyConnected: !!evmWallet || !!solanaWallet,
+    evmChainId,
+    availableEVMConnectors: connectors,
   };
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;

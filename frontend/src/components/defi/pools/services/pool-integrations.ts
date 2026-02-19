@@ -30,13 +30,19 @@ export interface DefiLlamaPool {
   project: string;
   symbol: string;
   tvlUsd: number;
-  apyBase: number;
+  apyBase: number | null;
   apyReward: number | null;
-  apy: number;
+  apy: number | null;
   rewardTokens: string[] | null;
   underlyingTokens: string[] | null;
   poolMeta: string | null;
   exposure: string;
+  il7d: number | null;
+  apyBase7d: number | null;
+  apyMean30d: number | null;
+  volumeUsd1d: number | null;
+  volumeUsd7d: number | null;
+  stablecoin?: boolean;
 }
 
 export interface DefiLlamaYieldResponse {
@@ -45,11 +51,11 @@ export interface DefiLlamaYieldResponse {
 }
 
 /**
- * Fetch all yield pools from DeFiLlama
+ * Fetch all yield pools from DeFiLlama via our API proxy
  */
 export async function fetchDefiLlamaYields(): Promise<DefiLlamaPool[]> {
   try {
-    const response = await fetch('https://yields.llama.fi/pools');
+    const response = await fetch('/api/defi/defillama/pools');
     const data: DefiLlamaYieldResponse = await response.json();
     return data.data;
   } catch (error) {
@@ -321,6 +327,41 @@ export interface FetchPoolsOptions {
   minApr?: number;
 }
 
+// Default fee rates by protocol (as decimal, e.g. 0.003 = 0.3%)
+const PROTOCOL_DEFAULT_FEE: Record<string, number> = {
+  'uniswap-v3': 0.003,
+  'uniswap-v2': 0.003,
+  'sushiswap': 0.003,
+  'curve': 0.0004,
+  'balancer': 0.003,
+  'pancakeswap': 0.0025,
+  'camelot': 0.003,
+  'aerodrome': 0.003,
+  'velodrome': 0.003,
+  'raydium': 0.0025,
+  'raydium-clmm': 0.0025,
+  'orca': 0.003,
+  'orca-whirlpool': 0.003,
+  'meteora': 0.003,
+  'meteora-dlmm': 0.003,
+  'lifinity': 0.003,
+};
+
+/**
+ * Extract fee tier from DeFiLlama poolMeta field
+ * poolMeta can be: "0.05%", "0.3%", "1%", "stable", null, etc.
+ * Returns fee as decimal (e.g. 0.0005 for "0.05%")
+ */
+function extractFeeTier(poolMeta: string | null, protocol: PoolProtocol): number {
+  if (poolMeta) {
+    const match = poolMeta.match(/([\d.]+)%/);
+    if (match) {
+      return parseFloat(match[1]) / 100;
+    }
+  }
+  return PROTOCOL_DEFAULT_FEE[protocol] || 0.003;
+}
+
 /**
  * Fetch pools from all supported sources
  */
@@ -339,7 +380,8 @@ export async function fetchAllPools(options: FetchPoolsOptions = {}): Promise<Po
 
   // Filter and transform DeFiLlama data
   for (const pool of llamaPools) {
-    if (pool.tvlUsd < minTvl || pool.apy < minApr) continue;
+    if (pool.tvlUsd < minTvl) continue;
+    if ((pool.apy || 0) < minApr) continue;
 
     // Map DeFiLlama chain name to our chain type
     const chain = mapLlamaChainToPoolChain(pool.chain);
@@ -350,37 +392,56 @@ export async function fetchAllPools(options: FetchPoolsOptions = {}): Promise<Po
     if (!protocol) continue;
     if (protocols && !protocols.includes(protocol)) continue;
 
-    // Transform to PoolInfo (simplified)
-    // In production, we'd parse the symbol to get token info
+    // Parse token symbols from DeFiLlama symbol field (e.g. "USDC-ETH")
+    const symbolParts = pool.symbol.split('-');
+    const token0Symbol = symbolParts[0]?.trim() || 'TOKEN0';
+    const token1Symbol = symbolParts[1]?.trim() || 'TOKEN1';
+
+    // Extract fee tier from poolMeta or use protocol default
+    const feeRate = extractFeeTier(pool.poolMeta, protocol);
+    const feeTierPercent = feeRate * 100; // e.g. 0.003 → 0.3
+
+    // Real volume data from DeFiLlama
+    const volume24h = pool.volumeUsd1d || 0;
+    const volume7d = pool.volumeUsd7d || 0;
+
+    // Calculate fees from volume * fee rate
+    const fees24h = volume24h * feeRate;
+    const fees7d = volume7d * feeRate;
+
+    // APR data
+    const apr24h = pool.apyBase || pool.apy || 0;
+    const apr7d = pool.apyBase7d || pool.apy || 0;
+
     allPools.push({
       address: pool.pool,
       protocol,
       chain,
       networkType: CHAIN_CONFIG[chain].networkType,
       token0: {
-        symbol: pool.symbol.split('-')[0] || 'TOKEN0',
-        name: pool.symbol.split('-')[0] || 'Token 0',
+        symbol: token0Symbol,
+        name: token0Symbol,
         address: '',
         decimals: 18,
         price: 0,
       },
       token1: {
-        symbol: pool.symbol.split('-')[1] || 'TOKEN1',
-        name: pool.symbol.split('-')[1] || 'Token 1',
+        symbol: token1Symbol,
+        name: token1Symbol,
         address: '',
         decimals: 18,
         price: 0,
       },
-      feeTier: 0.3,
+      feeTier: feeTierPercent,
       tvl: pool.tvlUsd,
       metrics: {
         totalLiquidityUsd: pool.tvlUsd,
-        volume24h: 0,
-        volume7d: 0,
-        fees24h: 0,
-        fees7d: 0,
-        apr24h: pool.apy,
-        apr7d: pool.apy,
+        volume24h,
+        volume7d,
+        fees24h,
+        fees7d,
+        apr24h,
+        apr7d,
         txCount24h: 0,
       },
     });
@@ -412,12 +473,18 @@ function mapLlamaProjectToProtocol(project: string): PoolProtocol | null {
     'uniswap-v3': 'uniswap-v3',
     'uniswap-v2': 'uniswap-v2',
     'sushiswap': 'sushiswap',
+    'sushiswap-v3': 'sushiswap',
     'curve': 'curve',
     'curve-dex': 'curve',
     'balancer-v2': 'balancer',
     'pancakeswap-amm-v3': 'pancakeswap',
+    'pancakeswap-amm-v2': 'pancakeswap',
     'camelot-v3': 'camelot',
+    'camelot-v2': 'camelot',
+    'aerodrome-v1': 'aerodrome',
     'aerodrome-v2': 'aerodrome',
+    'aerodrome-slipstream': 'aerodrome',
+    'velodrome-v1': 'velodrome',
     'velodrome-v2': 'velodrome',
     'raydium': 'raydium',
     'raydium-concentrated': 'raydium-clmm',
@@ -425,14 +492,23 @@ function mapLlamaProjectToProtocol(project: string): PoolProtocol | null {
     'orca-whirlpools': 'orca-whirlpool',
     'meteora': 'meteora',
     'meteora-dlmm': 'meteora-dlmm',
+    'lifinity-v2': 'lifinity',
   };
 
   const lowerProject = project.toLowerCase();
+
+  // Try exact match first
+  if (mapping[lowerProject]) {
+    return mapping[lowerProject];
+  }
+
+  // Try partial match (project name contains a known key)
   for (const [key, value] of Object.entries(mapping)) {
-    if (lowerProject.includes(key.split('-')[0])) {
+    if (lowerProject === key || lowerProject.startsWith(key)) {
       return value;
     }
   }
+
   return null;
 }
 

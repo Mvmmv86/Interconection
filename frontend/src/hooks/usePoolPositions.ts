@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useWallet } from '@/contexts/wallet-context';
 import { PoolPosition } from '@/components/defi/pools/types';
-import { mockPoolPositions } from '@/components/defi/pools/mock-data';
+import { useUniswapV3Positions } from '@/hooks/defi/useUniswapV3Positions';
+import { useSolanaPoolPositions } from '@/hooks/defi/useSolanaPoolPositions';
 
 export type FetchStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -45,187 +46,125 @@ export interface UsePoolPositionsReturn {
   totalUnclaimedFees: number;
 }
 
-// Simulate fetching EVM positions (in real app, this would query subgraphs)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function fetchEVMPositions(walletAddress: string): Promise<PoolPosition[]> {
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 2000));
-
-  // In real implementation:
-  // 1. Query Uniswap V3 subgraph for positions
-  // 2. Query Curve subgraph
-  // 3. Query other protocol subgraphs
-  // 4. Fetch current prices from CoinGecko/DeFiLlama
-  // 5. Calculate current values
-
-  // Return mock EVM positions
-  return mockPoolPositions.filter((p) => p.networkType === 'evm');
-}
-
-// Simulate fetching Solana positions (in real app, this would query RPC)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function fetchSolanaPositions(walletAddress: string): Promise<PoolPosition[]> {
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 2500));
-
-  // In real implementation:
-  // 1. Query Orca Whirlpool program accounts
-  // 2. Query Raydium CLMM program accounts
-  // 3. Query Meteora DLMM program accounts
-  // 4. Decode position data
-  // 5. Fetch current prices from Jupiter
-
-  // Return mock Solana positions
-  return mockPoolPositions.filter((p) => p.networkType === 'solana');
-}
-
 export function usePoolPositions(): UsePoolPositionsReturn {
-  const { evmWallet, solanaWallet } = useWallet();
+  const { evmWallet, isEVMConnected, isSolanaConnected } = useWallet();
 
-  const [fetchState, setFetchState] = useState<PositionsFetchState>({
-    evm: {
-      status: 'idle',
-      positions: [],
-      error: null,
-      lastFetched: null,
-    },
-    solana: {
-      status: 'idle',
-      positions: [],
-      error: null,
-      lastFetched: null,
-    },
-  });
+  // ═══════════════════════════════════════════
+  // EVM: Real Uniswap V3 positions
+  // ═══════════════════════════════════════════
+  const {
+    positions: uniswapPositions,
+    isLoading: isLoadingUniswap,
+    isError: isUniswapError,
+    refetch: refetchUniswap,
+  } = useUniswapV3Positions();
 
-  // Fetch EVM positions
+  // ═══════════════════════════════════════════
+  // Solana: Real LP positions (Orca, Raydium, Meteora)
+  // ═══════════════════════════════════════════
+  const {
+    positions: solanaLPPositions,
+    isLoading: isLoadingSolanaLP,
+    isError: isSolanaError,
+    error: solanaError,
+    refetch: refetchSolanaLP,
+  } = useSolanaPoolPositions();
+
+  // Derive EVM fetch state from Uniswap hook
+  const evmFetchState = useMemo(() => {
+    let status: FetchStatus = 'idle';
+    if (!isEVMConnected) {
+      status = 'idle';
+    } else if (isLoadingUniswap) {
+      status = 'loading';
+    } else if (isUniswapError) {
+      status = 'error';
+    } else if (uniswapPositions.length >= 0) {
+      status = 'success';
+    }
+
+    return {
+      status,
+      positions: uniswapPositions,
+      error: isUniswapError ? 'Failed to fetch EVM positions' : null,
+      lastFetched: status === 'success' ? new Date() : null,
+    };
+  }, [isEVMConnected, isLoadingUniswap, isUniswapError, uniswapPositions]);
+
+  // Derive Solana fetch state from Solana LP hook
+  const solanaFetchState = useMemo(() => {
+    let status: FetchStatus = 'idle';
+    if (!isSolanaConnected) {
+      status = 'idle';
+    } else if (isLoadingSolanaLP) {
+      status = 'loading';
+    } else if (isSolanaError) {
+      status = 'error';
+    } else if (solanaLPPositions.length >= 0) {
+      status = 'success';
+    }
+
+    return {
+      status,
+      positions: solanaLPPositions,
+      error: isSolanaError ? (solanaError?.message || 'Failed to fetch Solana LP positions') : null,
+      lastFetched: status === 'success' ? new Date() : null,
+    };
+  }, [isSolanaConnected, isLoadingSolanaLP, isSolanaError, solanaError, solanaLPPositions]);
+
+  // Combined fetch state
+  const fetchState: PositionsFetchState = useMemo(
+    () => ({
+      evm: evmFetchState,
+      solana: solanaFetchState,
+    }),
+    [evmFetchState, solanaFetchState]
+  );
+
+  // Refresh EVM positions
   const refreshEVMPositions = useCallback(async () => {
-    if (!evmWallet) {
-      setFetchState((prev) => ({
-        ...prev,
-        evm: { status: 'idle', positions: [], error: null, lastFetched: null },
-      }));
-      return;
-    }
+    if (!evmWallet) return;
+    await refetchUniswap();
+  }, [evmWallet, refetchUniswap]);
 
-    setFetchState((prev) => ({
-      ...prev,
-      evm: { ...prev.evm, status: 'loading', error: null },
-    }));
-
-    try {
-      const positions = await fetchEVMPositions(evmWallet.address);
-      setFetchState((prev) => ({
-        ...prev,
-        evm: {
-          status: 'success',
-          positions,
-          error: null,
-          lastFetched: new Date(),
-        },
-      }));
-    } catch {
-      setFetchState((prev) => ({
-        ...prev,
-        evm: {
-          ...prev.evm,
-          status: 'error',
-          error: 'Failed to fetch EVM positions',
-        },
-      }));
-    }
-  }, [evmWallet]);
-
-  // Fetch Solana positions
+  // Refresh Solana positions
   const refreshSolanaPositions = useCallback(async () => {
-    if (!solanaWallet) {
-      setFetchState((prev) => ({
-        ...prev,
-        solana: { status: 'idle', positions: [], error: null, lastFetched: null },
-      }));
-      return;
-    }
-
-    setFetchState((prev) => ({
-      ...prev,
-      solana: { ...prev.solana, status: 'loading', error: null },
-    }));
-
-    try {
-      const positions = await fetchSolanaPositions(solanaWallet.address);
-      setFetchState((prev) => ({
-        ...prev,
-        solana: {
-          status: 'success',
-          positions,
-          error: null,
-          lastFetched: new Date(),
-        },
-      }));
-    } catch {
-      setFetchState((prev) => ({
-        ...prev,
-        solana: {
-          ...prev.solana,
-          status: 'error',
-          error: 'Failed to fetch Solana positions',
-        },
-      }));
-    }
-  }, [solanaWallet]);
+    await refetchSolanaLP();
+  }, [refetchSolanaLP]);
 
   // Refresh all positions
   const refreshPositions = useCallback(async () => {
     await Promise.all([refreshEVMPositions(), refreshSolanaPositions()]);
   }, [refreshEVMPositions, refreshSolanaPositions]);
 
-  // Auto-fetch when wallets connect
-  useEffect(() => {
-    if (evmWallet && fetchState.evm.status === 'idle') {
-      refreshEVMPositions();
-    }
-  }, [evmWallet, fetchState.evm.status, refreshEVMPositions]);
-
-  useEffect(() => {
-    if (solanaWallet && fetchState.solana.status === 'idle') {
-      refreshSolanaPositions();
-    }
-  }, [solanaWallet, fetchState.solana.status, refreshSolanaPositions]);
-
-  // Clear positions when wallet disconnects
-  useEffect(() => {
-    if (!evmWallet && fetchState.evm.positions.length > 0) {
-      setFetchState((prev) => ({
-        ...prev,
-        evm: { status: 'idle', positions: [], error: null, lastFetched: null },
-      }));
-    }
-  }, [evmWallet, fetchState.evm.positions.length]);
-
-  useEffect(() => {
-    if (!solanaWallet && fetchState.solana.positions.length > 0) {
-      setFetchState((prev) => ({
-        ...prev,
-        solana: { status: 'idle', positions: [], error: null, lastFetched: null },
-      }));
-    }
-  }, [solanaWallet, fetchState.solana.positions.length]);
-
-  // Combined positions
-  const positions = [...fetchState.evm.positions, ...fetchState.solana.positions];
+  // Combined positions (real EVM + real Solana)
+  const positions = useMemo(
+    () => [...evmFetchState.positions, ...solanaFetchState.positions],
+    [evmFetchState.positions, solanaFetchState.positions]
+  );
 
   // Calculate totals
-  const totalValue = positions.reduce((sum, p) => sum + p.totalValueUsd, 0);
-  const totalFees = positions.reduce((sum, p) => sum + p.feesEarned.totalUsd, 0);
-  const totalUnclaimedFees = positions.reduce((sum, p) => sum + p.feesUnclaimed.totalUsd, 0);
+  const totalValue = useMemo(
+    () => positions.reduce((sum, p) => sum + p.totalValueUsd, 0),
+    [positions]
+  );
+  const totalFees = useMemo(
+    () => positions.reduce((sum, p) => sum + p.feesEarned.totalUsd, 0),
+    [positions]
+  );
+  const totalUnclaimedFees = useMemo(
+    () => positions.reduce((sum, p) => sum + p.feesUnclaimed.totalUsd, 0),
+    [positions]
+  );
 
   return {
     positions,
-    evmPositions: fetchState.evm.positions,
-    solanaPositions: fetchState.solana.positions,
+    evmPositions: evmFetchState.positions,
+    solanaPositions: solanaFetchState.positions,
     fetchState,
-    isLoading: fetchState.evm.status === 'loading' || fetchState.solana.status === 'loading',
-    isLoadingEVM: fetchState.evm.status === 'loading',
-    isLoadingSolana: fetchState.solana.status === 'loading',
+    isLoading: evmFetchState.status === 'loading' || solanaFetchState.status === 'loading',
+    isLoadingEVM: evmFetchState.status === 'loading',
+    isLoadingSolana: solanaFetchState.status === 'loading',
     refreshPositions,
     refreshEVMPositions,
     refreshSolanaPositions,

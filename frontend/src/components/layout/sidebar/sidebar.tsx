@@ -2,7 +2,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { MiniBlocksLogo } from '@/components/auth/mini-blocks-logo';
 import { usePathname } from 'next/navigation';
+import { useAuth } from '@/contexts/auth-context';
 import {
   LayoutDashboard,
   Wallet,
@@ -19,6 +22,7 @@ import {
   LogOut,
   HardDrive,
   Users,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
@@ -46,6 +50,7 @@ const positionsNavItems: NavItem[] = [
 const analyticsNavItems: NavItem[] = [
   { label: 'Analytics', href: '/analytics', icon: BarChart3 },
   { label: 'Alerts', href: '/alerts', icon: Bell },
+  { label: 'AI', href: '/ai', icon: Sparkles },
 ];
 
 const bottomNavItems: NavItem[] = [
@@ -56,7 +61,9 @@ const bottomNavItems: NavItem[] = [
 export function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
   const { theme } = useTheme();
+  const { logout } = useAuth();
 
   const NavLink = ({ item }: { item: NavItem }) => {
     const isActive = pathname === item.href;
@@ -138,14 +145,7 @@ export function Sidebar() {
         theme === 'dark' ? 'border-white/[0.03]' : 'border-gray-100'
       )}>
         <Link href="/" className="flex items-center gap-2">
-          <div
-            className="w-7 h-7 rounded-md flex items-center justify-center"
-            style={{
-              background: 'linear-gradient(135deg, #a855f7 0%, #3b82f6 50%, #06b6d4 100%)',
-            }}
-          >
-            <span className="text-white font-bold text-[10px]">IC</span>
-          </div>
+          <MiniBlocksLogo />
           {!isCollapsed && (
             <span className={cn(
               'text-[11px] font-semibold tracking-tight uppercase',
@@ -220,13 +220,17 @@ export function Sidebar() {
         ))}
 
         <button
+          onClick={() => {
+            logout();
+            router.push('/login');
+          }}
           className={cn(
             'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md transition-all duration-200',
             'text-[11px] font-medium text-status-error/60 hover:text-status-error hover:bg-status-error/5'
           )}
         >
           <LogOut className="w-4 h-4" />
-          {!isCollapsed && <span>Logout</span>}
+          {!isCollapsed && <span>Sair</span>}
         </button>
       </div>
 

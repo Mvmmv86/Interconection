@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import {
@@ -12,9 +13,54 @@ import {
 } from '@/components/dashboard';
 import { useTheme } from '@/contexts/theme-context';
 import { cn } from '@/lib/utils';
+import { useAllPositions } from '@/hooks/useAllPositions';
+import { usePortfolioRisk } from '@/hooks/usePortfolioRisk';
+import { useWalletTransactions } from '@/hooks/useWalletTransactions';
+import { useExchangeTransactions } from '@/hooks/useExchangeTransactions';
 
 export default function Home() {
   const { theme } = useTheme();
+
+  // ═══════════════════════════════════════════
+  // Real data from all sources
+  // ═══════════════════════════════════════════
+  const {
+    positions,
+    summary,
+    distributionByType,
+    isLoading,
+  } = useAllPositions();
+
+  const {
+    riskScore,
+    isLoading: isLoadingRisk,
+  } = usePortfolioRisk(positions, summary);
+
+  const {
+    transactions: walletTxs,
+    isLoading: isLoadingWalletTx,
+  } = useWalletTransactions({ limit: 10 });
+
+  const {
+    transactions: exchangeTxs,
+    isLoading: isLoadingExchangeTx,
+  } = useExchangeTransactions({ limit: 10 });
+
+  // ═══════════════════════════════════════════
+  // Derived P&L metrics
+  // ═══════════════════════════════════════════
+  const derivedMetrics = useMemo(() => {
+    const pnlToday = positions.reduce((sum, p) => sum + (p.pnl || 0), 0);
+    const pnlTodayPercent = summary.totalValue > 0
+      ? (pnlToday / summary.totalValue) * 100 : 0;
+
+    // P&L Month: estimate based on daily P&L * 30
+    const pnlMonth = pnlToday * 30;
+    const pnlMonthPercent = summary.totalValue > 0
+      ? (pnlMonth / summary.totalValue) * 100 : 0;
+
+    return { pnlToday, pnlTodayPercent, pnlMonth, pnlMonthPercent };
+  }, [positions, summary]);
 
   return (
     <div
@@ -63,18 +109,41 @@ export default function Home() {
           </div>
 
           {/* Stats Overview */}
-          <PortfolioOverview />
+          <PortfolioOverview
+            totalValue={summary.totalValue}
+            pnlToday={derivedMetrics.pnlToday}
+            pnlTodayPercent={derivedMetrics.pnlTodayPercent}
+            pnlMonth={derivedMetrics.pnlMonth}
+            pnlMonthPercent={derivedMetrics.pnlMonthPercent}
+            avgApy={summary.avgApy || 0}
+            isLoading={isLoading}
+          />
 
           {/* Charts Row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-5">
-            <PortfolioChart />
-            <AssetAllocation />
+            <PortfolioChart
+              positions={positions}
+              totalValue={summary.totalValue}
+              isLoading={isLoading}
+            />
+            <AssetAllocation
+              data={distributionByType}
+              totalValue={summary.totalValue}
+              isLoading={isLoading}
+            />
           </div>
 
           {/* Bottom Row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-5">
-            <RecentActivity />
-            <PendingAlerts />
+            <RecentActivity
+              walletTransactions={walletTxs}
+              exchangeTransactions={exchangeTxs}
+              isLoading={isLoadingWalletTx || isLoadingExchangeTx}
+            />
+            <PendingAlerts
+              alerts={riskScore?.alerts || []}
+              isLoading={isLoading || isLoadingRisk}
+            />
             <ActiveStrategies />
           </div>
         </main>

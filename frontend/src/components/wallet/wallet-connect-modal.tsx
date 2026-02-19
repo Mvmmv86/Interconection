@@ -1,24 +1,19 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   X,
   Wallet,
   Loader2,
   CheckCircle,
   AlertCircle,
-  ChevronRight,
   ExternalLink,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
 import {
   useWallet,
-  EVM_WALLETS,
-  SOLANA_WALLETS,
   formatAddress,
-  type EVMWalletType,
-  type SolanaWalletType,
 } from '@/contexts/wallet-context';
 
 interface WalletConnectModalProps {
@@ -31,7 +26,6 @@ export function WalletConnectModal({ isOpen, onClose, initialTab = 'evm' }: Wall
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const [activeTab, setActiveTab] = useState<'evm' | 'solana'>(initialTab);
-  const [connectingWallet, setConnectingWallet] = useState<string | null>(null);
 
   const {
     evmWallet,
@@ -44,18 +38,21 @@ export function WalletConnectModal({ isOpen, onClose, initialTab = 'evm' }: Wall
     disconnectSolanaWallet,
   } = useWallet();
 
+  // Update tab when initialTab changes
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
   if (!isOpen) return null;
 
-  const handleEVMConnect = async (type: EVMWalletType) => {
-    setConnectingWallet(type);
-    await connectEVMWallet(type);
-    setConnectingWallet(null);
+  const handleEVMConnect = async () => {
+    // Will automatically detect and connect to browser wallet (MetaMask, Rabby, etc.)
+    await connectEVMWallet();
   };
 
-  const handleSolanaConnect = async (type: SolanaWalletType) => {
-    setConnectingWallet(type);
-    await connectSolanaWallet(type);
-    setConnectingWallet(null);
+  const handleSolanaConnect = async () => {
+    // The Solana wallet adapter will connect to available wallets
+    await connectSolanaWallet();
   };
 
   return (
@@ -164,7 +161,7 @@ export function WalletConnectModal({ isOpen, onClose, initialTab = 'evm' }: Wall
 
           {/* EVM Wallets */}
           {activeTab === 'evm' && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {evmWallet ? (
                 <div className="p-4 rounded-xl bg-status-success/5 border border-status-success/20">
                   <div className="flex items-center justify-between mb-3">
@@ -175,7 +172,7 @@ export function WalletConnectModal({ isOpen, onClose, initialTab = 'evm' }: Wall
                           {evmWallet.label}
                         </p>
                         <p className={cn("text-[10px]", isDark ? "text-white/50" : "text-gray-500")}>
-                          Connected
+                          {evmWallet.chainName || 'Connected'}
                         </p>
                       </div>
                     </div>
@@ -199,34 +196,43 @@ export function WalletConnectModal({ isOpen, onClose, initialTab = 'evm' }: Wall
               ) : (
                 <>
                   <p className={cn("text-[10px] mb-3", isDark ? "text-white/50" : "text-gray-500")}>
-                    Connect an EVM wallet to track positions on Ethereum, Arbitrum, Base, and more
+                    Connect your browser wallet (MetaMask, Rabby, etc.) to track positions on Ethereum, Arbitrum, Base, and more
                   </p>
-                  {Object.entries(EVM_WALLETS).map(([type, wallet]) => (
-                    <button
-                      key={type}
-                      onClick={() => handleEVMConnect(type as EVMWalletType)}
-                      disabled={isConnecting}
-                      className={cn(
-                        'w-full flex items-center justify-between p-3 rounded-xl border transition-all',
-                        isDark
-                          ? 'bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/[0.1]'
-                          : 'bg-gray-50 border-gray-200 hover:bg-gray-100 hover:border-gray-300',
-                        isConnecting && connectingWallet === type && 'border-accent-purple/50'
-                      )}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl">{wallet.icon}</span>
-                        <span className={cn("text-[12px] font-medium", isDark ? "text-white" : "text-gray-900")}>
-                          {wallet.name}
+                  <button
+                    onClick={handleEVMConnect}
+                    disabled={isConnecting}
+                    className={cn(
+                      'w-full flex items-center justify-between p-4 rounded-xl border transition-all',
+                      isDark
+                        ? 'bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/[0.1]'
+                        : 'bg-gray-50 border-gray-200 hover:bg-gray-100 hover:border-gray-300',
+                      isConnecting && 'border-accent-purple/50'
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-[#627eea]/10 flex items-center justify-center">
+                        <span className="text-2xl">🦊</span>
+                      </div>
+                      <div className="text-left">
+                        <span className={cn("text-[12px] font-medium block", isDark ? "text-white" : "text-gray-900")}>
+                          Browser Wallet
+                        </span>
+                        <span className={cn("text-[10px]", isDark ? "text-white/50" : "text-gray-500")}>
+                          MetaMask, Rabby, Coinbase, etc.
                         </span>
                       </div>
-                      {isConnecting && connectingWallet === type ? (
-                        <Loader2 className="w-4 h-4 text-accent-purple animate-spin" />
-                      ) : (
-                        <ChevronRight className={cn("w-4 h-4", isDark ? "text-white/30" : "text-gray-400")} />
-                      )}
-                    </button>
-                  ))}
+                    </div>
+                    {isConnecting ? (
+                      <Loader2 className="w-5 h-5 text-accent-purple animate-spin" />
+                    ) : (
+                      <div className={cn(
+                        "px-3 py-1.5 rounded-lg text-[10px] font-medium",
+                        isDark ? "bg-[#627eea]/20 text-[#627eea]" : "bg-[#627eea]/10 text-[#627eea]"
+                      )}>
+                        Connect
+                      </div>
+                    )}
+                  </button>
                 </>
               )}
             </div>
@@ -234,7 +240,7 @@ export function WalletConnectModal({ isOpen, onClose, initialTab = 'evm' }: Wall
 
           {/* Solana Wallets */}
           {activeTab === 'solana' && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {solanaWallet ? (
                 <div className="p-4 rounded-xl bg-status-success/5 border border-status-success/20">
                   <div className="flex items-center justify-between mb-3">
@@ -271,32 +277,41 @@ export function WalletConnectModal({ isOpen, onClose, initialTab = 'evm' }: Wall
                   <p className={cn("text-[10px] mb-3", isDark ? "text-white/50" : "text-gray-500")}>
                     Connect a Solana wallet to track positions on Orca, Raydium, Meteora, and more
                   </p>
-                  {Object.entries(SOLANA_WALLETS).map(([type, wallet]) => (
-                    <button
-                      key={type}
-                      onClick={() => handleSolanaConnect(type as SolanaWalletType)}
-                      disabled={isConnecting}
-                      className={cn(
-                        'w-full flex items-center justify-between p-3 rounded-xl border transition-all',
-                        isDark
-                          ? 'bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/[0.1]'
-                          : 'bg-gray-50 border-gray-200 hover:bg-gray-100 hover:border-gray-300',
-                        isConnecting && connectingWallet === type && 'border-accent-purple/50'
-                      )}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl">{wallet.icon}</span>
-                        <span className={cn("text-[12px] font-medium", isDark ? "text-white" : "text-gray-900")}>
-                          {wallet.name}
+                  <button
+                    onClick={handleSolanaConnect}
+                    disabled={isConnecting}
+                    className={cn(
+                      'w-full flex items-center justify-between p-4 rounded-xl border transition-all',
+                      isDark
+                        ? 'bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/[0.1]'
+                        : 'bg-gray-50 border-gray-200 hover:bg-gray-100 hover:border-gray-300',
+                      isConnecting && 'border-accent-purple/50'
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-[#9945ff]/10 flex items-center justify-center">
+                        <span className="text-2xl">👻</span>
+                      </div>
+                      <div className="text-left">
+                        <span className={cn("text-[12px] font-medium block", isDark ? "text-white" : "text-gray-900")}>
+                          Solana Wallet
+                        </span>
+                        <span className={cn("text-[10px]", isDark ? "text-white/50" : "text-gray-500")}>
+                          Phantom, Solflare, etc.
                         </span>
                       </div>
-                      {isConnecting && connectingWallet === type ? (
-                        <Loader2 className="w-4 h-4 text-accent-purple animate-spin" />
-                      ) : (
-                        <ChevronRight className={cn("w-4 h-4", isDark ? "text-white/30" : "text-gray-400")} />
-                      )}
-                    </button>
-                  ))}
+                    </div>
+                    {isConnecting ? (
+                      <Loader2 className="w-5 h-5 text-accent-purple animate-spin" />
+                    ) : (
+                      <div className={cn(
+                        "px-3 py-1.5 rounded-lg text-[10px] font-medium",
+                        isDark ? "bg-[#9945ff]/20 text-[#9945ff]" : "bg-[#9945ff]/10 text-[#9945ff]"
+                      )}>
+                        Connect
+                      </div>
+                    )}
+                  </button>
                 </>
               )}
             </div>

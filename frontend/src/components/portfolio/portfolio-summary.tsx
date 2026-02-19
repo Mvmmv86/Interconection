@@ -1,8 +1,20 @@
 'use client';
 
-import { TrendingUp, TrendingDown, Wallet, PiggyBank, Coins, BarChart3 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, PiggyBank, Coins, BarChart3, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
+
+export interface PortfolioSummaryProps {
+  totalAum: number;
+  aumChange24h?: number;
+  unrealizedPnl: number;
+  unrealizedPnlPercent?: number;
+  realizedPnl: number | null; // null = not available yet
+  yieldEarnings: number;
+  avgApy?: number;
+  activePositions: number;
+  isLoading?: boolean;
+}
 
 interface SummaryCardProps {
   label: string;
@@ -11,6 +23,7 @@ interface SummaryCardProps {
   subValue?: string;
   icon: React.ReactNode;
   accentColor: 'blue' | 'green' | 'purple' | 'cyan' | 'orange';
+  muted?: boolean;
 }
 
 const accentColors = {
@@ -29,7 +42,20 @@ const iconBgColors = {
   orange: 'bg-accent-orange/10 text-accent-orange',
 };
 
-function SummaryCard({ label, value, change, subValue, icon, accentColor }: SummaryCardProps) {
+/**
+ * Format a USD value for display
+ */
+function formatUsd(value: number): string {
+  if (Math.abs(value) >= 1_000_000) {
+    return `$${(value / 1_000_000).toFixed(2)}M`;
+  }
+  if (Math.abs(value) >= 1_000) {
+    return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  }
+  return `$${value.toFixed(2)}`;
+}
+
+function SummaryCard({ label, value, change, subValue, icon, accentColor, muted }: SummaryCardProps) {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const isPositive = change !== undefined && change >= 0;
@@ -77,7 +103,9 @@ function SummaryCard({ label, value, change, subValue, icon, accentColor }: Summ
           </p>
           <p className={cn(
             'text-xl font-semibold tabular-nums',
-            isDark ? 'text-white' : 'text-gray-900'
+            muted
+              ? (isDark ? 'text-white/30' : 'text-gray-400')
+              : (isDark ? 'text-white' : 'text-gray-900')
           )}>
             {value}
           </p>
@@ -115,42 +143,73 @@ function SummaryCard({ label, value, change, subValue, icon, accentColor }: Summ
   );
 }
 
-export function PortfolioSummary() {
-  const summaryData = [
+export function PortfolioSummary({
+  totalAum,
+  aumChange24h,
+  unrealizedPnl,
+  unrealizedPnlPercent,
+  realizedPnl,
+  yieldEarnings,
+  avgApy,
+  activePositions,
+  isLoading,
+}: PortfolioSummaryProps) {
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="backdrop-blur-sm rounded-xl p-4 flex items-center justify-center h-[88px]"
+            style={{
+              background: 'rgba(22, 25, 35, 0.5)',
+              border: '1px solid rgba(255, 255, 255, 0.06)',
+            }}
+          >
+            <Loader2 className="w-5 h-5 animate-spin text-white/20" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const summaryData: (SummaryCardProps)[] = [
     {
       label: 'Total AUM',
-      value: '$2,456,789',
-      change: 12.5,
+      value: formatUsd(totalAum),
+      change: aumChange24h,
       subValue: '24h',
       icon: <Wallet className="w-5 h-5" />,
       accentColor: 'blue' as const,
     },
     {
       label: 'Unrealized P&L',
-      value: '$345,678',
-      change: 8.7,
-      subValue: 'all time',
-      icon: <TrendingUp className="w-5 h-5" />,
+      value: `${unrealizedPnl >= 0 ? '+' : ''}${formatUsd(unrealizedPnl)}`,
+      change: unrealizedPnlPercent,
+      subValue: '24h',
+      icon: unrealizedPnl >= 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />,
       accentColor: 'green' as const,
     },
     {
       label: 'Realized P&L (YTD)',
-      value: '$123,456',
-      change: 15.2,
+      value: realizedPnl !== null ? formatUsd(realizedPnl) : '--',
+      change: realizedPnl !== null ? undefined : undefined,
+      subValue: realizedPnl === null ? 'Coming Soon' : undefined,
       icon: <BarChart3 className="w-5 h-5" />,
       accentColor: 'purple' as const,
+      muted: realizedPnl === null,
     },
     {
       label: 'Yield Earnings',
-      value: '$45,678',
-      change: 4.8,
+      value: formatUsd(yieldEarnings),
+      change: avgApy,
       subValue: 'APY avg',
       icon: <PiggyBank className="w-5 h-5" />,
       accentColor: 'cyan' as const,
     },
     {
       label: 'Active Positions',
-      value: '47',
+      value: String(activePositions),
       icon: <Coins className="w-5 h-5" />,
       accentColor: 'orange' as const,
     },

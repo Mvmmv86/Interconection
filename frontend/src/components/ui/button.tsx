@@ -2,6 +2,7 @@
 
 import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/contexts/theme-context';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -11,26 +12,39 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'primary', size = 'md', isLoading, disabled, children, ...props }, ref) => {
+    const { theme } = useTheme();
+    const isDark = theme === 'dark';
+
     const baseStyles = `
-      inline-flex items-center justify-center gap-2 font-semibold rounded-md
-      transition-all duration-base outline-none
+      inline-flex items-center justify-center gap-2 font-semibold rounded-lg
+      transition-all duration-200 outline-none
       disabled:opacity-50 disabled:cursor-not-allowed
-      active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-accent-purple focus-visible:ring-offset-2 focus-visible:ring-offset-background-primary
+      active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-accent-purple focus-visible:ring-offset-2
     `;
 
     const variants = {
-      primary: 'bg-gradient-brand text-white hover:brightness-110 hover:shadow-glow-purple',
-      secondary: 'bg-transparent border border-border-strong text-text-primary hover:bg-white/5',
-      ghost: 'bg-transparent text-text-secondary hover:text-text-primary hover:bg-white/5',
-      danger: 'bg-status-error text-white hover:brightness-110',
+      primary: 'bg-accent-purple text-white hover:bg-accent-purple/90',
+      secondary: isDark
+        ? 'bg-transparent border border-white/20 text-white hover:bg-white/5'
+        : 'bg-transparent border border-gray-300 text-gray-700 hover:bg-gray-50',
+      ghost: isDark
+        ? 'bg-transparent text-white/70 hover:text-white hover:bg-white/5'
+        : 'bg-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+      danger: 'bg-status-error text-white hover:bg-status-error/90',
     };
 
     const sizes = {
-      sm: 'px-4 py-2 text-body-sm',
-      md: 'px-6 py-3 text-body-md',
-      lg: 'px-8 py-4 text-body-lg',
-      icon: 'p-0 w-10 h-10 rounded-md bg-white/5 hover:bg-white/10',
-      'icon-sm': 'p-0 w-8 h-8 rounded-md bg-white/5 hover:bg-white/10',
+      sm: 'px-4 py-2 text-xs',
+      md: 'px-5 py-2.5 text-sm',
+      lg: 'px-8 py-3 text-base',
+      icon: cn(
+        'p-0 w-10 h-10 rounded-lg',
+        isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'
+      ),
+      'icon-sm': cn(
+        'p-0 w-8 h-8 rounded-lg',
+        isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-100 hover:bg-gray-200'
+      ),
     };
 
     return (

@@ -4,6 +4,7 @@ import { type HTMLAttributes, forwardRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from './button';
+import { useTheme } from '@/contexts/theme-context';
 
 export interface ModalProps extends HTMLAttributes<HTMLDivElement> {
   isOpen: boolean;
@@ -15,6 +16,9 @@ export interface ModalProps extends HTMLAttributes<HTMLDivElement> {
 
 export const Modal = forwardRef<HTMLDivElement, ModalProps>(
   ({ className, isOpen, onClose, title, size = 'md', showCloseButton = true, children, ...props }, ref) => {
+    const { theme } = useTheme();
+    const isDark = theme === 'dark';
+
     const sizes = {
       sm: 'max-w-md',
       md: 'max-w-lg',
@@ -45,7 +49,10 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(
       <div className="fixed inset-0 z-50">
         {/* Overlay */}
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm"
+          className={cn(
+            "fixed inset-0 backdrop-blur-sm",
+            isDark ? "bg-black/70" : "bg-black/40"
+          )}
           onClick={onClose}
         />
 
@@ -55,10 +62,12 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(
             <div
               ref={ref}
               className={cn(
-                'relative w-full bg-background-tertiary/95 backdrop-blur-xl',
-                'border border-border-default rounded-2xl shadow-xl',
+                'relative w-full backdrop-blur-xl rounded-2xl shadow-xl',
                 'p-6 md:p-8',
                 'animate-in fade-in-0 zoom-in-95',
+                isDark
+                  ? 'bg-[rgba(26,26,36,0.98)] border border-[rgba(255,255,255,0.08)]'
+                  : 'bg-white border border-gray-200 shadow-2xl',
                 sizes[size],
                 className
               )}
@@ -68,14 +77,24 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(
               {(title || showCloseButton) && (
                 <div className="flex items-center justify-between mb-6">
                   {title && (
-                    <h2 className="text-heading-lg text-text-primary">{title}</h2>
+                    <h2 className={cn(
+                      "text-xl font-semibold",
+                      isDark ? "text-white" : "text-gray-900"
+                    )}>
+                      {title}
+                    </h2>
                   )}
                   {showCloseButton && (
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={onClose}
-                      className="ml-auto"
+                      className={cn(
+                        "ml-auto",
+                        isDark
+                          ? "text-white/50 hover:text-white hover:bg-white/10"
+                          : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                      )}
                     >
                       <X className="w-5 h-5" />
                     </Button>
@@ -99,10 +118,17 @@ export type ModalFooterProps = HTMLAttributes<HTMLDivElement>;
 
 export const ModalFooter = forwardRef<HTMLDivElement, ModalFooterProps>(
   ({ className, children, ...props }, ref) => {
+    const { theme } = useTheme();
+    const isDark = theme === 'dark';
+
     return (
       <div
         ref={ref}
-        className={cn('flex items-center justify-end gap-3 mt-6 pt-6 border-t border-border-subtle', className)}
+        className={cn(
+          'flex items-center justify-end gap-3 mt-6 pt-6 border-t',
+          isDark ? 'border-white/[0.06]' : 'border-gray-200',
+          className
+        )}
         {...props}
       >
         {children}

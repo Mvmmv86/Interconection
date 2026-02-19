@@ -1,10 +1,17 @@
 export { PortfolioSummary } from './portfolio-summary';
+export type { PortfolioSummaryProps } from './portfolio-summary';
 export { AllocationByType } from './allocation-by-type';
+export type { AllocationByTypeProps } from './allocation-by-type';
 export { AllocationByChain } from './allocation-by-chain';
+export type { AllocationByChainProps } from './allocation-by-chain';
 export { TopHoldings } from './top-holdings';
+export type { TopHoldingsProps } from './top-holdings';
 export { ExchangePositions } from './exchange-positions';
+export type { ExchangePositionsProps } from './exchange-positions';
 export { DeFiPositions } from './defi-positions';
-export { StakingPositions } from './staking-positions';
+export type { DeFiPositionsProps } from './defi-positions';
 export { LiquidityPositions } from './liquidity-positions';
+export type { LiquidityPositionsProps } from './liquidity-positions';
 export { DerivativesPositions } from './derivatives-positions';
 export { RiskExposure } from './risk-exposure';
+export type { RiskExposureProps } from './risk-exposure';

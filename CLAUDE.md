@@ -19,6 +19,31 @@ Antes de marcar uma task como concluída e iniciar outra:
 
 ---
 
+## Plugins de Frontend (OBRIGATÓRIO)
+
+**SEMPRE utilizar os dois plugins abaixo ao desenvolver qualquer componente, página ou interface frontend:**
+
+### 1. Interface Design (Dammyjay93)
+- **Localização:** `interface-design/`
+- **Referência principal:** `interface-design/reference/system-template.md`
+- **O que faz:** Mantém consistência de design entre sessões. Salva decisões de design (spacing, cores, depth, tipografia) em `.interface-design/system.md` e carrega automaticamente.
+- **Uso:** Sempre verificar se existe `.interface-design/system.md` antes de criar componentes. Se existir, seguir os padrões definidos. Se não, propor uma direção de design baseada no contexto do projeto (Sophistication & Trust para fintech/treasury).
+- **Comandos:** `/interface-design` para iniciar, `/interface-design:status` para ver sistema atual, `/interface-design:audit` para verificar consistência.
+
+### 2. Frontend Design (Anthropic)
+- **Localização:** `claude-code-plugins/plugins/frontend-design/`
+- **Referência principal:** `claude-code-plugins/plugins/frontend-design/skills/frontend-design/SKILL.md`
+- **O que faz:** Gera interfaces production-grade com estética distintiva. Evita o visual genérico "AI slop" (cores e fontes repetitivas, layouts previsíveis).
+- **Uso:** Antes de codar qualquer frontend, pensar em: Purpose, Tone, Constraints, Differentiation. Escolher tipografia marcante, paleta de cores com intenção, animações de alto impacto e composição espacial criativa.
+
+### Fluxo combinado ao criar frontend:
+1. Carregar `.interface-design/system.md` (se existir) para manter consistência
+2. Aplicar os princípios de design do Frontend Design (Anthropic) para qualidade estética
+3. Declarar as decisões de design antes de cada componente
+4. Oferecer salvar novos padrões no system.md ao final
+
+---
+
 ## Visão Geral do Projeto
 
 **Interconection Treasury MGMT** é uma plataforma de gestão de tesouraria corporativa em criptoativos (Treasury Management as a Service).
