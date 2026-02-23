@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { useTheme } from '@/contexts/theme-context';
 import { api } from '@/lib/api/client';
+import { useAuth } from '@/contexts/auth-context';
 import {
   Building2,
   RefreshCw,
@@ -36,13 +37,16 @@ const USE_MOCK_DATA = process.env.NODE_ENV === 'development';
 
 export default function ExchangesPage() {
   const { theme } = useTheme();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const isDark = theme === 'dark';
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
 
-  // Fetch or create default client for exchange association
+  // Fetch or create default client for exchange association (wait for auth)
   useEffect(() => {
+    if (!isAuthenticated || authLoading) return;
+
     const fetchOrCreateClient = async () => {
       const result = await api.getClients();
       if (result.success && result.data && result.data.length > 0) {
@@ -56,7 +60,7 @@ export default function ExchangesPage() {
       }
     };
     fetchOrCreateClient();
-  }, []);
+  }, [isAuthenticated, authLoading]);
 
   // Fetch real data from API
   const {

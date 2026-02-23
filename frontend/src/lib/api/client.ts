@@ -223,9 +223,12 @@ class ApiClient {
     }
   }
 
+  private isRefreshing = false;
+
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    skipAutoRefresh = false
   ): Promise<ApiResponse<T>> {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
@@ -241,6 +244,25 @@ class ApiClient {
         ...options,
         headers,
       });
+
+      // Auto-refresh on 401 (skip for auth endpoints to avoid loops)
+      if (response.status === 401 && !skipAutoRefresh && !endpoint.includes('/auth/')) {
+        if (!this.isRefreshing) {
+          this.isRefreshing = true;
+          const refreshResult = await this.refreshToken();
+          this.isRefreshing = false;
+
+          if (refreshResult.success) {
+            // Retry the original request with new token
+            return this.request<T>(endpoint, options, true);
+          }
+        }
+        const errorData = await response.json().catch(() => ({}));
+        return {
+          success: false,
+          error: errorData.message || errorData.detail || `HTTP ${response.status}`,
+        };
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
