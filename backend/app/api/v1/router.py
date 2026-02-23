@@ -16,6 +16,10 @@ from app.api.v1.endpoints import (
     manual_assets,
     staking_positions,
     pool_positions,
+    ai,
+    risk_thresholds,
+    notifications,
+    wallet_data,
 )
 
 api_router = APIRouter()
@@ -35,3 +39,8 @@ api_router.include_router(portfolio.router, prefix="/portfolio", tags=["Portfoli
 api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["Alerts"])
 api_router.include_router(assets.router, prefix="/assets", tags=["Assets"])
+# New endpoints
+api_router.include_router(ai.router, prefix="/ai", tags=["AI"])
+api_router.include_router(risk_thresholds.router, prefix="/risk-thresholds", tags=["Risk Thresholds"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
+api_router.include_router(wallet_data.router, prefix="/wallets", tags=["Wallet Data"])
