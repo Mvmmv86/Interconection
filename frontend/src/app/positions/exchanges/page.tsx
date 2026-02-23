@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { useTheme } from '@/contexts/theme-context';
+import { api } from '@/lib/api/client';
 import {
   Building2,
   RefreshCw,
@@ -38,6 +39,24 @@ export default function ExchangesPage() {
   const isDark = theme === 'dark';
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [clientId, setClientId] = useState<string | null>(null);
+
+  // Fetch or create default client for exchange association
+  useEffect(() => {
+    const fetchOrCreateClient = async () => {
+      const result = await api.getClients();
+      if (result.success && result.data && result.data.length > 0) {
+        setClientId(result.data[0].id);
+      } else {
+        // Auto-create a default client
+        const createResult = await api.createClient('Default Portfolio');
+        if (createResult.success && createResult.data) {
+          setClientId(createResult.data.id);
+        }
+      }
+    };
+    fetchOrCreateClient();
+  }, []);
 
   // Fetch real data from API
   const {
@@ -436,12 +455,14 @@ export default function ExchangesPage() {
       </div>
 
       {/* Add Exchange Modal */}
-      <AddExchangeModal
-        isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        clientId="00000000-0000-0000-0000-000000000001"
-        onSuccess={handleAddExchangeSuccess}
-      />
+      {clientId && (
+        <AddExchangeModal
+          isOpen={isAddModalOpen}
+          onClose={() => setIsAddModalOpen(false)}
+          clientId={clientId}
+          onSuccess={handleAddExchangeSuccess}
+        />
+      )}
     </div>
   );
 }

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
+import { api } from '@/lib/api/client';
 
 // Supported exchanges with their info
 const EXCHANGES = [
@@ -146,29 +147,20 @@ export function AddExchangeModal({ isOpen, onClose, clientId, onSuccess }: AddEx
     setStep('testing');
 
     try {
-      const response = await fetch('/api/v1/exchanges/test-connection', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          exchange: selectedExchange.id,
-          api_key: apiKey,
-          api_secret: apiSecret,
-          passphrase: passphrase || undefined,
-        }),
+      const result = await api.testExchangeConnection({
+        exchange: selectedExchange.id,
+        api_key: apiKey,
+        api_secret: apiSecret,
       });
 
-      const data = await response.json();
-
-      if (data.success) {
+      if (result.success && result.data?.success) {
         setTestResult({
-          assetsFound: data.assets_found,
-          totalValue: data.total_value_usd,
+          assetsFound: result.data.assets_found,
+          totalValue: Number(result.data.total_value_usd),
         });
         setStep('success');
       } else {
-        setError(data.message || 'Connection test failed');
+        setError(result.data?.message || result.error || 'Connection test failed');
         setStep('error');
       }
     } catch {
@@ -186,25 +178,18 @@ export function AddExchangeModal({ isOpen, onClose, clientId, onSuccess }: AddEx
     setError(null);
 
     try {
-      const response = await fetch(`/api/v1/clients/${clientId}/exchanges`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          exchange: selectedExchange.id,
-          label,
-          api_key: apiKey,
-          api_secret: apiSecret,
-        }),
+      const result = await api.createClientExchange(clientId, {
+        exchange: selectedExchange.id,
+        label,
+        api_key: apiKey,
+        api_secret: apiSecret,
       });
 
-      if (response.ok) {
+      if (result.success) {
         onSuccess();
         handleClose();
       } else {
-        const data = await response.json();
-        setError(data.detail || 'Failed to save exchange');
+        setError(result.error || 'Failed to save exchange');
       }
     } catch {
       setError('Failed to save exchange');
