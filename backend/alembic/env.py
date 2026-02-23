@@ -12,18 +12,18 @@ from alembic import context
 # Import your models and config
 from app.core.config import settings
 from app.db.base import Base
+# Import ALL models so Alembic detects them for autogenerate
 from app.models import (
-    Organization,
-    User,
-    Client,
-    Wallet,
-    Exchange,
-    Asset,
-    Position,
-    Transaction,
-    Alert,
-    PortfolioSnapshot,
-    AuditLog,
+    Organization, User, Client, Wallet, Exchange, Asset, Position,
+    Transaction, Alert, PortfolioSnapshot, AuditLog,
+    ManualAsset, PoolPosition, StakingPosition,
+    ProtocolRegistry, ChainRegistry, ExchangeRegistry,
+    PriceHistory, PoolMetricsHistory, Integration, SyncLog,
+    # New models
+    AIReport, AISettings, RiskThreshold,
+    ExchangeBalance, ExchangeFuturesPosition, ExchangeEarnPosition, ExchangeSubaccount,
+    ExchangeTransaction, WalletToken, WalletTransaction,
+    DefiPositionCache, NotificationHistory,
 )
 
 # this is the Alembic Config object

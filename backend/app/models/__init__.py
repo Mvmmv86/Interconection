@@ -17,6 +17,18 @@ from app.models.staking_position import StakingPosition
 from app.models.protocol_registry import ProtocolRegistry, ChainRegistry, ExchangeRegistry
 from app.models.price_history import PriceHistory, PoolMetricsHistory
 from app.models.integration import Integration, SyncLog
+# New models
+from app.models.ai import AIReport, AISettings
+from app.models.risk_threshold import RiskThreshold
+from app.models.exchange_balance import (
+    ExchangeBalance,
+    ExchangeFuturesPosition,
+    ExchangeEarnPosition,
+    ExchangeSubaccount,
+)
+from app.models.exchange_transaction import ExchangeTransaction
+from app.models.wallet_data import WalletToken, WalletTransaction
+from app.models.defi_cache import DefiPositionCache, NotificationHistory
 
 __all__ = [
     # Core
@@ -45,4 +57,21 @@ __all__ = [
     # Integrations
     "Integration",
     "SyncLog",
+    # AI
+    "AIReport",
+    "AISettings",
+    # Risk
+    "RiskThreshold",
+    # Exchange Details
+    "ExchangeBalance",
+    "ExchangeFuturesPosition",
+    "ExchangeEarnPosition",
+    "ExchangeSubaccount",
+    "ExchangeTransaction",
+    # Wallet Details
+    "WalletToken",
+    "WalletTransaction",
+    # Cache & Notifications
+    "DefiPositionCache",
+    "NotificationHistory",
 ]
