@@ -844,11 +844,15 @@ class ExchangeService:
 
         all_transactions = []
 
+        logger.info(f"Fetching transactions for {len(exchanges)} exchange(s)")
+
         for exchange in exchanges:
             try:
                 adapter = self.get_adapter(exchange)
                 transactions = await adapter.get_all_transactions(limit=limit)
                 await adapter.close()
+
+                logger.info(f"Exchange {exchange.exchange} ({exchange.id}): fetched {len(transactions)} transactions")
 
                 exchange_name = EXCHANGE_NAMES.get(exchange.exchange, exchange.exchange.title())
                 exchange_label = exchange.label or exchange_name
@@ -877,7 +881,7 @@ class ExchangeService:
                     })
 
             except Exception as e:
-                logger.warning(f"Failed to get transactions for exchange {exchange.id}: {e}")
+                logger.warning(f"Failed to get transactions for exchange {exchange.id}: {e}", exc_info=True)
                 continue
 
         # Sort by timestamp descending

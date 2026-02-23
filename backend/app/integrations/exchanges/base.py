@@ -285,6 +285,9 @@ class BaseExchangeAdapter(ABC):
         Combines results from all transaction methods and sorts by timestamp.
         """
         import asyncio
+        import logging
+        _logger = logging.getLogger(__name__)
+
         results = await asyncio.gather(
             self.get_deposit_history(limit),
             self.get_withdrawal_history(limit),
@@ -292,10 +295,13 @@ class BaseExchangeAdapter(ABC):
             return_exceptions=True,
         )
 
+        labels = ["deposits", "withdrawals", "transfers"]
         transactions: List[ExchangeTransaction] = []
-        for result in results:
+        for label, result in zip(labels, results):
             if isinstance(result, Exception):
+                _logger.warning(f"[{self.exchange_name}] Failed to get {label}: {result}")
                 continue
+            _logger.info(f"[{self.exchange_name}] Got {len(result)} {label}")
             transactions.extend(result)
 
         # Sort by timestamp descending
