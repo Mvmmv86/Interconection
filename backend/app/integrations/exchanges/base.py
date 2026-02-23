@@ -295,13 +295,14 @@ class BaseExchangeAdapter(ABC):
             return_exceptions=True,
         )
 
+        import sys
         labels = ["deposits", "withdrawals", "transfers"]
         transactions: List[ExchangeTransaction] = []
         for label, result in zip(labels, results):
             if isinstance(result, Exception):
-                _logger.warning(f"[{self.exchange_name}] Failed to get {label}: {result}")
+                print(f"[TX-DEBUG] [{self.exchange_name}] Failed to get {label}: {result}", file=sys.stderr, flush=True)
                 continue
-            _logger.info(f"[{self.exchange_name}] Got {len(result)} {label}")
+            print(f"[TX-DEBUG] [{self.exchange_name}] Got {len(result)} {label}", file=sys.stderr, flush=True)
             transactions.extend(result)
 
         # Sort by timestamp descending

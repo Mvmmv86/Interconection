@@ -844,7 +844,8 @@ class ExchangeService:
 
         all_transactions = []
 
-        logger.info(f"Fetching transactions for {len(exchanges)} exchange(s)")
+        import sys
+        print(f"[TX-DEBUG] Fetching transactions for {len(exchanges)} exchange(s)", file=sys.stderr, flush=True)
 
         for exchange in exchanges:
             try:
@@ -852,7 +853,7 @@ class ExchangeService:
                 transactions = await adapter.get_all_transactions(limit=limit)
                 await adapter.close()
 
-                logger.info(f"Exchange {exchange.exchange} ({exchange.id}): fetched {len(transactions)} transactions")
+                print(f"[TX-DEBUG] Exchange {exchange.exchange} ({exchange.id}): fetched {len(transactions)} transactions", file=sys.stderr, flush=True)
 
                 exchange_name = EXCHANGE_NAMES.get(exchange.exchange, exchange.exchange.title())
                 exchange_label = exchange.label or exchange_name

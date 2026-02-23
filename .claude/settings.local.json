@@ -128,7 +128,8 @@
       "Bash(npx next dev:*)",
       "Bash(test:*)",
       "Bash(cmd /c \"taskkill /PID 13596 /F\")",
-      "Bash(cmd /c \"taskkill /PID 13596 /F 2>&1\")"
+      "Bash(cmd /c \"taskkill /PID 13596 /F 2>&1\")",
+      "Bash(git reset:*)"
     ]
   }
 }
