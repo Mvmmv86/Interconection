@@ -82,12 +82,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const {
     publicKey: solanaPublicKey,
     connected: isSolanaConnectedAdapter,
-    connecting: isSolanaConnecting,
     wallet: solanaWalletAdapter,
+    connect: connectSolana,
     disconnect: disconnectSolana,
     select: selectSolanaWallet,
     wallets: availableSolanaWallets,
   } = useSolanaWallet();
+
+  // Ref to track pending Solana connection (after select, before connect)
+  const pendingSolanaConnectRef = useRef(false);
 
   // Handle connect errors
   useEffect(() => {
@@ -167,39 +170,58 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setIsManualConnecting(true);
 
     try {
-      // Check for available wallets
       const installedWallets = availableSolanaWallets.filter(
         (w) => w.readyState === 'Installed' || w.readyState === 'Loadable'
       );
+
+      console.log('[Solana] Installed wallets:', installedWallets.map(w => w.adapter.name));
 
       if (installedWallets.length === 0) {
         throw new Error('No Solana wallet found. Please install Phantom or Solflare.');
       }
 
-      // Prioritize Phantom, then Solflare
       const phantomWallet = installedWallets.find(
         (w) => w.adapter.name.toLowerCase() === 'phantom'
       );
       const solflareWallet = installedWallets.find(
         (w) => w.adapter.name.toLowerCase() === 'solflare'
       );
-
       const walletToUse = phantomWallet || solflareWallet || installedWallets[0];
 
-      // Select wallet in React state (for context tracking)
-      selectSolanaWallet(walletToUse.adapter.name);
+      // If this wallet is already selected in the provider, connect directly
+      if (solanaWalletAdapter?.adapter.name === walletToUse.adapter.name) {
+        console.log('[Solana] Wallet already selected, connecting directly');
+        await connectSolana();
+        return;
+      }
 
-      // Connect directly via the wallet adapter — bypasses React state race conditions.
-      // The adapter's event listeners automatically update the React state after connecting.
-      await walletToUse.adapter.connect();
+      // Otherwise, select the wallet first — useEffect below will call connect()
+      // after React processes the state update
+      console.log('[Solana] Selecting wallet:', walletToUse.adapter.name);
+      pendingSolanaConnectRef.current = true;
+      selectSolanaWallet(walletToUse.adapter.name);
+      // Don't reset isManualConnecting — the useEffect or success handler will do it
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to connect Solana wallet';
       setConnectionError(errorMessage);
-      console.error('Solana wallet connection error:', error);
-    } finally {
       setIsManualConnecting(false);
+      console.error('[Solana] Connection error:', error);
     }
-  }, [availableSolanaWallets, selectSolanaWallet]);
+  }, [availableSolanaWallets, selectSolanaWallet, solanaWalletAdapter, connectSolana]);
+
+  // Effect: once a wallet is selected after pending connect, call connect()
+  useEffect(() => {
+    if (pendingSolanaConnectRef.current && solanaWalletAdapter) {
+      pendingSolanaConnectRef.current = false;
+      console.log('[Solana] Wallet selected, now connecting:', solanaWalletAdapter.adapter.name);
+      connectSolana().catch((error) => {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to connect Solana wallet';
+        setConnectionError(errorMessage);
+        setIsManualConnecting(false);
+        console.error('[Solana] Connection error after select:', error);
+      });
+    }
+  }, [solanaWalletAdapter, connectSolana]);
 
   // Disconnect functions
   const disconnectEVMWallet = useCallback(() => {
@@ -278,7 +300,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const value: WalletContextType = {
     evmWallet,
     solanaWallet,
-    isConnecting: isEVMConnecting || isSolanaConnecting || isManualConnecting,
+    isConnecting: isEVMConnecting || isManualConnecting,
     connectionError,
     connectEVMWallet,
     connectSolanaWallet,
