@@ -33,9 +33,10 @@ import {
   Shield,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PoolDiscovery } from '@/components/defi/pools';
+import { PoolDiscovery, PoolPositionCard } from '@/components/defi/pools';
 import { useWallet, formatAddress } from '@/contexts/wallet-context';
 import { useMultiWalletDeFiPositions, usePoolDiscovery } from '@/hooks/defi';
+import { usePoolPositions } from '@/hooks/usePoolPositions';
 import { WalletConnectModal } from '@/components/wallet';
 import { useTheme } from '@/contexts/theme-context';
 import type { NormalizedDeFiPosition, DeFiCategory } from '@/lib/defi';
@@ -369,6 +370,20 @@ export default function DeFiPage() {
   const { pools: discoveryPools, isLoading: isLoadingDiscovery } = usePoolDiscovery({
     minTvl: 100000, // Only pools with >$100k TVL
   });
+
+  // Real LP pool positions (Uniswap V3 + Orca/Raydium/Meteora)
+  const {
+    positions: poolPositions,
+    isLoading: isLoadingPools,
+    totalValue: poolsTotalValue,
+    totalFees: poolsTotalFees,
+    totalUnclaimedFees: poolsUnclaimedFees,
+    refreshPositions: refreshPools,
+  } = usePoolPositions();
+
+  // Combined LP count (Zerion-detected + real pool positions)
+  const totalLpCount = lpPositions.length + poolPositions.length;
+  const totalLpValue = summary.lpValueUsd + poolsTotalValue;
 
   // Get positions based on active tab
   const getFilteredPositions = () => {
@@ -705,7 +720,7 @@ export default function DeFiPage() {
                   { label: 'Avg APY', value: summary.weightedAvgApy, format: 'percent', icon: Percent, color: 'text-status-success', bg: 'bg-status-success/10' },
                   { label: 'Est. Annual Yield', value: summary.totalAnnualYield, format: 'currency', icon: DollarSign, color: 'text-accent-yellow', bg: 'bg-accent-yellow/10' },
                   { label: 'Lending', value: summary.lendingSupplyUsd, format: 'currency', icon: Landmark, color: 'text-accent-blue', bg: 'bg-accent-blue/10' },
-                  { label: 'LP Pools', value: summary.lpValueUsd, format: 'currency', icon: Droplets, color: 'text-accent-cyan', bg: 'bg-accent-cyan/10' },
+                  { label: 'LP Pools', value: totalLpValue, format: 'currency', icon: Droplets, color: 'text-accent-cyan', bg: 'bg-accent-cyan/10' },
                   { label: 'Other', value: summary.otherValueUsd, format: 'currency', icon: Layers, color: 'text-white/50', bg: 'bg-white/5' },
                 ].map((card) => (
                   <div
@@ -760,9 +775,9 @@ export default function DeFiPage() {
                 <div className={cn("flex items-center gap-1 p-1 rounded-lg", isDark ? "bg-white/[0.03]" : "bg-gray-100")}>
                   {(['all', 'lending', 'lp', 'staking', 'yield', 'other'] as const).map((tab) => {
                     const config = categoryConfig[tab];
-                    const count = tab === 'all' ? positions.length
+                    const count = tab === 'all' ? positions.length + poolPositions.length
                       : tab === 'lending' ? lendingPositions.length
-                      : tab === 'lp' ? lpPositions.length
+                      : tab === 'lp' ? totalLpCount
                       : tab === 'staking' ? stakingPositions.length
                       : tab === 'yield' ? yieldPositions.length
                       : (otherPositions?.length ?? 0);
@@ -861,7 +876,7 @@ export default function DeFiPage() {
                   )}
 
                   <button
-                    onClick={() => refetch()}
+                    onClick={() => { refetch(); refreshPools(); }}
                     disabled={isLoading}
                     className={cn(
                       "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-medium transition-colors disabled:opacity-50",
@@ -877,7 +892,7 @@ export default function DeFiPage() {
               </div>
 
               {/* Loading State */}
-              {isLoading && positions.length === 0 && (
+              {(isLoading || isLoadingPools) && positions.length === 0 && poolPositions.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-16">
                   <Loader2 className="w-10 h-10 text-accent-purple animate-spin mb-4" />
                   <p className={cn("text-[12px]", isDark ? "text-white/50" : "text-gray-600")}>
@@ -900,7 +915,7 @@ export default function DeFiPage() {
                     </p>
                   </div>
                   <button
-                    onClick={() => refetch()}
+                    onClick={() => { refetch(); refreshPools(); }}
                     className="ml-auto px-3 py-1.5 rounded-lg bg-status-error/20 text-status-error text-[10px] font-medium hover:bg-status-error/30"
                   >
                     Tentar novamente
@@ -928,13 +943,53 @@ export default function DeFiPage() {
               {/* Positions List */}
               {activeTab !== 'discover' && !isLoading && (
                 <>
+                  {/* Pool Positions (Uniswap V3, Orca, Raydium, Meteora) */}
+                  {(activeTab === 'all' || activeTab === 'lp') && poolPositions.length > 0 && (
+                    <div className="mb-4">
+                      {activeTab === 'all' && (
+                        <div className="flex items-center gap-2 mb-3">
+                          <Droplets className={cn("w-4 h-4", isDark ? "text-accent-cyan" : "text-cyan-600")} />
+                          <p className={cn("text-[11px] font-medium", isDark ? "text-white/70" : "text-gray-700")}>
+                            LP Pools ({poolPositions.length})
+                          </p>
+                          {poolsTotalFees > 0 && (
+                            <span className={cn("text-[9px] px-1.5 py-0.5 rounded", isDark ? "bg-status-success/10 text-status-success" : "bg-green-100 text-green-700")}>
+                              ${poolsTotalFees.toLocaleString(undefined, { maximumFractionDigits: 2 })} fees earned
+                            </span>
+                          )}
+                          {poolsUnclaimedFees > 0 && (
+                            <span className={cn("text-[9px] px-1.5 py-0.5 rounded", isDark ? "bg-accent-yellow/10 text-accent-yellow" : "bg-yellow-100 text-yellow-700")}>
+                              ${poolsUnclaimedFees.toLocaleString(undefined, { maximumFractionDigits: 2 })} unclaimed
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 gap-3">
+                        {poolPositions.map((pool) => (
+                          <PoolPositionCard key={pool.id} position={pool} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Loading pool positions */}
+                  {(activeTab === 'all' || activeTab === 'lp') && isLoadingPools && poolPositions.length === 0 && (
+                    <div className={cn("flex items-center gap-2 mb-4 p-3 rounded-lg", isDark ? "bg-accent-cyan/10" : "bg-cyan-50")}>
+                      <Loader2 className="w-4 h-4 text-accent-cyan animate-spin" />
+                      <span className={cn("text-[11px] font-medium", isDark ? "text-accent-cyan" : "text-cyan-700")}>
+                        Buscando LP positions (Uniswap V3, Orca, Raydium, Meteora)...
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Zerion DeFi Positions */}
                   {filteredPositions.length > 0 ? (
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                       {filteredPositions.map((position) => (
                         <PositionCard key={position.id} position={position} isDark={isDark} />
                       ))}
                     </div>
-                  ) : (
+                  ) : poolPositions.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 text-center">
                       <Droplets className={cn("w-10 h-10 mb-3", isDark ? "text-white/20" : "text-gray-300")} />
                       <p className={cn("text-[12px]", isDark ? "text-white/50" : "text-gray-600")}>
@@ -946,7 +1001,7 @@ export default function DeFiPage() {
                           : 'Suas wallets conectadas não possuem posições DeFi'}
                       </p>
                     </div>
-                  )}
+                  ) : null}
                 </>
               )}
 
