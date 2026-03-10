@@ -162,6 +162,22 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     [connect, connectors]
   );
 
+  // Pending connect flag: set to true when we select a wallet and need to connect after selection propagates
+  const pendingConnectRef = useRef(false);
+
+  // When a wallet becomes selected (solanaWalletAdapter changes), auto-connect if pending
+  useEffect(() => {
+    if (pendingConnectRef.current && solanaWalletAdapter) {
+      pendingConnectRef.current = false;
+      connectSolana().catch((error) => {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to connect Solana wallet';
+        setConnectionError(errorMessage);
+        console.error('Solana wallet connection error:', error);
+        setIsManualConnecting(false);
+      });
+    }
+  }, [solanaWalletAdapter, connectSolana]);
+
   // Connect Solana wallet
   const connectSolanaWallet = useCallback(async () => {
     setConnectionError(null);
@@ -187,21 +203,21 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
       const walletToUse = phantomWallet || solflareWallet || installedWallets[0];
 
-      // Select and connect
-      selectSolanaWallet(walletToUse.adapter.name);
-
-      // Give time for selection to take effect
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      await connectSolana();
+      // If wallet is already selected, connect directly
+      if (solanaWalletAdapter?.adapter.name === walletToUse.adapter.name) {
+        await connectSolana();
+      } else {
+        // Select wallet and let the useEffect above handle connecting once selection propagates
+        pendingConnectRef.current = true;
+        selectSolanaWallet(walletToUse.adapter.name);
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to connect Solana wallet';
       setConnectionError(errorMessage);
       console.error('Solana wallet connection error:', error);
-    } finally {
       setIsManualConnecting(false);
     }
-  }, [availableSolanaWallets, selectSolanaWallet, connectSolana]);
+  }, [availableSolanaWallets, selectSolanaWallet, connectSolana, solanaWalletAdapter]);
 
   // Disconnect functions
   const disconnectEVMWallet = useCallback(() => {
