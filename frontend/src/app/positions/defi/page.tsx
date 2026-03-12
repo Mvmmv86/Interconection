@@ -371,7 +371,7 @@ export default function DeFiPage() {
     minTvl: 100000, // Only pools with >$100k TVL
   });
 
-  // Real LP pool positions (Uniswap V3 + Orca/Raydium/Meteora)
+  // Real LP pool positions (Uniswap V3 + V4 + Orca/Raydium/Meteora)
   const {
     positions: poolPositions,
     isLoading: isLoadingPools,
@@ -379,7 +379,7 @@ export default function DeFiPage() {
     totalFees: poolsTotalFees,
     totalUnclaimedFees: poolsUnclaimedFees,
     refreshPositions: refreshPools,
-  } = usePoolPositions();
+  } = usePoolPositions(lpPositions);
 
   // Deduplicate: remove Zerion LP positions that already exist in real pool positions
   // Match by extracting pool ID from position name (e.g. "#179357")
@@ -395,6 +395,17 @@ export default function DeFiPage() {
   // Combined LP count (Zerion-detected + real pool positions, deduplicated)
   const totalLpCount = deduplicatedLpPositions.length + poolPositions.length;
   const totalLpValue = deduplicatedLpPositions.reduce((sum, p) => sum + p.valueUsd, 0) + poolsTotalValue;
+
+  // For "all" tab: positions with LP deduplication applied
+  const deduplicatedPositions = useMemo(() => {
+    if (poolPositions.length === 0) return positions;
+    const poolNftIds = new Set(poolPositions.map(p => p.nftId).filter(Boolean));
+    return positions.filter(pos => {
+      if (pos.category !== 'lp') return true;
+      const match = pos.positionName.match(/#(\d+)/);
+      return !match || !poolNftIds.has(match[1]);
+    });
+  }, [positions, poolPositions]);
 
   // Get positions based on active tab
   const getFilteredPositions = () => {
@@ -418,7 +429,7 @@ export default function DeFiPage() {
         break;
       case 'all':
       default:
-        filtered = positions;
+        filtered = deduplicatedPositions;
     }
 
     // Apply chain filter
@@ -786,9 +797,7 @@ export default function DeFiPage() {
                 <div className={cn("flex items-center gap-1 p-1 rounded-lg", isDark ? "bg-white/[0.03]" : "bg-gray-100")}>
                   {(['all', 'lending', 'lp', 'staking', 'yield', 'other'] as const).map((tab) => {
                     const config = categoryConfig[tab];
-                    // Deduplicated count: subtract LP positions that overlap with real pool positions
-                    const lpDiff = lpPositions.length - deduplicatedLpPositions.length;
-                    const count = tab === 'all' ? (positions.length - lpDiff) + poolPositions.length
+                    const count = tab === 'all' ? deduplicatedPositions.length + poolPositions.length
                       : tab === 'lending' ? lendingPositions.length
                       : tab === 'lp' ? totalLpCount
                       : tab === 'staking' ? stakingPositions.length

@@ -8,6 +8,9 @@ export type { UseDeFiPositionsReturn, UseDeFiPositionsOptions } from './useDefiP
 export { useMultiWalletDeFiPositions } from './useMultiWalletDeFiPositions';
 export type { MultiWalletDeFiReturn } from './useMultiWalletDeFiPositions';
 
+export { useUniswapV4Positions } from './useUniswapV4Positions';
+export type { UseUniswapV4PositionsReturn } from './useUniswapV4Positions';
+
 export { useSolanaPoolPositions } from './useSolanaPoolPositions';
 export type { UseSolanaPoolPositionsReturn } from './useSolanaPoolPositions';
 

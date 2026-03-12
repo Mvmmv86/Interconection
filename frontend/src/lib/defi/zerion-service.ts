@@ -267,6 +267,20 @@ function groupLpPositions(positions: NormalizedDeFiPosition[]): NormalizedDeFiPo
       ? uniqueTokens[0] + '/' + uniqueTokens[1]
       : uniqueTokens[0] || base.asset.symbol;
 
+    // Build individual token data for enrichment (V4 positions, etc.)
+    const tokenAmounts = deposits.map(function(d) {
+      return {
+        symbol: d.asset.symbol,
+        name: d.asset.name,
+        icon: d.asset.icon,
+        address: d.asset.address,
+        decimals: d.asset.decimals,
+        amount: d.quantity,
+        valueUsd: d.valueUsd,
+        priceUsd: d.priceUsd,
+      };
+    });
+
     // Sum all values (deposits + claimable fees)
     const totalValue = group.reduce((sum, p) => sum + p.valueUsd, 0);
 
@@ -288,6 +302,7 @@ function groupLpPositions(positions: NormalizedDeFiPosition[]): NormalizedDeFiPo
       valueUsd: totalValue,
       change24h: change24hResult,
       category: 'lp' as const,
+      lpTokenAmounts: tokenAmounts,
       lp: {
         ...base.lp,
         underlyingTokens: uniqueTokens,

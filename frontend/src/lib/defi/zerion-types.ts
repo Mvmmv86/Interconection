@@ -191,6 +191,18 @@ export interface NormalizedDeFiPosition {
     exposure?: string;
   };
 
+  // LP token components (populated during Zerion LP grouping)
+  lpTokenAmounts?: {
+    symbol: string;
+    name: string;
+    icon?: string;
+    address?: string;
+    decimals: number;
+    amount: number;
+    valueUsd: number;
+    priceUsd: number;
+  }[];
+
   // Metadata
   isVerified: boolean;
   updatedAt: string;

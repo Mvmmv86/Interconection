@@ -4,7 +4,9 @@ import { useCallback, useMemo } from 'react';
 import { useWallet } from '@/contexts/wallet-context';
 import { PoolPosition } from '@/components/defi/pools/types';
 import { useUniswapV3Positions } from '@/hooks/defi/useUniswapV3Positions';
+import { useUniswapV4Positions } from '@/hooks/defi/useUniswapV4Positions';
 import { useSolanaPoolPositions } from '@/hooks/defi/useSolanaPoolPositions';
+import type { NormalizedDeFiPosition } from '@/lib/defi';
 
 export type FetchStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -46,11 +48,13 @@ export interface UsePoolPositionsReturn {
   totalUnclaimedFees: number;
 }
 
-export function usePoolPositions(): UsePoolPositionsReturn {
+export function usePoolPositions(
+  zerionLpPositions?: NormalizedDeFiPosition[]
+): UsePoolPositionsReturn {
   const { evmWallet, isEVMConnected, isSolanaConnected } = useWallet();
 
   // ═══════════════════════════════════════════
-  // EVM: Real Uniswap V3 positions
+  // EVM: Real Uniswap V3 positions (subgraph)
   // ═══════════════════════════════════════════
   const {
     positions: uniswapPositions,
@@ -58,6 +62,17 @@ export function usePoolPositions(): UsePoolPositionsReturn {
     isError: isUniswapError,
     refetch: refetchUniswap,
   } = useUniswapV3Positions();
+
+  // ═══════════════════════════════════════════
+  // EVM: Uniswap V4 positions (on-chain + Zerion)
+  // ═══════════════════════════════════════════
+  const {
+    positions: v4Positions,
+    isLoading: isLoadingV4,
+    isError: isV4Error,
+    error: v4Error,
+    refetch: refetchV4,
+  } = useUniswapV4Positions(zerionLpPositions || []);
 
   // ═══════════════════════════════════════════
   // Solana: Real LP positions (Orca, Raydium, Meteora)
@@ -70,26 +85,38 @@ export function usePoolPositions(): UsePoolPositionsReturn {
     refetch: refetchSolanaLP,
   } = useSolanaPoolPositions();
 
-  // Derive EVM fetch state from Uniswap hook
+  // Combine V3 + V4 EVM positions
+  const allEvmPositions = useMemo(
+    () => [...uniswapPositions, ...v4Positions],
+    [uniswapPositions, v4Positions]
+  );
+
+  // Derive EVM fetch state from Uniswap hooks
   const evmFetchState = useMemo(() => {
     let status: FetchStatus = 'idle';
     if (!isEVMConnected) {
       status = 'idle';
-    } else if (isLoadingUniswap) {
+    } else if (isLoadingUniswap || isLoadingV4) {
       status = 'loading';
-    } else if (isUniswapError) {
+    } else if (isUniswapError && isV4Error) {
       status = 'error';
-    } else if (uniswapPositions.length >= 0) {
+    } else if (allEvmPositions.length >= 0) {
       status = 'success';
     }
 
+    const errorMsg = isUniswapError
+      ? 'Failed to fetch V3 positions'
+      : isV4Error
+        ? (v4Error?.message || 'Failed to fetch V4 positions')
+        : null;
+
     return {
       status,
-      positions: uniswapPositions,
-      error: isUniswapError ? 'Failed to fetch EVM positions' : null,
+      positions: allEvmPositions,
+      error: errorMsg,
       lastFetched: status === 'success' ? new Date() : null,
     };
-  }, [isEVMConnected, isLoadingUniswap, isUniswapError, uniswapPositions]);
+  }, [isEVMConnected, isLoadingUniswap, isLoadingV4, isUniswapError, isV4Error, v4Error, allEvmPositions]);
 
   // Derive Solana fetch state from Solana LP hook
   const solanaFetchState = useMemo(() => {
@@ -121,11 +148,11 @@ export function usePoolPositions(): UsePoolPositionsReturn {
     [evmFetchState, solanaFetchState]
   );
 
-  // Refresh EVM positions
+  // Refresh EVM positions (V3 + V4)
   const refreshEVMPositions = useCallback(async () => {
     if (!evmWallet) return;
-    await refetchUniswap();
-  }, [evmWallet, refetchUniswap]);
+    await Promise.all([refetchUniswap(), refetchV4()]);
+  }, [evmWallet, refetchUniswap, refetchV4]);
 
   // Refresh Solana positions
   const refreshSolanaPositions = useCallback(async () => {
