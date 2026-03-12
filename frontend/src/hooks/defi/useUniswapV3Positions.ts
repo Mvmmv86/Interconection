@@ -109,25 +109,7 @@ interface SubgraphResponse {
   };
 }
 
-// Token price cache (in production, use a price oracle or API)
-const TOKEN_PRICES: Record<string, number> = {
-  WETH: 3500,
-  ETH: 3500,
-  USDC: 1,
-  USDT: 1,
-  DAI: 1,
-  WBTC: 98000,
-  ARB: 1.2,
-  OP: 2.5,
-  MATIC: 0.85,
-};
-
-/**
- * Get token price (mock for now, should use real price feed)
- */
-function getTokenPrice(symbol: string): number {
-  return TOKEN_PRICES[symbol.toUpperCase()] || 1;
-}
+import { fetchTokenPrices, getPriceFromMap } from '@/lib/defi/token-price-service';
 
 // Q96 constant for Uniswap V3 math (2^96)
 const Q96 = BigInt('79228162514264337593543950336'); // 2^96
@@ -216,7 +198,18 @@ async function fetchPositionsFromSubgraph(
       return [];
     }
 
-    return result.data.positions.map((pos): PoolPosition => {
+    // Collect unique tokens for price fetching
+    const tokenSet: Record<string, { address: string; chain: string }> = {};
+    result.data.positions.forEach(function(pos: SubgraphPosition) {
+      tokenSet[pos.pool.token0.id] = { address: pos.pool.token0.id, chain: chain };
+      tokenSet[pos.pool.token1.id] = { address: pos.pool.token1.id, chain: chain };
+    });
+
+    // Batch-fetch real prices from DeFiLlama
+    const tokenList = Object.values(tokenSet);
+    const priceMap = tokenList.length > 0 ? await fetchTokenPrices(tokenList) : {};
+
+    return result.data.positions.map(function(pos): PoolPosition {
       const pool = pos.pool;
       const decimals0 = parseInt(pool.token0.decimals);
       const decimals1 = parseInt(pool.token1.decimals);
@@ -227,7 +220,7 @@ async function fetchPositionsFromSubgraph(
       const sqrtPriceX96 = BigInt(pool.sqrtPrice);
 
       // Calculate current amounts
-      const { amount0, amount1 } = calculateAmounts(
+      const amounts = calculateAmounts(
         liquidity,
         sqrtPriceX96,
         tickLower,
@@ -235,10 +228,12 @@ async function fetchPositionsFromSubgraph(
         decimals0,
         decimals1
       );
+      const amount0 = amounts.amount0;
+      const amount1 = amounts.amount1;
 
-      // Get prices
-      const price0 = getTokenPrice(pool.token0.symbol);
-      const price1 = getTokenPrice(pool.token1.symbol);
+      // Get real prices from DeFiLlama
+      const price0 = getPriceFromMap(priceMap, chain, pool.token0.id) || 1;
+      const price1 = getPriceFromMap(priceMap, chain, pool.token1.id) || 1;
 
       // Calculate values
       const value0 = amount0 * price0;
@@ -298,18 +293,18 @@ async function fetchPositionsFromSubgraph(
         id: pos.id,
         nftId: pos.id,
         protocol: 'uniswap-v3',
-        chain,
+        chain: chain,
         networkType: 'evm',
         token0: token0Info,
         token1: token1Info,
-        feeTier: parseInt(pool.feeTier) / 10000, // Convert from bps to percentage
+        feeTier: parseInt(pool.feeTier) / 10000,
         liquidity: pos.liquidity,
-        tickLower,
-        tickUpper,
-        currentTick,
-        priceLower,
-        priceUpper,
-        currentPrice,
+        tickLower: tickLower,
+        tickUpper: tickUpper,
+        currentTick: currentTick,
+        priceLower: priceLower,
+        priceUpper: priceUpper,
+        currentPrice: currentPrice,
         token0Amount: amount0,
         token1Amount: amount1,
         totalValueUsd: totalValue,
@@ -326,7 +321,7 @@ async function fetchPositionsFromSubgraph(
         initialValueUsd: Math.max(initialValue, totalValue),
         currentValueUsd: totalValue,
         pnlUsd: pnl,
-        pnlPercent,
+        pnlPercent: pnlPercent,
         impermanentLoss: Math.abs(impermanentLoss),
         impermanentLossUsd: Math.abs(impermanentLossUsd),
         hodlValueUsd: hodlValue,
@@ -345,7 +340,7 @@ async function fetchPositionsFromSubgraph(
       };
     });
   } catch (error) {
-    console.error(`Error fetching positions from ${chain}:`, error);
+    console.error('Error fetching positions from ' + chain + ':', error);
     return [];
   }
 }
@@ -357,7 +352,7 @@ async function fetchAllUniswapV3Positions(address: string): Promise<PoolPosition
   const chains: EVMChain[] = ['ethereum', 'base', 'arbitrum', 'optimism', 'polygon'];
 
   const results = await Promise.all(
-    chains.map((chain) => fetchPositionsFromSubgraph(chain, address))
+    chains.map(function(chain) { return fetchPositionsFromSubgraph(chain, address); })
   );
 
   return results.flat();

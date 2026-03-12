@@ -4,3 +4,4 @@ export * from './zerion-service';
 export * from './zerion-transactions';
 export * from './moralis-transactions';
 export * from './defillama-service';
+export * from './token-price-service';
