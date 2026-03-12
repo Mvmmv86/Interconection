@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import {
@@ -381,9 +381,20 @@ export default function DeFiPage() {
     refreshPositions: refreshPools,
   } = usePoolPositions();
 
-  // Combined LP count (Zerion-detected + real pool positions)
-  const totalLpCount = lpPositions.length + poolPositions.length;
-  const totalLpValue = summary.lpValueUsd + poolsTotalValue;
+  // Deduplicate: remove Zerion LP positions that already exist in real pool positions
+  // Match by extracting pool ID from position name (e.g. "#179357")
+  const deduplicatedLpPositions = useMemo(() => {
+    if (poolPositions.length === 0) return lpPositions;
+    const poolNftIds = new Set(poolPositions.map(p => p.nftId).filter(Boolean));
+    return lpPositions.filter(pos => {
+      const match = pos.positionName.match(/#(\d+)/);
+      return !match || !poolNftIds.has(match[1]);
+    });
+  }, [lpPositions, poolPositions]);
+
+  // Combined LP count (Zerion-detected + real pool positions, deduplicated)
+  const totalLpCount = deduplicatedLpPositions.length + poolPositions.length;
+  const totalLpValue = deduplicatedLpPositions.reduce((sum, p) => sum + p.valueUsd, 0) + poolsTotalValue;
 
   // Get positions based on active tab
   const getFilteredPositions = () => {
@@ -394,7 +405,7 @@ export default function DeFiPage() {
         filtered = lendingPositions;
         break;
       case 'lp':
-        filtered = lpPositions;
+        filtered = deduplicatedLpPositions;
         break;
       case 'staking':
         filtered = stakingPositions;
@@ -775,7 +786,9 @@ export default function DeFiPage() {
                 <div className={cn("flex items-center gap-1 p-1 rounded-lg", isDark ? "bg-white/[0.03]" : "bg-gray-100")}>
                   {(['all', 'lending', 'lp', 'staking', 'yield', 'other'] as const).map((tab) => {
                     const config = categoryConfig[tab];
-                    const count = tab === 'all' ? positions.length + poolPositions.length
+                    // Deduplicated count: subtract LP positions that overlap with real pool positions
+                    const lpDiff = lpPositions.length - deduplicatedLpPositions.length;
+                    const count = tab === 'all' ? (positions.length - lpDiff) + poolPositions.length
                       : tab === 'lending' ? lendingPositions.length
                       : tab === 'lp' ? totalLpCount
                       : tab === 'staking' ? stakingPositions.length

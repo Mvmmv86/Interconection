@@ -230,17 +230,34 @@ export const ZERION_CHAIN_IDS: Record<string, string> = {
   'bsc': 'binance-smart-chain',
 };
 
+// AMM/DEX protocols that Zerion may classify as 'deposit' but are actually LP positions
+const LP_PROTOCOLS = [
+  'uniswap', 'sushiswap', 'sushi', 'pancakeswap', 'pancake',
+  'curve', 'balancer', 'camelot', 'aerodrome', 'velodrome',
+  'trader joe', 'quickswap', 'spookyswap', 'beethoven',
+  'raydium', 'orca', 'meteora', 'lifinity', 'phoenix',
+  'maverick', 'ambient', 'thruster', 'kim', 'ramses',
+  'fenix', 'lynex', 'nile', 'thena', 'retro',
+];
+
 // Position type to category mapping
 export function mapPositionTypeToCategory(positionType: ZerionPositionType, protocol: string): DeFiCategory {
-  // Specific protocol overrides
   const lowerProtocol = protocol.toLowerCase();
 
+  // Derivatives protocols
   if (lowerProtocol.includes('gmx') || lowerProtocol.includes('dydx') || lowerProtocol.includes('perpetual')) {
     return 'derivatives';
   }
 
+  // Yield aggregators
   if (lowerProtocol.includes('convex') || lowerProtocol.includes('yearn') || lowerProtocol.includes('beefy')) {
     return 'yield';
+  }
+
+  // AMM/DEX protocols: Zerion often classifies LP positions as 'deposit'
+  // Override to 'lp' when the protocol is a known AMM/DEX
+  if (positionType === 'deposit' && LP_PROTOCOLS.some(lp => lowerProtocol.includes(lp))) {
+    return 'lp';
   }
 
   // Default mapping by position type

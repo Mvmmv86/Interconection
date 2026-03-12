@@ -191,8 +191,114 @@ export function normalizePosition(
 export function normalizePositions(
   response: ZerionPositionsResponse
 ): NormalizedDeFiPosition[] {
-  return response.data.map((position) =>
+  const positions = response.data.map((position) =>
     normalizePosition(position, response.included)
+  );
+
+  return groupLpPositions(positions);
+}
+
+/**
+ * Extract pool ID from position name (e.g. "Uniswap V4 ETH/USDC Pool (#179357)" → "179357")
+ */
+function extractPoolId(name: string): string | null {
+  const match = name.match(/#(\d+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Group LP positions that belong to the same pool.
+ * Zerion breaks each LP position into individual token components
+ * (e.g. ETH side, USDC side, claimable fees). This function merges
+ * them into a single composite entry per pool.
+ */
+function groupLpPositions(positions: NormalizedDeFiPosition[]): NormalizedDeFiPosition[] {
+  const lpPositions: NormalizedDeFiPosition[] = [];
+  const nonLpPositions: NormalizedDeFiPosition[] = [];
+
+  for (const pos of positions) {
+    if (pos.category === 'lp') {
+      lpPositions.push(pos);
+    } else {
+      nonLpPositions.push(pos);
+    }
+  }
+
+  if (lpPositions.length === 0) return positions;
+
+  // Group LP positions by protocol + poolId + chain
+  const groups = new Map<string, NormalizedDeFiPosition[]>();
+
+  for (const pos of lpPositions) {
+    const poolId = extractPoolId(pos.positionName);
+    // Group by protocol + pool ID + chain. If no pool ID found, use position ID as unique key
+    const key = poolId
+      ? `${pos.protocol}:${poolId}:${pos.chainId}`
+      : pos.id;
+
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(pos);
+    } else {
+      groups.set(key, [pos]);
+    }
+  }
+
+  // Merge each group into a single position
+  const mergedLpPositions: NormalizedDeFiPosition[] = [];
+
+  groups.forEach((group) => {
+    if (group.length === 1) {
+      mergedLpPositions.push(group[0]);
+      return;
+    }
+
+    // Separate deposit/liquidity positions from reward/claimable positions
+    const deposits = group.filter(p => p.positionType === 'deposit' || p.positionType === 'liquidity');
+
+    // Use the highest-value deposit as the base
+    const sorted = deposits.slice().sort((a, b) => b.valueUsd - a.valueUsd);
+    const base = sorted[0] || group[0];
+
+    // Combine token symbols for the position name
+    const tokenSymbols = deposits.map(d => d.asset.symbol);
+    const uniqueTokens = Array.from(new Set(tokenSymbols));
+    const pairName = uniqueTokens.length >= 2
+      ? uniqueTokens[0] + '/' + uniqueTokens[1]
+      : uniqueTokens[0] || base.asset.symbol;
+
+    // Sum all values (deposits + claimable fees)
+    const totalValue = group.reduce((sum, p) => sum + p.valueUsd, 0);
+
+    // Weighted average for change24h
+    let change24hResult = base.change24h;
+    if (deposits.length > 1) {
+      const totalAbsolute = deposits.reduce((sum, p) => sum + (p.change24h?.absolute || 0), 0);
+      const totalPercent = totalValue > 0
+        ? (totalAbsolute / totalValue) * 100
+        : 0;
+      change24hResult = { absolute: totalAbsolute, percent: totalPercent };
+    }
+
+    const poolId = extractPoolId(base.positionName);
+    const merged: NormalizedDeFiPosition = {
+      ...base,
+      id: 'lp-grouped-' + base.protocol + '-' + (poolId || base.id),
+      positionName: base.protocol + ' ' + pairName + ' Pool' + (poolId ? ' (#' + poolId + ')' : ''),
+      valueUsd: totalValue,
+      change24h: change24hResult,
+      category: 'lp' as const,
+      lp: {
+        ...base.lp,
+        underlyingTokens: uniqueTokens,
+      },
+    };
+
+    mergedLpPositions.push(merged);
+  });
+
+  return [...mergedLpPositions, ...nonLpPositions].sort(
+    (a, b) => b.valueUsd - a.valueUsd
   );
 }
 

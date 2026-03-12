@@ -2,6 +2,7 @@
 
 // EVM Protocols
 export type EVMProtocol =
+  | 'uniswap-v4'
   | 'uniswap-v3'
   | 'uniswap-v2'
   | 'sushiswap'
@@ -197,6 +198,14 @@ export const EVM_PROTOCOL_CONFIG: Record<EVMProtocol, {
   isConcentrated: boolean;
   networkType: 'evm';
 }> = {
+  'uniswap-v4': {
+    name: 'Uniswap V4',
+    logo: 'UNI',
+    color: '#ff007a',
+    supportedChains: ['ethereum', 'arbitrum', 'optimism', 'polygon', 'base', 'bsc', 'avalanche'],
+    isConcentrated: true,
+    networkType: 'evm',
+  },
   'uniswap-v3': {
     name: 'Uniswap V3',
     logo: 'UNI',
