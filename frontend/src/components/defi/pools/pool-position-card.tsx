@@ -11,10 +11,37 @@ import {
   RefreshCw,
   LogOut,
   Gift,
+  Info,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
 import { PoolPosition, PROTOCOL_CONFIG, CHAIN_CONFIG } from './types';
+
+function InfoTip({ text, isDark }: { text: string; isDark: boolean }) {
+  return (
+    <span className="relative inline-flex group ml-1 cursor-help">
+      <Info className={cn(
+        "w-3 h-3 flex-shrink-0",
+        isDark ? "text-white/20 group-hover:text-white/50" : "text-gray-400 group-hover:text-gray-600"
+      )} />
+      <span className={cn(
+        "absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 rounded-lg text-[10px] leading-tight font-normal normal-case tracking-normal",
+        "w-48 text-center pointer-events-none",
+        "opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-50",
+        isDark
+          ? "bg-[#1e1f2e] text-white/80 border border-white/10 shadow-lg shadow-black/40"
+          : "bg-white text-gray-700 border border-gray-200 shadow-lg shadow-black/10"
+      )}>
+        {text}
+        <span className={cn(
+          "absolute top-full left-1/2 -translate-x-1/2 w-0 h-0",
+          "border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[5px]",
+          isDark ? "border-t-white/10" : "border-t-gray-200"
+        )} />
+      </span>
+    </span>
+  );
+}
 
 interface PoolPositionCardProps {
   position: PoolPosition;
@@ -169,19 +196,28 @@ export function PoolPositionCard({
         {/* Quick Stats Row */}
         <div className="grid grid-cols-4 gap-2 mt-3">
           <div className={cn("p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-            <p className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>APR</p>
+            <p className={cn("text-[9px] uppercase tracking-wider flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+              APR
+              <InfoTip isDark={isDark} text="Retorno percentual anualizado baseado nas taxas ganhas em relacao ao valor da sua posicao." />
+            </p>
             <p className="text-[13px] font-semibold text-status-success tabular-nums">
               {position.totalApr.toFixed(1)}%
             </p>
           </div>
           <div className={cn("p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-            <p className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>Fees Earned</p>
+            <p className={cn("text-[9px] uppercase tracking-wider flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+              Fees Earned
+              <InfoTip isDark={isDark} text="Total de taxas de trading ja coletadas/retiradas desta posicao ao longo de sua vida util." />
+            </p>
             <p className={cn("text-[13px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
               {formatNumber(position.feesEarned.totalUsd)}
             </p>
           </div>
           <div className={cn("p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-            <p className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>IL</p>
+            <p className={cn("text-[9px] uppercase tracking-wider flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+              IL
+              <InfoTip isDark={isDark} text="Perda Impermanente: valor perdido em comparacao a simplesmente manter os tokens originais em vez de fornecer liquidez." />
+            </p>
             <p
               className={cn(
                 'text-[13px] font-semibold tabular-nums',
@@ -192,7 +228,10 @@ export function PoolPositionCard({
             </p>
           </div>
           <div className={cn("p-2 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-            <p className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>In Range</p>
+            <p className={cn("text-[9px] uppercase tracking-wider flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+              In Range
+              <InfoTip isDark={isDark} text="Se o preco atual de mercado esta dentro da sua faixa de preco definida. Voce so ganha taxas quando esta no range." />
+            </p>
             <p className={cn("text-[13px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
               {position.inRangePercent.toFixed(1)}%
             </p>
@@ -202,7 +241,10 @@ export function PoolPositionCard({
         {/* Price Range Visualization */}
         <div className={cn("mt-3 p-3 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
           <div className="flex items-center justify-between mb-2">
-            <span className={cn("text-[9px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>Price Range</span>
+            <span className={cn("text-[9px] uppercase tracking-wider flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+              Price Range
+              <InfoTip isDark={isDark} text="Os limites de preco minimo/maximo que voce definiu. Sua liquidez so esta ativa e gerando taxas dentro desta faixa." />
+            </span>
             <span className={cn("text-[10px]", isDark ? "text-white/70" : "text-gray-600")}>
               Current: <span className={cn("font-medium", isDark ? "text-white" : "text-gray-900")}>{position.currentPrice.toPrecision(4)}</span>
             </span>
@@ -286,7 +328,10 @@ export function PoolPositionCard({
         <div className={cn("px-4 pb-4 space-y-3 border-t", isDark ? "border-white/[0.03]" : "border-gray-100")}>
           {/* Token Balances */}
           <div className="pt-3">
-            <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Position Breakdown</p>
+            <p className={cn("text-[10px] uppercase tracking-wider mb-2 flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+              Position Breakdown
+              <InfoTip isDark={isDark} text="Quantidades atuais de tokens na sua posicao LP e seu valor em USD com precos de mercado em tempo real." />
+            </p>
             <div className="grid grid-cols-2 gap-2">
               <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
                 <div className="flex items-center justify-between mb-1">
@@ -324,13 +369,19 @@ export function PoolPositionCard({
             <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Performance</p>
             <div className="grid grid-cols-3 gap-2">
               <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-                <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>Initial Value</p>
+                <p className={cn("text-[9px] uppercase tracking-wider mb-1 flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+                  Initial Value
+                  <InfoTip isDark={isDark} text="Valor total em USD dos tokens no momento em que voce os depositou nesta posicao." />
+                </p>
                 <p className={cn("text-[12px] font-medium tabular-nums", isDark ? "text-white" : "text-gray-900")}>
                   {formatNumber(position.initialValueUsd)}
                 </p>
               </div>
               <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-                <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>vs HODL</p>
+                <p className={cn("text-[9px] uppercase tracking-wider mb-1 flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+                  vs HODL
+                  <InfoTip isDark={isDark} text="Compara o valor da sua posicao LP com o que voce teria se simplesmente mantivesse os tokens originais sem fornecer liquidez." />
+                </p>
                 <p
                   className={cn(
                     'text-[12px] font-medium tabular-nums',
@@ -344,7 +395,10 @@ export function PoolPositionCard({
                 </p>
               </div>
               <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
-                <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>IL Loss</p>
+                <p className={cn("text-[9px] uppercase tracking-wider mb-1 flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+                  IL Loss
+                  <InfoTip isDark={isDark} text="Valor em dolar perdido devido a perda impermanente. Isso ocorre quando os precos dos tokens se afastam da proporcao na qual voce depositou." />
+                </p>
                 <p className="text-[12px] font-medium text-status-error tabular-nums">
                   {formatNumber(position.impermanentLossUsd)}
                 </p>
@@ -354,7 +408,10 @@ export function PoolPositionCard({
 
           {/* Unclaimed Fees & Rewards */}
           <div>
-            <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Unclaimed</p>
+            <p className={cn("text-[10px] uppercase tracking-wider mb-2 flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
+              Unclaimed
+              <InfoTip isDark={isDark} text="Taxas e recompensas acumuladas na sua posicao que ainda nao foram coletadas. Clique em 'Collect Fees' para resga-las." />
+            </p>
             <div className="space-y-2">
               <div className="flex items-center justify-between p-2.5 rounded-lg bg-status-success/5 border border-status-success/10">
                 <div className="flex items-center gap-2">
