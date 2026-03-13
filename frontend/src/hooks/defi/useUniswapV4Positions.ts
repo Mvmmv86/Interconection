@@ -214,21 +214,21 @@ function computePoolId(poolKey: {
 
 /**
  * Decode packed uint256 info from getPoolAndPositionInfo
- * Layout: 200 bits poolIdPrefix | 24 bits tickLower | 24 bits tickUpper | 8 bits hasSubscriber
+ * Layout (from LSB): 8 bits hasSubscriber | 24 bits tickLower | 24 bits tickUpper | 200 bits poolIdPrefix
  */
 function decodePackedInfo(infoBigInt: bigint): {
   tickLower: number;
   tickUpper: number;
 } {
-  // tickUpper: bits [31:8] (shift right 8, mask 24 bits)
-  let rawTickUpper = Number((infoBigInt >> BigInt(8)) & BigInt(0xFFFFFF));
-  if (rawTickUpper >= 0x800000) rawTickUpper -= 0x1000000;
+  // tickLower: bits [31:8] (shift right 8, mask 24 bits)
+  let tickLower = Number((infoBigInt >> BigInt(8)) & BigInt(0xFFFFFF));
+  if (tickLower >= 0x800000) tickLower -= 0x1000000;
 
-  // tickLower: bits [55:32] (shift right 32, mask 24 bits)
-  let rawTickLower = Number((infoBigInt >> BigInt(32)) & BigInt(0xFFFFFF));
-  if (rawTickLower >= 0x800000) rawTickLower -= 0x1000000;
+  // tickUpper: bits [55:32] (shift right 32, mask 24 bits)
+  let tickUpper = Number((infoBigInt >> BigInt(32)) & BigInt(0xFFFFFF));
+  if (tickUpper >= 0x800000) tickUpper -= 0x1000000;
 
-  return { tickLower: rawTickLower, tickUpper: rawTickUpper };
+  return { tickLower: tickLower, tickUpper: tickUpper };
 }
 
 /**
