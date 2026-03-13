@@ -1,9 +1,7 @@
 import { NextRequest } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AI_SYSTEM_PROMPT } from '@/lib/ai/ai-constants';
 import type { PortfolioContext } from '@/types/ai';
-
-export const runtime = 'edge';
 
 interface MessageInput {
   role: string;
@@ -14,13 +12,12 @@ export async function POST(request: NextRequest) {
   try {
     const { messages, context } = await request.json() as { messages: MessageInput[]; context: PortfolioContext };
 
-    // Get API key from environment (user can configure their own later)
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return new Response('API key not configured', { status: 401 });
+      return new Response('Gemini API key not configured', { status: 401 });
     }
 
-    // Format context as system message
+    // Format context as part of system instruction
     const contextMessage = `
 Portfolio Context (dados reais do usuário):
 - Total AUM: $${context.totalValue?.toLocaleString() || '0'}
@@ -33,27 +30,31 @@ Portfolio Context (dados reais do usuário):
 - Concentração: ${context.riskMetrics?.concentrationRisk?.topAssetPercent?.toFixed(1) || 'N/A'}% em ${context.riskMetrics?.concentrationRisk?.topAssetSymbol || 'N/A'}
 `;
 
-    const anthropic = new Anthropic({ apiKey });
-
-    // Stream response
-    const stream = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 1024,
-      system: AI_SYSTEM_PROMPT + '\n\n' + contextMessage,
-      messages: messages.map((m: { role: string; content: string }) => ({
-        role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-        content: m.content,
-      })),
-      stream: true,
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: AI_SYSTEM_PROMPT + '\n\n' + contextMessage,
     });
+
+    // Convert messages to Gemini format (history + last user message)
+    const geminiHistory = messages.slice(0, -1).map((m: MessageInput) => ({
+      role: m.role === 'user' ? 'user' as const : 'model' as const,
+      parts: [{ text: m.content }],
+    }));
+
+    const lastMessage = messages[messages.length - 1];
+
+    const chat = model.startChat({ history: geminiHistory });
+    const streamResult = await chat.sendMessageStream(lastMessage.content);
 
     // Convert to ReadableStream
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
       async start(controller) {
-        for await (const event of stream) {
-          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-            controller.enqueue(encoder.encode(event.delta.text));
+        for await (const chunk of streamResult.stream) {
+          const text = chunk.text();
+          if (text) {
+            controller.enqueue(encoder.encode(text));
           }
         }
         controller.close();

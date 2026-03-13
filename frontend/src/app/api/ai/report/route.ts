@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AI_SYSTEM_PROMPT } from '@/lib/ai/ai-constants';
 
 export async function POST(request: NextRequest) {
   try {
     const { context } = await request.json();
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: 'API key not configured' }, { status: 401 });
+      return NextResponse.json({ error: 'Gemini API key not configured' }, { status: 401 });
     }
 
-    const anthropic = new Anthropic({ apiKey });
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: AI_SYSTEM_PROMPT,
+    });
 
     // Build detailed context for the AI
     const topPositionsText = (context.topPositions || [])
@@ -92,14 +96,8 @@ Use EXATAMENTE esta estrutura com numeração. Use markdown para formatação:
 Seja preciso, profissional e use os dados reais fornecidos. Formate tabelas corretamente em markdown.
 `;
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 4096,
-      system: AI_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const reportContent = response.content[0].type === 'text' ? response.content[0].text : '';
+    const result = await model.generateContent(prompt);
+    const reportContent = result.response.text();
 
     return NextResponse.json({
       content: reportContent,
