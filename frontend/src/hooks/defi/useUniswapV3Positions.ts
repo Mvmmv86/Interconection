@@ -4,15 +4,35 @@ import { useQuery } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
 import type { PoolPosition, EVMChain, TokenInfo } from '@/components/defi/pools/types';
 
-// Uniswap V3 Subgraph endpoints
+// The Graph Gateway API key (same as V4)
+const THEGRAPH_API_KEY = process.env.NEXT_PUBLIC_THEGRAPH_API_KEY || '';
+
+// Uniswap V3 Subgraph IDs for The Graph Network Gateway
+const V3_SUBGRAPH_IDS: Record<EVMChain, string | null> = {
+  ethereum: '5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV',
+  base: '43Hwfi3dJSoGpyas9VwNoDAv55yjgGrPpNSmbQZArzMG',
+  arbitrum: 'FbCGRftH4a3yZugY7TnbYgPJVEv2LvMT6oF1fxPe9aJM',
+  optimism: 'Cghf4LfVqPiFw6fp6Y5X5Ubc8UpmUhSfJL82zwiBFLaj',
+  polygon: '3hCPRGf4z88VC5rsBKU5AA9FBBq5nF3jbKJG7VZCbhjm',
+  bsc: null,
+  avalanche: null,
+};
+
+// Build subgraph URL from ID + API key
+function buildSubgraphUrl(id: string | null): string | null {
+  if (!id || !THEGRAPH_API_KEY) return null;
+  return 'https://gateway.thegraph.com/api/' + THEGRAPH_API_KEY + '/subgraphs/id/' + id;
+}
+
+// Uniswap V3 Subgraph endpoints (built from IDs + API key)
 const UNISWAP_V3_SUBGRAPHS: Record<EVMChain, string | null> = {
-  ethereum: 'https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3',
-  base: 'https://api.studio.thegraph.com/query/48211/uniswap-v3-base/version/latest',
-  arbitrum: 'https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-arbitrum-one',
-  optimism: 'https://api.thegraph.com/subgraphs/name/ianlapham/optimism-post-regenesis',
-  polygon: 'https://api.thegraph.com/subgraphs/name/ianlapham/uniswap-v3-polygon',
-  bsc: null, // Not officially supported
-  avalanche: null, // Not officially supported
+  ethereum: buildSubgraphUrl(V3_SUBGRAPH_IDS.ethereum),
+  base: buildSubgraphUrl(V3_SUBGRAPH_IDS.base),
+  arbitrum: buildSubgraphUrl(V3_SUBGRAPH_IDS.arbitrum),
+  optimism: buildSubgraphUrl(V3_SUBGRAPH_IDS.optimism),
+  polygon: buildSubgraphUrl(V3_SUBGRAPH_IDS.polygon),
+  bsc: null,
+  avalanche: null,
 };
 
 // GraphQL query for user positions

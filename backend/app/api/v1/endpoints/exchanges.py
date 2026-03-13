@@ -385,9 +385,11 @@ async def get_exchange_live_data(
 
     This endpoint fetches data directly from the exchange API.
     """
-    # Find the exchange
+    # Find the exchange with its client to get the real organization_id
     result = await db.execute(
-        select(Exchange).where(Exchange.id == exchange_id)
+        select(Exchange)
+        .where(Exchange.id == exchange_id)
+        .options(selectinload(Exchange.client))
     )
     exchange = result.scalar_one_or_none()
 
@@ -397,12 +399,18 @@ async def get_exchange_live_data(
             detail="Exchange not found",
         )
 
+    if not exchange.client:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Exchange client not found",
+        )
+
     service = ExchangeService(db)
 
     try:
         live_data = await service.get_exchange_live_data(
             exchange_id=exchange_id,
-            organization_id=UUID("00000000-0000-0000-0000-000000000001"),  # TODO: use current_user.organization_id
+            organization_id=exchange.client.organization_id,
         )
         return live_data
 

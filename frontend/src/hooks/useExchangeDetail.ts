@@ -186,18 +186,31 @@ function transformApiResponse(apiData: Record<string, unknown>): ExchangeLiveDat
     transferable: Number(bal.transferable || 0),
   }));
 
-  const marginBalances = (apiData.margin_balances as Array<Record<string, unknown>> || []).map((bal) => ({
-    asset: bal.asset as string,
-    free: Number(bal.free),
-    locked: Number(bal.locked),
-    total: Number(bal.total),
-    valueUsd: Number(bal.value_usd),
-    priceUsd: Number(bal.price_usd),
-    change24h: Number(bal.change_24h || 0),
-    borrowed: Number(bal.borrowed || 0),
-    interest: Number(bal.interest || 0),
-    netAsset: Number(bal.net_asset || bal.total),
-  }));
+  const marginBalances = (apiData.margin_balances as Array<Record<string, unknown>> || []).map((bal) => {
+    const borrowed = Number(bal.borrowed || 0);
+    const valueUsd = Number(bal.value_usd || 0);
+    // Derive price_usd: use API value, or calculate from value/total, or default 1 for stablecoins
+    const total = Number(bal.total || 0);
+    let priceUsd = Number(bal.price_usd || 0);
+    if (!priceUsd && total !== 0) {
+      priceUsd = Math.abs(valueUsd / total);
+    }
+    if (!priceUsd && borrowed > 0) {
+      priceUsd = 1; // fallback for stablecoins
+    }
+    return {
+      asset: bal.asset as string,
+      free: Number(bal.free || 0),
+      locked: Number(bal.locked || 0),
+      total,
+      valueUsd,
+      priceUsd,
+      change24h: Number(bal.change_24h || 0),
+      borrowed,
+      interest: Number(bal.interest || 0),
+      netAsset: Number(bal.net_asset || bal.total || 0),
+    };
+  });
 
   const earnPositions = (apiData.earn_positions as Array<Record<string, unknown>> || []).map((pos) => ({
     productId: pos.product_id as string,
@@ -240,9 +253,9 @@ function transformApiResponse(apiData: Record<string, unknown>): ExchangeLiveDat
   };
 
   return {
-    exchangeId: apiData.exchange_id as string,
-    exchangeName: apiData.exchange_name as string,
-    exchangeLabel: apiData.exchange_label as string || apiData.exchange_name as string,
+    exchangeId: (apiData.exchange_id || apiData.id) as string,
+    exchangeName: (apiData.exchange_name || apiData.name) as string,
+    exchangeLabel: (apiData.exchange_label || apiData.exchange_name || apiData.name) as string,
     status: 'connected',
     lastSync: 'Just now',
 
@@ -293,6 +306,11 @@ export function useExchangeDetail(exchangeId: string): UseExchangeDetailReturn {
       }
 
       const apiData = await response.json();
+
+      if (!apiData) {
+        throw new Error('No data returned from exchange API');
+      }
+
       const transformed = transformApiResponse(apiData);
 
       setData(transformed);

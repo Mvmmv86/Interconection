@@ -752,11 +752,15 @@ class ExchangeService:
             "margin_balances": [
                 {
                     "asset": b.asset,
+                    "free": float(b.free),
+                    "locked": float(b.locked),
                     "total": float(b.total),
                     "borrowed": float(b.borrowed),
                     "interest": float(b.interest),
                     "net_asset": float(b.net_asset),
                     "value_usd": float(b.value_usd),
+                    "price_usd": float(b.price_usd),
+                    "change_24h": float(b.change_24h),
                 }
                 for b in summary.margin_balances
             ],
