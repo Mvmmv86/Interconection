@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import { AI_SYSTEM_PROMPT } from '@/lib/ai/ai-constants';
 import type { PortfolioContext } from '@/types/ai';
 
@@ -12,12 +12,12 @@ export async function POST(request: NextRequest) {
   try {
     const { messages, context } = await request.json() as { messages: MessageInput[]; context: PortfolioContext };
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GLM_API_KEY;
     if (!apiKey) {
-      return new Response('Gemini API key not configured', { status: 401 });
+      return new Response('GLM API key not configured', { status: 401 });
     }
 
-    // Format context as part of system instruction
+    // Format context as system message
     const contextMessage = `
 Portfolio Context (dados reais do usuário):
 - Total AUM: $${context.totalValue?.toLocaleString() || '0'}
@@ -30,29 +30,30 @@ Portfolio Context (dados reais do usuário):
 - Concentração: ${context.riskMetrics?.concentrationRisk?.topAssetPercent?.toFixed(1) || 'N/A'}% em ${context.riskMetrics?.concentrationRisk?.topAssetSymbol || 'N/A'}
 `;
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
-      systemInstruction: AI_SYSTEM_PROMPT + '\n\n' + contextMessage,
+    const openai = new OpenAI({
+      apiKey,
+      baseURL: 'https://open.bigmodel.cn/api/paas/v4',
     });
 
-    // Convert messages to Gemini format (history + last user message)
-    const geminiHistory = messages.slice(0, -1).map((m: MessageInput) => ({
-      role: m.role === 'user' ? 'user' as const : 'model' as const,
-      parts: [{ text: m.content }],
-    }));
-
-    const lastMessage = messages[messages.length - 1];
-
-    const chat = model.startChat({ history: geminiHistory });
-    const streamResult = await chat.sendMessageStream(lastMessage.content);
+    const stream = await openai.chat.completions.create({
+      model: 'GLM-4.7-Flash',
+      max_tokens: 1024,
+      stream: true,
+      messages: [
+        { role: 'system', content: AI_SYSTEM_PROMPT + '\n\n' + contextMessage },
+        ...messages.map((m: MessageInput) => ({
+          role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: m.content,
+        })),
+      ],
+    });
 
     // Convert to ReadableStream
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
       async start(controller) {
-        for await (const chunk of streamResult.stream) {
-          const text = chunk.text();
+        for await (const chunk of stream) {
+          const text = chunk.choices[0]?.delta?.content;
           if (text) {
             controller.enqueue(encoder.encode(text));
           }

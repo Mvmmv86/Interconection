@@ -1,20 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import { AI_SYSTEM_PROMPT } from '@/lib/ai/ai-constants';
 
 export async function POST(request: NextRequest) {
   try {
     const { context } = await request.json();
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GLM_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: 'Gemini API key not configured' }, { status: 401 });
+      return NextResponse.json({ error: 'GLM API key not configured' }, { status: 401 });
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
-      systemInstruction: AI_SYSTEM_PROMPT,
+    const openai = new OpenAI({
+      apiKey,
+      baseURL: 'https://open.bigmodel.cn/api/paas/v4',
     });
 
     // Build detailed context for the AI
@@ -96,8 +95,16 @@ Use EXATAMENTE esta estrutura com numeração. Use markdown para formatação:
 Seja preciso, profissional e use os dados reais fornecidos. Formate tabelas corretamente em markdown.
 `;
 
-    const result = await model.generateContent(prompt);
-    const reportContent = result.response.text();
+    const response = await openai.chat.completions.create({
+      model: 'GLM-4.7-Flash',
+      max_tokens: 4096,
+      messages: [
+        { role: 'system', content: AI_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ],
+    });
+
+    const reportContent = response.choices[0]?.message?.content || '';
 
     return NextResponse.json({
       content: reportContent,
