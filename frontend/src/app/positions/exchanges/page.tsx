@@ -32,6 +32,17 @@ const statusConfig = {
   pending: { icon: Clock, color: 'text-white/30', bg: 'bg-white/5', label: 'Pending' },
 };
 
+// Detects if last sync string indicates the data is stale (>24h old).
+// Backend returns relative strings like "5 min ago", "2 hours ago", "70 days ago".
+function isSyncStale(lastSync: string): boolean {
+  if (!lastSync || lastSync === 'never' || lastSync === 'syncing...') return false;
+  const lower = lastSync.toLowerCase();
+  if (/(day|week|month|year)s?\s+ago/.test(lower)) return true;
+  const hoursMatch = lower.match(/(\d+)\s*hours?\s+ago/);
+  if (hoursMatch && parseInt(hoursMatch[1], 10) >= 24) return true;
+  return false;
+}
+
 // Use mock data in development mode when backend is not available
 const USE_MOCK_DATA = process.env.NODE_ENV === 'development';
 
@@ -370,6 +381,15 @@ export default function ExchangesPage() {
                               )}
                             />
                             <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>{exchange.lastSync}</span>
+                            {isSyncStale(exchange.lastSync) && (
+                              <span
+                                title="Sincronização desatualizada (>24h). Verifique se a API key da exchange ainda é válida."
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-accent-yellow/15 text-accent-yellow border border-accent-yellow/30"
+                              >
+                                <AlertCircle className="w-2.5 h-2.5" />
+                                Stale
+                              </span>
+                            )}
                             <span className={cn("text-[10px]", isDark ? "text-white/30" : "text-gray-500")}>·</span>
                             <Link
                               href={`/positions/exchanges/${exchange.id}`}

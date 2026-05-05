@@ -241,6 +241,23 @@ export function PortfolioChart({ positions, totalValue, isLoading: isLoadingPosi
               Loading chart data...
             </div>
           </div>
+        ) : !isLoadingPositions && !isLoadingChart && seriesData.length === 0 ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-1 px-6 text-center">
+            <div className={cn(
+              'text-[12px] font-medium',
+              isDark ? 'text-white/50' : 'text-slate-500'
+            )}>
+              Sem histórico para exibir
+            </div>
+            <div className={cn(
+              'text-[10px]',
+              isDark ? 'text-white/30' : 'text-slate-400'
+            )}>
+              {topAssets.length === 0
+                ? 'Nenhum ativo spot rastreável encontrado'
+                : 'Não foi possível carregar preços históricos'}
+            </div>
+          </div>
         ) : (
           <Chart options={chartOptions} series={chartSeries} type="area" height="100%" width="100%" />
         )}

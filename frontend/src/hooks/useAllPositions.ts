@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useMultiWalletDeFiPositions } from './defi';
 import { useExchangePositions } from './useExchangePositions';
 import { useExchangeLivePositions } from './useExchangeLivePositions';
+import type { ExchangeLiveData } from './useExchangeDetail';
 import { useSolanaWalletBalances } from './useSolanaWalletBalances';
 import { useWallet, formatAddress } from '@/contexts/wallet-context';
 import {
@@ -119,7 +120,6 @@ export function useAllPositions(): AllPositionsData {
   // ═══════════════════════════════════════════
   const {
     exchanges: exchangeAccounts,
-    totalValue: exchangeTotalValue,
     isLoading: isLoadingExchanges,
     refresh: refreshExchanges,
   } = useExchangePositions();
@@ -179,12 +179,33 @@ export function useAllPositions(): AllPositionsData {
     return solanaWalletPositions.reduce((sum, p) => sum + p.value, 0);
   }, [solanaWalletPositions]);
 
+  // Per-exchange decision: should we use live data or fall back to cached summary?
+  // Treat live as broken when it returns essentially $0 but the cached summary
+  // shows real value — happens when API keys expire/get revoked. Centralizing
+  // this here ensures effectiveExchangeTotal and exchangeUnifiedPositions never
+  // diverge (which would silently miscalculate allocation percentages).
+  const effectiveByExchange = useMemo(() => {
+    const map = new Map<string, { effectiveValue: number; liveData: ExchangeLiveData | undefined }>();
+    for (const exchange of exchangeAccounts) {
+      const liveDataRaw = liveDataByExchange.get(exchange.id);
+      const liveDataIsBroken =
+        liveDataRaw !== undefined &&
+        liveDataRaw.totalValueUsd < 1 &&
+        exchange.totalValue > 100;
+      const liveData = liveDataIsBroken ? undefined : liveDataRaw;
+      const effectiveValue = liveData?.totalValueUsd ?? exchange.totalValue;
+      map.set(exchange.id, { effectiveValue, liveData });
+    }
+    return map;
+  }, [exchangeAccounts, liveDataByExchange]);
+
   // Convert exchange live data to unified positions
   const exchangeUnifiedPositions = useMemo<UnifiedPosition[]>(() => {
     const positions: UnifiedPosition[] = [];
 
     for (const exchange of exchangeAccounts) {
-      const liveData = liveDataByExchange.get(exchange.id);
+      const decision = effectiveByExchange.get(exchange.id);
+      const liveData = decision?.liveData;
 
       if (liveData) {
         // === SPOT BALANCES (with real quantity, price, 24h change) ===
@@ -374,19 +395,20 @@ export function useAllPositions(): AllPositionsData {
     }
 
     return positions;
-  }, [exchangeAccounts, liveDataByExchange]);
+  }, [exchangeAccounts, effectiveByExchange]);
 
-  // Use live exchange total when available, fallback to summary total
+  // Sum per-exchange effective values from the same decision used to build
+  // exchangeUnifiedPositions. This guarantees the displayed total and the
+  // sum of position values are always consistent, so allocation percentages
+  // never miscalculate when one exchange has a broken API key and another
+  // is healthy.
   const effectiveExchangeTotal = useMemo(() => {
-    if (liveDataByExchange.size > 0) {
-      let liveTotal = 0;
-      liveDataByExchange.forEach((data) => {
-        liveTotal += data.totalValueUsd;
-      });
-      return liveTotal;
-    }
-    return exchangeTotalValue;
-  }, [liveDataByExchange, exchangeTotalValue]);
+    let total = 0;
+    effectiveByExchange.forEach(({ effectiveValue }) => {
+      total += effectiveValue;
+    });
+    return total;
+  }, [effectiveByExchange]);
 
   // Calculate unified positions
   const positions = useMemo<UnifiedPosition[]>(() => {
