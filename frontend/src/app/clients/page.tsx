@@ -78,13 +78,13 @@ function ClientModal({
             "text-base font-semibold",
             isDark ? "text-white" : "text-gray-900"
           )}>
-            {client ? 'Editar Cliente' : 'Novo Cliente'}
+            {client ? 'Editar Conta' : 'Nova Conta'}
           </h2>
           <p className={cn(
             "text-xs mt-1",
             isDark ? "text-white/50" : "text-gray-500"
           )}>
-            {client ? 'Atualize as informações do cliente' : 'Adicione um novo cliente ao sistema'}
+            {client ? 'Atualize as informações da conta' : 'Adicione uma nova conta ao sistema'}
           </p>
         </div>
 
@@ -122,7 +122,7 @@ function ClientModal({
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="cliente@exemplo.com"
+              placeholder="contato@exemplo.com"
               className={cn(
                 "w-full px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-accent-blue/50 focus:ring-1 focus:ring-accent-blue/20",
                 isDark
@@ -142,7 +142,7 @@ function ClientModal({
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Observações sobre o cliente..."
+              placeholder="Observações sobre a conta..."
               rows={3}
               className={cn(
                 "w-full px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-accent-blue/50 focus:ring-1 focus:ring-accent-blue/20 resize-none",
@@ -178,7 +178,7 @@ function ClientModal({
               className="flex-1 px-4 py-2 text-sm font-medium text-white bg-accent-blue rounded-lg hover:bg-accent-blue/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isLoading && <RefreshCw className="w-4 h-4 animate-spin" />}
-              {client ? 'Salvar' : 'Criar Cliente'}
+              {client ? 'Salvar' : 'Criar Conta'}
             </button>
           </div>
         </form>
@@ -230,7 +230,7 @@ function DeleteModal({
             "text-base font-semibold mb-2",
             isDark ? "text-white" : "text-gray-900"
           )}>
-            Excluir Cliente
+            Excluir Conta
           </h3>
           <p className={cn(
             "text-sm mb-6",
@@ -588,7 +588,7 @@ export default function ClientsPage() {
       await createClient(data);
       setIsCreateModalOpen(false);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Erro ao criar cliente. Verifique se está logado.');
+      setActionError(err instanceof Error ? err.message : 'Erro ao criar conta. Verifique se está logado.');
     } finally {
       setIsLoading(false);
     }
@@ -652,12 +652,12 @@ export default function ClientsPage() {
               <h1 className={cn(
                 "text-lg font-semibold",
                 isDark ? "text-white" : "text-gray-900"
-              )}>Clientes</h1>
+              )}>Contas</h1>
               <p className={cn(
                 "text-[11px] mt-0.5",
                 isDark ? "text-white/50" : "text-gray-500"
               )}>
-                Gerencie carteiras e portfolios de clientes
+                Gerencie carteiras e portfolios das contas
               </p>
             </div>
 
@@ -666,7 +666,7 @@ export default function ClientsPage() {
               className="flex items-center gap-2 h-9 px-4 rounded-lg bg-accent-blue text-white text-[11px] font-medium hover:bg-accent-blue/90 transition-colors"
             >
               <Plus className="w-4 h-4" />
-              Novo Cliente
+              Nova Conta
             </button>
           </div>
 
@@ -683,7 +683,7 @@ export default function ClientsPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar clientes..."
+              placeholder="Buscar contas..."
               className={cn(
                 "w-full h-9 pl-10 pr-4 rounded-lg text-[11px] focus:outline-none focus:border-accent-blue/50",
                 isDark
@@ -697,7 +697,7 @@ export default function ClientsPage() {
           {isLoadingClients && (
             <div className="mt-5 text-center py-10">
               <RefreshCw className={cn("w-6 h-6 mx-auto mb-3 animate-spin", isDark ? "text-white/40" : "text-gray-400")} />
-              <p className={cn("text-sm", isDark ? "text-white/50" : "text-gray-500")}>Carregando clientes...</p>
+              <p className={cn("text-sm", isDark ? "text-white/50" : "text-gray-500")}>Carregando contas...</p>
             </div>
           )}
 
@@ -727,7 +727,7 @@ export default function ClientsPage() {
                   "text-base font-semibold mb-2",
                   isDark ? "text-white" : "text-gray-900"
                 )}>
-                  {searchQuery ? 'Nenhum cliente encontrado' : 'Nenhum cliente cadastrado'}
+                  {searchQuery ? 'Nenhuma conta encontrada' : 'Nenhuma conta cadastrada'}
                 </h3>
                 <p className={cn(
                   "text-sm mb-4",
@@ -735,7 +735,7 @@ export default function ClientsPage() {
                 )}>
                   {searchQuery
                     ? 'Tente buscar com outros termos'
-                    : 'Comece adicionando seu primeiro cliente ao sistema'}
+                    : 'Comece adicionando sua primeira conta ao sistema'}
                 </p>
                 {!searchQuery && (
                   <button
@@ -743,7 +743,7 @@ export default function ClientsPage() {
                     className="inline-flex items-center gap-2 px-4 py-2 bg-accent-blue text-white text-sm font-medium rounded-lg hover:bg-accent-blue/90 transition-colors"
                   >
                     <Plus className="w-4 h-4" />
-                    Adicionar Cliente
+                    Adicionar Conta
                   </button>
                 )}
               </div>

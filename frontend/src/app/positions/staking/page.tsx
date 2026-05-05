@@ -176,7 +176,7 @@ function ClientFilter({
       >
         <Users className="w-4 h-4" />
         <span className="text-[11px] font-medium">
-          {selectedClient ? selectedClient.name : 'Todos Clientes'}
+          {selectedClient ? selectedClient.name : 'Todas as Contas'}
         </span>
         <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', isOpen && 'rotate-180')} />
       </button>
@@ -201,7 +201,7 @@ function ClientFilter({
               <div className="w-6 h-6 rounded-lg bg-white/[0.06] flex items-center justify-center">
                 <Users className="w-3 h-3" />
               </div>
-              <span>Todos Clientes</span>
+              <span>Todas as Contas</span>
             </button>
 
             <div className="border-t border-white/[0.04] my-1" />
@@ -240,7 +240,7 @@ function ClientFilter({
               className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-accent-blue hover:bg-accent-blue/5 transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Gerenciar Clientes</span>
+              <span>Gerenciar Contas</span>
             </Link>
           </div>
         </>

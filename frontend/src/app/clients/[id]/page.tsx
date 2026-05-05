@@ -1559,7 +1559,7 @@ export default function ClientDetailPage() {
               <h1 className={cn(
                 "text-lg font-semibold",
                 isDark ? "text-white" : "text-gray-900"
-              )}>Carregando cliente...</h1>
+              )}>Carregando conta...</h1>
             </div>
             <div className="flex items-center justify-center py-20">
               <RefreshCw className="w-8 h-8 text-accent-blue animate-spin" />
@@ -1601,12 +1601,12 @@ export default function ClientDetailPage() {
               <h2 className={cn(
                 "text-lg font-semibold mb-2",
                 isDark ? "text-white" : "text-gray-900"
-              )}>Cliente não encontrado</h2>
+              )}>Conta não encontrada</h2>
               <p className={cn(
                 "text-sm mb-4",
                 isDark ? "text-white/50" : "text-gray-500"
               )}>
-                {clientError || 'O cliente solicitado não existe ou foi removido.'}
+                {clientError || 'A conta solicitada não existe ou foi removida.'}
               </p>
               <p className={cn(
                 "text-xs mb-4 font-mono",
@@ -1619,7 +1619,7 @@ export default function ClientDetailPage() {
                 className="inline-flex items-center gap-2 px-4 py-2 bg-accent-blue text-white text-sm font-medium rounded-lg hover:bg-accent-blue/90 transition-colors"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Voltar para Clientes
+                Voltar para Contas
               </Link>
             </div>
           </main>

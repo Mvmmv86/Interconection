@@ -36,7 +36,7 @@ interface NavItem {
 const mainNavItems: NavItem[] = [
   { label: 'Home', href: '/', icon: LayoutDashboard },
   { label: 'Portfolio', href: '/portfolio', icon: PieChart },
-  { label: 'Clients', href: '/clients', icon: Users },
+  { label: 'Contas', href: '/clients', icon: Users },
 ];
 
 const positionsNavItems: NavItem[] = [
