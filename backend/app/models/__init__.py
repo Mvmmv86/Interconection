@@ -13,6 +13,7 @@ from app.models.portfolio_snapshot import PortfolioSnapshot
 from app.models.audit_log import AuditLog
 from app.models.manual_asset import ManualAsset
 from app.models.pool_position import PoolPosition
+from app.models.pool_position_baseline import PoolPositionBaseline, BaselineSource
 from app.models.staking_position import StakingPosition
 from app.models.protocol_registry import ProtocolRegistry, ChainRegistry, ExchangeRegistry
 from app.models.price_history import PriceHistory, PoolMetricsHistory
@@ -46,6 +47,8 @@ __all__ = [
     # DeFi Positions
     "ManualAsset",
     "PoolPosition",
+    "PoolPositionBaseline",
+    "BaselineSource",
     "StakingPosition",
     # Registries
     "ProtocolRegistry",

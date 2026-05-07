@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
     manual_assets,
     staking_positions,
     pool_positions,
+    pool_baselines,
     ai,
     risk_thresholds,
     notifications,
@@ -35,6 +36,7 @@ api_router.include_router(manual_assets.router, prefix="/clients/{client_id}/man
 api_router.include_router(positions.router, prefix="/positions", tags=["Positions"])
 api_router.include_router(staking_positions.router, prefix="/staking", tags=["Staking Positions"])
 api_router.include_router(pool_positions.router, prefix="/pools", tags=["Pool Positions"])
+api_router.include_router(pool_baselines.router, prefix="/pool-baselines", tags=["Pool Baselines"])
 api_router.include_router(portfolio.router, prefix="/portfolio", tags=["Portfolio"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["Alerts"])
