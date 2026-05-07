@@ -13,10 +13,14 @@ interface ProvidersProps {
 }
 
 export function Providers({ children }: ProvidersProps) {
+  // Web3Provider sets up QueryClientProvider, so AuthProvider must live
+  // inside it (auth-context calls useQueryClient() to clear cache on
+  // login/logout). ClientProvider depends on AuthProvider so it stays
+  // below.
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <Web3Provider>
+      <Web3Provider>
+        <AuthProvider>
           <WalletProvider>
             <ClientProvider>
               <AISettingsProvider>
@@ -24,8 +28,8 @@ export function Providers({ children }: ProvidersProps) {
               </AISettingsProvider>
             </ClientProvider>
           </WalletProvider>
-        </Web3Provider>
-      </AuthProvider>
+        </AuthProvider>
+      </Web3Provider>
     </ThemeProvider>
   );
 }
