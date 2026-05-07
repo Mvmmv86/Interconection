@@ -3,6 +3,27 @@
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { api } from '@/lib/api/client';
 
+/**
+ * Remove wallet-related localStorage entries left over from a previous
+ * user session on this browser. wagmi and solana-wallet-adapter persist
+ * the last connection in localStorage, which would otherwise leak across
+ * users on the same machine (different login → same wallet visible).
+ */
+function clearWalletStorage(): void {
+  if (typeof window === 'undefined') return;
+  const prefixes = ['wagmi', 'wc@2', 'walletconnect'];
+  const exactKeys = ['walletName'];
+  const toRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+    if (exactKeys.includes(key) || prefixes.some((p) => key.startsWith(p))) {
+      toRemove.push(key);
+    }
+  }
+  toRemove.forEach((k) => localStorage.removeItem(k));
+}
+
 interface User {
   id: string;
   email: string;
@@ -68,6 +89,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     setError(null);
 
+    // Defensive: previous session may have left wallet state in localStorage.
+    // Clear it before authenticating so the new user starts clean.
+    clearWalletStorage();
+
     const result = await api.login(email, password);
 
     if (result.success) {
@@ -114,6 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     api.logout();
+    clearWalletStorage();
     setIsAuthenticated(false);
     setUser(null);
     setError(null);

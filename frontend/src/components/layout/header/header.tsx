@@ -5,6 +5,7 @@ import { Search, Bell, Sun, Moon, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
 import { useAuth } from '@/contexts/auth-context';
+import { useWallet } from '@/contexts/wallet-context';
 import { getInitials, formatRole } from '@/lib/utils/user-display';
 
 interface HeaderProps {
@@ -14,8 +15,22 @@ interface HeaderProps {
 export function Header({ className }: HeaderProps) {
   const { theme, toggleTheme } = useTheme();
   const { user, logout } = useAuth();
+  const { disconnectAll } = useWallet();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Clean logout: disconnect any browser-connected wallets first so the
+  // next user logged into this browser doesn't see leftover wagmi /
+  // solana-wallet-adapter state from the previous session.
+  const handleLogout = () => {
+    setMenuOpen(false);
+    try {
+      disconnectAll();
+    } catch {
+      // Wallet adapters may throw when nothing is connected — ignore.
+    }
+    logout();
+  };
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -180,10 +195,7 @@ export function Header({ className }: HeaderProps) {
 
               {/* Actions */}
               <button
-                onClick={() => {
-                  setMenuOpen(false);
-                  logout();
-                }}
+                onClick={handleLogout}
                 role="menuitem"
                 className={cn(
                   'w-full flex items-center gap-2 px-3 py-2 text-[11px] transition-colors',
