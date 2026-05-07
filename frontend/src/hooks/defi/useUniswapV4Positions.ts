@@ -879,10 +879,21 @@ export function useUniswapV4Positions(
         baselineAt = new Date().toISOString();
       }
 
-      // Persist baselines server-side: subgraph history (upgrade) and
-      // first-observed snapshots (initial save). Keyed dedup happens in
-      // usePoolBaselines so concurrent V3+V4 hooks don't double-fire.
-      if (address && baselineSource && (baselineSource === 'subgraph_history' || !storedBaseline)) {
+      // Persist baselines server-side. The useMemo runs on every refresh
+      // (price tick, refetchInterval), so we must avoid re-pushing the
+      // same payload over and over. Only push when:
+      //   - There is no stored baseline yet (initial save), OR
+      //   - We have higher-quality source data than what's stored
+      //     (i.e., subgraph_history arriving when stored is first_observed).
+      const shouldUpsert =
+        !!address &&
+        !!baselineSource &&
+        (
+          !storedBaseline ||
+          (baselineSource === 'subgraph_history' && storedBaseline.source !== 'subgraph_history')
+        );
+
+      if (shouldUpsert) {
         pendingUpsertsRef.current.push({
           wallet_address: address,
           position_key: positionKey,
@@ -896,13 +907,18 @@ export function useUniswapV4Positions(
           token1_price_usd: price1,
           baseline_value_usd: initialValue,
           baseline_at: baselineAt!,
-          source: baselineSource,
+          // shouldUpsert guarantees baselineSource is not null, but TS
+          // can't narrow through the compound boolean.
+          source: baselineSource!,
         });
       }
 
-      // PnL: (current position value + total withdrawn + unclaimed fees) - total deposited
-      // Reuses withdrawnPrincipalAtCurrent computed above.
-      const pnlUsd = totalValue + withdrawnPrincipalAtCurrent + unclaimedFeesUsd - initialValue;
+      // PnL: (current position value + total withdrawn at exit + unclaimed fees) - total deposited.
+      // Use totalWithdrawnUsd (subgraph value at the time of each
+      // withdrawal event) — NOT withdrawnPrincipalAtCurrent, which
+      // re-prices old withdrawals at today's prices and double-counts
+      // any price movement that happened between withdrawal and now.
+      const pnlUsd = totalValue + totalWithdrawnUsd + unclaimedFeesUsd - initialValue;
       const pnlPercent = initialValue > 0 ? (pnlUsd / initialValue) * 100 : 0;
 
       // Impermanent Loss: HODL vs LP (excluding fees)
