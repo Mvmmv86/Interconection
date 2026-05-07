@@ -109,6 +109,13 @@ export interface PoolPosition {
   impermanentLossUsd: number;
   hodlValueUsd: number; // Value if just held tokens
 
+  // Baseline metadata (source and date used to compute IL/HODL).
+  // 'subgraph_history' = full history from protocol subgraph (best).
+  // 'first_observed'   = snapshot from first time we saw this position.
+  // null               = no baseline yet, IL/HODL fallback to current.
+  baselineSource?: 'subgraph_history' | 'first_observed' | 'manual' | null;
+  baselineAt?: string | null; // ISO date when baseline was captured
+
   // APR/APY
   feeApr: number;
   rewardsApr: number;

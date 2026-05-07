@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
 import { readContract } from '@wagmi/core';
@@ -9,6 +9,8 @@ import { wagmiConfig, CHAIN_IDS } from '@/lib/wallet/wagmi-config';
 import type { PoolPosition, TokenInfo, EVMChain } from '@/components/defi/pools/types';
 import type { NormalizedDeFiPosition } from '@/lib/defi';
 import type { SupportedChainId } from '@/lib/wallet/wagmi-config';
+import { usePoolBaselines, buildPositionKey } from './usePoolBaselines';
+import type { PoolBaselineUpsert } from '@/lib/api/client';
 
 // ═══════════════════════════════════════════
 // V4 Contract Addresses (per chain)
@@ -467,6 +469,15 @@ export function useUniswapV4Positions(
 ): UseUniswapV4PositionsReturn {
   const { address, isConnected } = useAccount();
 
+  // Baselines: fallback for IL/HODL/VS HODL when subgraph history is
+  // missing. Returns getBaseline() for synchronous lookup and
+  // upsertBaseline() to persist new ones server-side.
+  const { baselines, getBaseline, upsertBaseline } = usePoolBaselines(address ?? null);
+
+  // Queue of upserts to fire after positions are computed. Using a ref
+  // avoids re-triggering the useMemo on every queue change.
+  const pendingUpsertsRef = useRef<PoolBaselineUpsert[]>([]);
+
   // Extract V4 positions with NFT IDs from Zerion LP data
   const v4Inputs = useMemo(function(): V4PositionInput[] {
     const inputs: V4PositionInput[] = [];
@@ -804,18 +815,70 @@ export function useUniswapV4Positions(
       const collectedFees0 = 0;
       const collectedFees1 = 0;
 
-      // Initial value: historical USD at time of deposit (most accurate cost basis)
-      let initialValue = totalValue; // fallback
-      if (subgraph && depositedUsd > 0) {
-        initialValue = depositedUsd;
-      } else if (subgraph && (deposited0 > 0 || deposited1 > 0)) {
-        initialValue = deposited0 * price0 + deposited1 * price1;
+      // ── Baseline resolution: 3-layer fallback ──
+      //   Layer 1: subgraph history (best, full deposit timeline)
+      //   Layer 2: backend baseline (snapshot from previous load)
+      //   Layer 3: capture current snapshot now (IL=0 first time,
+      //            becomes meaningful from next refresh onward)
+      //
+      // initialValue = total USD originally deposited
+      // hodlValue    = current USD if those tokens were just held
+      let initialValue = totalValue;
+      let hodlValue = totalValue;
+      let baselineToken0Amount = amount0;
+      let baselineToken1Amount = amount1;
+      let baselineSource: 'subgraph_history' | 'first_observed' | 'manual' | null = null;
+      let baselineAt: string | null = null;
+
+      const positionKey = buildPositionKey('uniswap-v4', input.chainKey, input.tokenId);
+      const storedBaseline = address ? getBaseline(positionKey) : undefined;
+
+      const subgraphHasHistory = !!subgraph && (deposited0 > 0 || deposited1 > 0 || depositedUsd > 0);
+
+      if (subgraphHasHistory) {
+        // Layer 1 — subgraph wins
+        baselineToken0Amount = deposited0 > 0 ? deposited0 : amount0;
+        baselineToken1Amount = deposited1 > 0 ? deposited1 : amount1;
+        initialValue = depositedUsd > 0
+          ? depositedUsd
+          : baselineToken0Amount * price0 + baselineToken1Amount * price1;
+        hodlValue = baselineToken0Amount * price0 + baselineToken1Amount * price1;
+        baselineSource = 'subgraph_history';
+        const tsMs = subgraph?.createdTimestamp ? subgraph.createdTimestamp * 1000 : Date.now();
+        baselineAt = new Date(tsMs).toISOString();
+      } else if (storedBaseline) {
+        // Layer 2 — backend snapshot
+        baselineToken0Amount = parseFloat(storedBaseline.token0_amount) || 0;
+        baselineToken1Amount = parseFloat(storedBaseline.token1_amount) || 0;
+        initialValue = parseFloat(storedBaseline.baseline_value_usd) || totalValue;
+        hodlValue = baselineToken0Amount * price0 + baselineToken1Amount * price1;
+        baselineSource = storedBaseline.source;
+        baselineAt = storedBaseline.baseline_at;
+      } else if (address && totalValue > 0) {
+        // Layer 3 — first observation; show IL=0 today, queue persistence
+        baselineSource = 'first_observed';
+        baselineAt = new Date().toISOString();
       }
 
-      // HODL value: what deposited tokens would be worth now at current prices
-      let hodlValue = totalValue; // fallback
-      if (subgraph && (deposited0 > 0 || deposited1 > 0)) {
-        hodlValue = deposited0 * price0 + deposited1 * price1;
+      // Persist baselines server-side: subgraph history (upgrade) and
+      // first-observed snapshots (initial save). Keyed dedup happens in
+      // usePoolBaselines so concurrent V3+V4 hooks don't double-fire.
+      if (address && baselineSource && (baselineSource === 'subgraph_history' || !storedBaseline)) {
+        pendingUpsertsRef.current.push({
+          wallet_address: address,
+          position_key: positionKey,
+          protocol: 'uniswap-v4',
+          chain: input.chainKey,
+          token0_symbol: token0.symbol,
+          token1_symbol: token1.symbol,
+          token0_amount: baselineToken0Amount,
+          token1_amount: baselineToken1Amount,
+          token0_price_usd: price0,
+          token1_price_usd: price1,
+          baseline_value_usd: initialValue,
+          baseline_at: baselineAt!,
+          source: baselineSource,
+        });
       }
 
       // Total withdrawn value at current prices
@@ -911,6 +974,8 @@ export function useUniswapV4Positions(
         impermanentLoss: Math.abs(ilPercent),
         impermanentLossUsd: Math.abs(ilUsd),
         hodlValueUsd: hodlValue,
+        baselineSource: baselineSource,
+        baselineAt: baselineAt,
         feeApr: feeApr,
         rewardsApr: 0,
         totalApr: Math.max(feeApr, apr),
@@ -929,7 +994,20 @@ export function useUniswapV4Positions(
     });
 
     return result;
-  }, [v4Inputs, onChainResults, subgraphResults]);
+    // baselines is intentionally in deps so the memo re-runs once they load
+  }, [v4Inputs, onChainResults, subgraphResults, baselines, address, getBaseline]);
+
+  // Drain queued upserts after positions are computed. Fire-and-forget
+  // — server-side ranking decides if the upsert wins, frontend cache
+  // updates so the next render uses the new baseline.
+  useEffect(() => {
+    const queue = pendingUpsertsRef.current;
+    if (queue.length === 0) return;
+    pendingUpsertsRef.current = [];
+    queue.forEach((payload) => {
+      void upsertBaseline(payload);
+    });
+  }, [positions, upsertBaseline]);
 
   return {
     positions: positions,
