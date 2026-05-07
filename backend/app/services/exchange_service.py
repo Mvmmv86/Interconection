@@ -830,16 +830,21 @@ class ExchangeService:
 
     async def get_exchange_transactions(
         self,
+        organization_id: Optional[UUID] = None,
         exchange_id: Optional[UUID] = None,
         limit: int = 50,
     ) -> list[dict]:
         """
-        Get transactions from one or all exchanges.
+        Get transactions from exchanges scoped to an organization.
 
-        Fetches live transaction data from exchange APIs.
+        Fetches live transaction data from exchange APIs. When
+        organization_id is provided, only exchanges owned by clients
+        of that organization are queried.
         """
         # Get exchanges
         query = select(Exchange)
+        if organization_id:
+            query = query.join(Client).where(Client.organization_id == organization_id)
         if exchange_id:
             query = query.where(Exchange.id == exchange_id)
 

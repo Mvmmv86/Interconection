@@ -311,6 +311,7 @@ async def list_supported_exchanges() -> List[SupportedExchangeInfo]:
 
 @exchange_positions_router.get("/positions", response_model=ExchangePositionsSummary)
 async def get_exchange_positions(
+    current_user: CurrentUser,
     db: DBSession,
     client_id: Optional[UUID] = Query(None, description="Filter by specific client"),
 ) -> ExchangePositionsSummary:
@@ -323,12 +324,12 @@ async def get_exchange_positions(
     - Futures positions
     - Top 3 assets per exchange
 
-    Can be filtered by client_id to show only one client's exchanges.
+    Scoped to the caller's organization. Can be filtered by client_id
+    to show only one client's exchanges.
     """
     service = ExchangeService(db)
-    # TODO: Re-enable auth and use current_user.organization_id
     result = await service.get_exchange_positions_summary(
-        organization_id=None,  # Temporarily disabled auth
+        organization_id=current_user.organization_id,
         client_id=client_id,
     )
 
@@ -343,19 +344,22 @@ async def get_exchange_positions(
 
 @exchange_positions_router.get("/transactions")
 async def get_exchange_transactions(
+    current_user: CurrentUser,
     db: DBSession,
     exchange_id: Optional[UUID] = Query(None, description="Filter by specific exchange"),
     limit: int = Query(50, ge=1, le=200, description="Max transactions to return"),
 ):
     """
-    Get recent transactions from all connected exchanges.
+    Get recent transactions from connected exchanges.
 
-    Returns deposits, withdrawals, and internal transfers.
+    Scoped to the caller's organization. Returns deposits, withdrawals,
+    and internal transfers.
     """
     service = ExchangeService(db)
 
     try:
         transactions = await service.get_exchange_transactions(
+            organization_id=current_user.organization_id,
             exchange_id=exchange_id,
             limit=limit,
         )
@@ -371,6 +375,7 @@ async def get_exchange_transactions(
 @exchange_positions_router.get("/{exchange_id}/live")
 async def get_exchange_live_data(
     exchange_id: UUID,
+    current_user: CurrentUser,
     db: DBSession,
 ):
     """
@@ -383,9 +388,10 @@ async def get_exchange_live_data(
     - Earn/staking positions
     - Funding balances
 
-    This endpoint fetches data directly from the exchange API.
+    Scoped to the caller's organization. This endpoint fetches data
+    directly from the exchange API.
     """
-    # Find the exchange with its client to get the real organization_id
+    # Find the exchange with its client to verify organization access
     result = await db.execute(
         select(Exchange)
         .where(Exchange.id == exchange_id)
@@ -393,16 +399,12 @@ async def get_exchange_live_data(
     )
     exchange = result.scalar_one_or_none()
 
-    if not exchange:
+    # Return 404 (not 403) when the exchange belongs to another org so we
+    # don't leak existence of UUIDs that don't belong to the caller.
+    if not exchange or not exchange.client or exchange.client.organization_id != current_user.organization_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Exchange not found",
-        )
-
-    if not exchange.client:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Exchange client not found",
         )
 
     service = ExchangeService(db)
