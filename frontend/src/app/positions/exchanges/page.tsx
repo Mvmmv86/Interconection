@@ -371,7 +371,27 @@ export default function ExchangesPage() {
                           {exchange.logo}
                         </div>
                         <div>
-                          <h3 className={cn("text-[14px] font-semibold", isDark ? "text-white" : "text-gray-900")}>{exchange.name}</h3>
+                          <div className="flex items-baseline gap-2">
+                            <h3 className={cn("text-[14px] font-semibold", isDark ? "text-white" : "text-gray-900")}>{exchange.name}</h3>
+                            {exchange.clientName && (
+                              <span className={cn(
+                                "text-[10px] font-medium px-1.5 py-0.5 rounded",
+                                isDark
+                                  ? "bg-accent-blue/10 text-accent-blue/80"
+                                  : "bg-accent-blue/10 text-accent-blue"
+                              )}>
+                                {exchange.clientName}
+                              </span>
+                            )}
+                            {exchange.label && exchange.label !== exchange.name && (
+                              <span className={cn(
+                                "text-[10px]",
+                                isDark ? "text-white/40" : "text-gray-500"
+                              )}>
+                                · {exchange.label}
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-2">
                             <StatusIcon
                               className={cn(

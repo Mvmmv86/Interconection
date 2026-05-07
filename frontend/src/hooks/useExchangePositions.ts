@@ -15,6 +15,9 @@ export interface ExchangeAccount {
   id: string;
   name: string;
   logo: string;
+  label?: string | null;
+  clientId?: string | null;
+  clientName?: string | null;
   status: 'connected' | 'syncing' | 'error' | 'pending';
   lastSync: string;
   totalValue: number;
@@ -69,6 +72,9 @@ function transformApiResponse(apiData: {
     id: string;
     name: string;
     logo: string;
+    label?: string | null;
+    client_id?: string | null;
+    client_name?: string | null;
     status: string;
     last_sync: string;
     total_value: string | number;
@@ -93,6 +99,9 @@ function transformApiResponse(apiData: {
       id: ex.id,
       name: ex.name,
       logo: ex.logo,
+      label: ex.label ?? null,
+      clientId: ex.client_id ?? null,
+      clientName: ex.client_name ?? null,
       status: ex.status as ExchangeAccount['status'],
       lastSync: ex.last_sync,
       totalValue: Number(ex.total_value),

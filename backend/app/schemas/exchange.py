@@ -189,6 +189,9 @@ class ExchangeAccountData(BaseSchema):
     id: str  # UUID as string for frontend
     name: str  # "Binance", "Bybit"
     logo: str  # 2-letter code: "BN", "BY"
+    label: Optional[str] = None  # User-defined label set when adding the exchange
+    client_id: Optional[str] = None  # Owning Conta UUID
+    client_name: Optional[str] = None  # Owning Conta display name
     status: str  # "connected", "syncing", "error", "pending"
     last_sync: str  # "2 min ago", "never"
     total_value: Decimal

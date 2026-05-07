@@ -516,17 +516,13 @@ class ExchangeService:
 
         Returns summary with all exchanges and their breakdowns.
         """
-        # Build query for exchanges
-        query = select(Exchange)
+        # Build query for exchanges. Always eager-load the owning Client
+        # so we can include client name/id in the response and avoid
+        # N+1 queries when iterating exchanges below.
+        query = select(Exchange).options(selectinload(Exchange.client))
 
-        # Only join and filter by organization if provided
         if organization_id:
-            query = (
-                query
-                .join(Client)
-                .where(Client.organization_id == organization_id)
-                .options(selectinload(Exchange.client))
-            )
+            query = query.join(Client).where(Client.organization_id == organization_id)
 
         if client_id:
             query = query.where(Exchange.client_id == client_id)
@@ -619,6 +615,9 @@ class ExchangeService:
                 "id": str(exchange.id),
                 "name": EXCHANGE_NAMES.get(exchange.exchange, exchange.exchange.title()),
                 "logo": EXCHANGE_LOGOS.get(exchange.exchange, exchange.exchange[:2].upper()),
+                "label": exchange.label,
+                "client_id": str(exchange.client_id),
+                "client_name": exchange.client.name if exchange.client else None,
                 "status": status,
                 "last_sync": last_sync,
                 "total_value": ex_total,
