@@ -623,8 +623,16 @@ export function useUniswapV4Positions(
               );
             }
           } catch (stateViewErr) {
-            console.warn('[V4 StateView] Failed for token', input.tokenId, stateViewErr);
-            // Continue without fee data
+            // Surface clearly so we can debug from browser console.
+            // Common failure modes: ABI mismatch on a specific chain
+            // deployment, position migrated to a new salt, or RPC node
+            // not yet indexed. The position card will show 0 fees with
+            // an "unable to fetch" indicator.
+            console.error(
+              '[V4 StateView] Unclaimed fees unavailable for token ' +
+              input.tokenId + ' on chain ' + input.chainKey + ':',
+              stateViewErr,
+            );
           }
 
           results[input.tokenId] = {
@@ -806,12 +814,23 @@ export function useUniswapV4Positions(
       const withdrawn0 = subgraph ? subgraph.totalWithdrawn0 : 0;
       const withdrawn1 = subgraph ? subgraph.totalWithdrawn1 : 0;
       const depositedUsd = subgraph ? subgraph.totalDepositedUsd : 0;
+      const totalWithdrawnUsd = subgraph ? subgraph.totalWithdrawnUsd : 0;
 
-      // Fees earned = withdrawn amounts include fees from liquidity removal
-      // In V4, fees are collected automatically when removing liquidity
-      // feesEarned = total withdrawn value - (net liquidity removed at current prices)
-      // For now, use unclaimed fees as the primary fee metric
-      const feesEarnedUsd = 0; // V4 doesn't track collected fees separately
+      // Fees Earned (V4 approximation):
+      // V4 emits ModifyLiquidity events for both deposits and withdrawals.
+      // When liquidity is removed, the withdrawal amount includes the
+      // pro-rata share of fees that had accumulated. We approximate
+      // claimed fees as: max(0, totalWithdrawnUsd - (withdrawn0+1 valued
+      // at current prices)). The "withdrawn at current prices" represents
+      // what the principal would have been worth — excess is fees.
+      // This is a proxy and undercounts when prices move favourably,
+      // but it's far better than the previous hardcoded 0.
+      const withdrawnPrincipalAtCurrent = withdrawn0 * price0 + withdrawn1 * price1;
+      const feesEarnedUsd = totalWithdrawnUsd > withdrawnPrincipalAtCurrent
+        ? totalWithdrawnUsd - withdrawnPrincipalAtCurrent
+        : 0;
+      // Token-level breakdown is not separable from withdrawal events
+      // without additional tracing; report 0 for now and surface in USD.
       const collectedFees0 = 0;
       const collectedFees1 = 0;
 
@@ -881,11 +900,9 @@ export function useUniswapV4Positions(
         });
       }
 
-      // Total withdrawn value at current prices
-      const withdrawnValueUsd = withdrawn0 * price0 + withdrawn1 * price1;
-
       // PnL: (current position value + total withdrawn + unclaimed fees) - total deposited
-      const pnlUsd = totalValue + withdrawnValueUsd + unclaimedFeesUsd - initialValue;
+      // Reuses withdrawnPrincipalAtCurrent computed above.
+      const pnlUsd = totalValue + withdrawnPrincipalAtCurrent + unclaimedFeesUsd - initialValue;
       const pnlPercent = initialValue > 0 ? (pnlUsd / initialValue) * 100 : 0;
 
       // Impermanent Loss: HODL vs LP (excluding fees)

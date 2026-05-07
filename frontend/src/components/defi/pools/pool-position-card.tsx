@@ -366,7 +366,26 @@ export function PoolPositionCard({
 
           {/* PnL Breakdown */}
           <div>
-            <p className={cn("text-[10px] uppercase tracking-wider mb-2", isDark ? "text-white/30" : "text-gray-500")}>Performance</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/30" : "text-gray-500")}>Performance</p>
+              {position.baselineSource && (
+                <span
+                  className={cn(
+                    "text-[9px] px-1.5 py-0.5 rounded",
+                    position.baselineSource === 'subgraph_history'
+                      ? (isDark ? "bg-status-success/10 text-status-success" : "bg-green-50 text-green-700")
+                      : (isDark ? "bg-accent-yellow/10 text-accent-yellow" : "bg-yellow-50 text-yellow-700")
+                  )}
+                  title={
+                    position.baselineSource === 'subgraph_history'
+                      ? `IL calculado com historico completo do subgraph (desde ${position.baselineAt ? new Date(position.baselineAt).toLocaleDateString('pt-BR') : 'a abertura'})`
+                      : `Baseline em construcao: snapshot capturado em ${position.baselineAt ? new Date(position.baselineAt).toLocaleDateString('pt-BR') : 'agora'}. IL real aparece nas proximas atualizacoes conforme os precos se movem.`
+                  }
+                >
+                  {position.baselineSource === 'subgraph_history' ? 'Histórico real' : 'Baseline em construção'}
+                </span>
+              )}
+            </div>
             <div className="grid grid-cols-3 gap-2">
               <div className={cn("p-2.5 rounded-lg", isDark ? "bg-white/[0.02]" : "bg-gray-50")}>
                 <p className={cn("text-[9px] uppercase tracking-wider mb-1 flex items-center", isDark ? "text-white/30" : "text-gray-500")}>
