@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { api } from '@/lib/api/client';
 import type { ExchangeAccount } from './useExchangePositions';
 import type {
   ExchangeLiveData,
@@ -173,7 +174,7 @@ export function useExchangeLivePositions(
     try {
       const results = await Promise.allSettled(
         connectedExchanges.map(async (ex) => {
-          const response = await fetch(`/api/v1/exchanges/${ex.id}/live`);
+          const response = await fetch(`/api/v1/exchanges/${ex.id}/live`, { headers: api.authHeaders() });
           if (!response.ok) throw new Error(`Failed to fetch ${ex.name}`);
           const apiData = await response.json();
           return { id: ex.id, data: transformLiveResponse(apiData) };

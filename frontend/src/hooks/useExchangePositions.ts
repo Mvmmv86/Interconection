@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { api } from '@/lib/api/client';
 
 export type FetchStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -126,7 +127,7 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
       }
 
       const url = `/api/v1/exchanges/positions${params.toString() ? `?${params}` : ''}`;
-      const response = await fetch(url);
+      const response = await fetch(url, { headers: api.authHeaders() });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch: ${response.statusText}`);
@@ -151,6 +152,7 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
       const cid = clientId || '00000000-0000-0000-0000-000000000001';
       const response = await fetch(`/api/v1/clients/${cid}/exchanges/${exchangeId}/sync`, {
         method: 'POST',
+        headers: api.authHeaders(),
       });
       return response.ok;
     } catch (err) {
@@ -171,7 +173,7 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
         params.append('client_id', clientId);
       }
       const url = `/api/v1/exchanges/positions${params.toString() ? `?${params}` : ''}`;
-      const response = await fetch(url);
+      const response = await fetch(url, { headers: api.authHeaders() });
       if (!response.ok) throw new Error(`Failed to fetch: ${response.statusText}`);
 
       const apiData = await response.json();
@@ -181,7 +183,7 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
       const cid = clientId || '00000000-0000-0000-0000-000000000001';
       for (const ex of transformed.exchanges) {
         try {
-          await fetch(`/api/v1/clients/${cid}/exchanges/${ex.id}/sync`, { method: 'POST' });
+          await fetch(`/api/v1/clients/${cid}/exchanges/${ex.id}/sync`, { method: 'POST', headers: api.authHeaders() });
         } catch {
           // Continue syncing others even if one fails
         }
@@ -208,7 +210,7 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
           const cid = clientId || '00000000-0000-0000-0000-000000000001';
           for (const ex of pending) {
             try {
-              await fetch(`/api/v1/clients/${cid}/exchanges/${ex.id}/sync`, { method: 'POST' });
+              await fetch(`/api/v1/clients/${cid}/exchanges/${ex.id}/sync`, { method: 'POST', headers: api.authHeaders() });
             } catch {
               // ignore
             }

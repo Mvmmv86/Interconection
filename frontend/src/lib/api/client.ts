@@ -375,6 +375,23 @@ class ApiClient {
     }
   }
 
+  /**
+   * Headers for raw fetch() calls that need to bypass the request() helper
+   * (e.g., hooks that haven't been migrated yet). Always reads from
+   * localStorage so it works after page reloads when this.accessToken
+   * is still being initialized.
+   */
+  authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+    const token = this.accessToken
+      || (typeof window !== 'undefined' ? localStorage.getItem('access_token') : null);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...extra,
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+  }
+
   // ========================
   // Client methods
   // ========================

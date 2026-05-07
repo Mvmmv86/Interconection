@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { api } from '@/lib/api/client';
 
 export type FetchStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -299,7 +300,7 @@ export function useExchangeDetail(exchangeId: string): UseExchangeDetailReturn {
     setError(null);
 
     try {
-      const response = await fetch(`/api/v1/exchanges/${exchangeId}/live`);
+      const response = await fetch(`/api/v1/exchanges/${exchangeId}/live`, { headers: api.authHeaders() });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch: ${response.statusText}`);
