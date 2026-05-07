@@ -525,12 +525,76 @@ class ApiClient {
   }
 
   // ========================
+  // Pool position baselines (LP IL/HODL fallback)
+  // ========================
+
+  async getPoolBaselines(walletAddress?: string): Promise<ApiResponse<PoolBaselineListResponse>> {
+    const qs = walletAddress ? `?wallet_address=${encodeURIComponent(walletAddress)}` : '';
+    return this.request<PoolBaselineListResponse>(`/api/v1/pool-baselines${qs}`);
+  }
+
+  async upsertPoolBaseline(payload: PoolBaselineUpsert): Promise<ApiResponse<PoolBaseline>> {
+    return this.request<PoolBaseline>('/api/v1/pool-baselines', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // ========================
   // Health check
   // ========================
 
   async healthCheck(): Promise<ApiResponse<{ status: string }>> {
     return this.request<{ status: string }>('/health');
   }
+}
+
+// ========================
+// Pool baseline types
+// ========================
+
+export type PoolBaselineSource = 'subgraph_history' | 'first_observed' | 'manual';
+
+export interface PoolBaseline {
+  id: string;
+  organization_id: string;
+  wallet_address: string;
+  position_key: string;
+  protocol: string;
+  chain: string;
+  token0_symbol: string;
+  token1_symbol: string;
+  token0_amount: string;
+  token1_amount: string;
+  token0_price_usd: string;
+  token1_price_usd: string;
+  baseline_value_usd: string;
+  baseline_at: string;
+  source: PoolBaselineSource;
+  resnapshot_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PoolBaselineListResponse {
+  items: PoolBaseline[];
+  count: number;
+}
+
+export interface PoolBaselineUpsert {
+  wallet_address: string;
+  position_key: string;
+  protocol: string;
+  chain: string;
+  token0_symbol: string;
+  token1_symbol: string;
+  token0_amount: string | number;
+  token1_amount: string | number;
+  token0_price_usd: string | number;
+  token1_price_usd: string | number;
+  baseline_value_usd: string | number;
+  baseline_at: string; // ISO 8601
+  source: PoolBaselineSource;
 }
 
 // Singleton instance

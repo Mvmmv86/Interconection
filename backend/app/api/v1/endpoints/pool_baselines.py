@@ -42,11 +42,16 @@ async def upsert_baseline(
     current_user: CurrentUser,
     db: DBSession,
 ) -> PoolBaselineResponse:
-    """Idempotent upsert. Returns the stored baseline (new or existing)."""
+    """Idempotent upsert. Returns the stored baseline (new or existing).
+
+    The commit is handled by the get_db dependency on successful return —
+    no explicit commit needed here, and adding one would create a second
+    empty transaction that breaks atomicity if any other write joins
+    this request lifecycle.
+    """
     service = PoolBaselineService(db)
     row, _action = await service.upsert(
         organization_id=current_user.organization_id,
         payload=payload,
     )
-    await db.commit()
     return PoolBaselineResponse.model_validate(row, from_attributes=True)

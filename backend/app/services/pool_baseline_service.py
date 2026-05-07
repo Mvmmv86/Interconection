@@ -6,6 +6,7 @@ from typing import List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pool_position_baseline import PoolPositionBaseline, BaselineSource
@@ -71,7 +72,10 @@ class PoolBaselineService:
             organization_id, payload.wallet_address, payload.position_key
         )
 
-        # Source priority — higher number wins
+        # Source priority — higher number wins.
+        # IMPORTANT: every BaselineSource enum value MUST appear here.
+        # Using direct dict access (not .get with default) so a missing
+        # mapping fails loudly instead of silently classifying as rank 0.
         source_rank = {
             BaselineSource.FIRST_OBSERVED: 1,
             BaselineSource.MANUAL: 2,
@@ -98,12 +102,27 @@ class PoolBaselineService:
                 resnapshot_count=0,
             )
             self.db.add(row)
-            await self.db.flush()
-            return row, "created"
+            try:
+                await self.db.flush()
+                return row, "created"
+            except IntegrityError:
+                # Concurrent upsert raced us to insert. Roll back the
+                # failed insert, re-fetch the row the other request
+                # created, and treat as a normal hit on existing.
+                await self.db.rollback()
+                existing = await self.get_one(
+                    organization_id, payload.wallet_address, payload.position_key
+                )
+                if existing is None:
+                    # Should never happen — if INSERT raised, the row exists
+                    raise
+                # Fall through to the existing-row logic below
 
-        # Upgrade if incoming source is strictly better
-        incoming_rank = source_rank.get(payload.source, 0)
-        existing_rank = source_rank.get(existing.source, 0)
+        # Upgrade if incoming source is strictly better.
+        # Direct dict access (not .get) so a new BaselineSource enum
+        # added without updating source_rank crashes loudly.
+        incoming_rank = source_rank[payload.source]
+        existing_rank = source_rank[existing.source]
         if incoming_rank > existing_rank:
             existing.token0_amount = payload.token0_amount
             existing.token1_amount = payload.token1_amount

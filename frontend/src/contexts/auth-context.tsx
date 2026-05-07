@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/client';
 
 /**
@@ -49,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   // Verify existing token on mount
   useEffect(() => {
@@ -89,9 +91,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     setError(null);
 
-    // Defensive: previous session may have left wallet state in localStorage.
-    // Clear it before authenticating so the new user starts clean.
+    // Defensive: previous session may have left wallet state in localStorage
+    // and React Query cache from another user. Clear both before
+    // authenticating so the new user starts with a clean slate.
     clearWalletStorage();
+    queryClient.clear();
 
     const result = await api.login(email, password);
 
@@ -109,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       return false;
     }
-  }, []);
+  }, [queryClient]);
 
   const register = useCallback(async (
     email: string,
@@ -140,10 +144,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     api.logout();
     clearWalletStorage();
+    // Drop all React Query caches so the next user logging in on this
+    // browser doesn't see stale data from the previous session
+    // (e.g., baselines, exchanges, positions cached for ≤5 min).
+    queryClient.clear();
     setIsAuthenticated(false);
     setUser(null);
     setError(null);
-  }, []);
+  }, [queryClient]);
 
   return (
     <AuthContext.Provider value={{ isAuthenticated, isLoading, user, error, login, register, logout }}>
