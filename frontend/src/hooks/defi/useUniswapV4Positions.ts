@@ -406,13 +406,40 @@ async function fetchV4SubgraphData(
 
     tokenIds.forEach(function(tokenId) {
       const onChain = onChainPositions[tokenId];
-      if (!onChain) return;
 
-      // Find matching events: same pool + same ticks
+      // Match events to this position. Preferred path uses on-chain
+      // poolId + ticks (precise even with multiple V4 positions).
+      // Fallback: when on-chain failed (RPC down, ABI mismatch, etc.)
+      // we infer the (poolId, tickLower, tickUpper) from the most
+      // recent event of this wallet. This works correctly when the
+      // wallet has a single V4 position; if it has multiple positions
+      // in different ranges, all events will pool into one — better
+      // than returning $0 across the board.
+      let matchPoolId: string | null = null;
+      let matchTickLower = 0;
+      let matchTickUpper = 0;
+
+      if (onChain) {
+        matchPoolId = onChain.poolId.toLowerCase();
+        matchTickLower = onChain.tickLower;
+        matchTickUpper = onChain.tickUpper;
+      } else if (events.length > 0) {
+        const ref = events[events.length - 1];
+        matchPoolId = ref.pool.id.toLowerCase();
+        matchTickLower = parseInt(ref.tickLower);
+        matchTickUpper = parseInt(ref.tickUpper);
+        console.warn(
+          '[V4 Subgraph] On-chain data missing for token ' + tokenId +
+          ', falling back to subgraph-only inference from events.'
+        );
+      }
+
+      if (matchPoolId === null) return;
+
       const matchingEvents = events.filter(function(evt) {
-        return evt.pool.id.toLowerCase() === onChain.poolId.toLowerCase() &&
-          parseInt(evt.tickLower) === onChain.tickLower &&
-          parseInt(evt.tickUpper) === onChain.tickUpper;
+        return evt.pool.id.toLowerCase() === matchPoolId &&
+          parseInt(evt.tickLower) === matchTickLower &&
+          parseInt(evt.tickUpper) === matchTickUpper;
       });
 
       let totalDeposited0 = 0;
@@ -655,7 +682,15 @@ export function useUniswapV4Positions(
             decimals1: decimals1,
           };
         } catch (err) {
-          console.warn('[V4] Failed to read on-chain data for token', input.tokenId, err);
+          // Surface to error so it's visible without changing log filters.
+          // Failure here cascades to: no Unclaimed Fees, and IL/HODL/Fees
+          // Earned fall back to subgraph-only inference (still works for
+          // wallets with a single V4 position).
+          console.error(
+            '[V4 OnChain] PositionManager/StateView call failed for token ' +
+            input.tokenId + ' on chain ' + input.chainKey + '.',
+            err,
+          );
         }
       });
 
