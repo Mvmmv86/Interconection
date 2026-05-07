@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useClients } from '@/contexts/client-context';
+import { useAllPositions } from '@/hooks/useAllPositions';
 
 interface StakingPosition {
   id: string;
@@ -42,107 +43,6 @@ interface StakingPosition {
   autoCompound: boolean;
 }
 
-// Mock staking positions linked to clients
-const mockStakingPositions: StakingPosition[] = [
-  {
-    id: '1',
-    clientId: 'client-1',
-    asset: 'Ethereum',
-    symbol: 'ETH',
-    protocol: 'Lido',
-    chain: 'Ethereum',
-    chainColor: '#627eea',
-    type: 'liquid',
-    stakedAmount: 45.5,
-    stakedValue: 159250,
-    apy: 4.2,
-    rewards: 1.92,
-    rewardsValue: 6720,
-    autoCompound: true,
-  },
-  {
-    id: '2',
-    clientId: 'client-1',
-    asset: 'Solana',
-    symbol: 'SOL',
-    protocol: 'Marinade',
-    chain: 'Solana',
-    chainColor: '#9945ff',
-    type: 'liquid',
-    stakedAmount: 850,
-    stakedValue: 127500,
-    apy: 7.8,
-    rewards: 66.3,
-    rewardsValue: 9945,
-    autoCompound: true,
-  },
-  {
-    id: '3',
-    clientId: 'client-3',
-    asset: 'Cosmos',
-    symbol: 'ATOM',
-    protocol: 'Stride',
-    chain: 'Cosmos',
-    chainColor: '#2e3148',
-    type: 'locked',
-    stakedAmount: 5000,
-    stakedValue: 45000,
-    apy: 18.5,
-    rewards: 925,
-    rewardsValue: 8325,
-    lockPeriod: '21 days',
-    unlockDate: '2024-02-15',
-    autoCompound: false,
-  },
-  {
-    id: '4',
-    clientId: 'client-2',
-    asset: 'Solana',
-    symbol: 'SOL',
-    protocol: 'Jito',
-    chain: 'Solana',
-    chainColor: '#9945ff',
-    type: 'liquid',
-    stakedAmount: 1200,
-    stakedValue: 180000,
-    apy: 8.5,
-    rewards: 102,
-    rewardsValue: 15300,
-    autoCompound: true,
-  },
-  {
-    id: '5',
-    clientId: 'client-1',
-    asset: 'Ethereum',
-    symbol: 'ETH',
-    protocol: 'Rocket Pool',
-    chain: 'Ethereum',
-    chainColor: '#627eea',
-    type: 'validator',
-    stakedAmount: 32,
-    stakedValue: 112000,
-    apy: 4.8,
-    rewards: 1.54,
-    rewardsValue: 5390,
-    autoCompound: false,
-  },
-  {
-    id: '6',
-    clientId: 'client-2',
-    asset: 'Ethereum',
-    symbol: 'ETH',
-    protocol: 'Lido',
-    chain: 'Ethereum',
-    chainColor: '#627eea',
-    type: 'liquid',
-    stakedAmount: 25,
-    stakedValue: 87500,
-    apy: 4.2,
-    rewards: 1.05,
-    rewardsValue: 3675,
-    autoCompound: true,
-  },
-];
 
 const typeConfig = {
   liquid: { label: 'Liquid', color: 'text-status-success', bg: 'bg-status-success/10', icon: Unlock },
@@ -249,16 +149,52 @@ function ClientFilter({
   );
 }
 
+// Map real-data chain names to brand colors used by the UI.
+const CHAIN_COLOR_MAP: Record<string, string> = {
+  ethereum: '#627eea',
+  solana: '#9945ff',
+  polygon: '#8247e5',
+  arbitrum: '#28a0f0',
+  optimism: '#ff0420',
+  base: '#0052ff',
+  bsc: '#f0b90b',
+  avalanche: '#e84142',
+};
+
 export default function StakingPage() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const { clients } = useClients();
+  const { stakingPositions: realStakingPositions } = useAllPositions();
   const [filterType, setFilterType] = useState<string>('all');
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
+  // Adapt real backend/wallet staking data to the shape this page renders.
+  // Fields the real source doesn't track yet (rewards, lock period,
+  // autoCompound) get safe defaults — they show as zero / not-locked
+  // until proper tracking is wired up server-side.
+  const stakingPositions = useMemo<StakingPosition[]>(() => {
+    return realStakingPositions.map((p) => ({
+      id: p.id,
+      clientId: undefined,
+      asset: p.asset,
+      symbol: p.symbol,
+      protocol: p.protocol,
+      chain: p.chain,
+      chainColor: CHAIN_COLOR_MAP[p.chain.toLowerCase()] || '#888888',
+      type: 'liquid' as const,
+      stakedAmount: p.stakedAmount,
+      stakedValue: p.stakedValue,
+      apy: p.apy ?? 0,
+      rewards: 0,
+      rewardsValue: 0,
+      autoCompound: true,
+    }));
+  }, [realStakingPositions]);
+
   // Filter positions based on client and type
   const filteredPositions = useMemo(() => {
-    let positions = mockStakingPositions;
+    let positions = stakingPositions;
 
     if (selectedClientId) {
       positions = positions.filter((p) => p.clientId === selectedClientId);
@@ -269,7 +205,7 @@ export default function StakingPage() {
     }
 
     return positions;
-  }, [selectedClientId, filterType]);
+  }, [stakingPositions, selectedClientId, filterType]);
 
   // Calculate stats based on filtered positions
   const stats = useMemo(() => {
