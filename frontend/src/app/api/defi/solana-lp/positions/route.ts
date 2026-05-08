@@ -3,7 +3,6 @@ import type {
   ShyftOrcaPosition,
   ShyftRaydiumPosition,
   ShyftMeteoraPosition,
-  OrcaPoolState,
   RaydiumPoolState,
   MeteoraPoolState,
   UnifiedPoolState,
@@ -24,8 +23,8 @@ const JUPITER_PRICE_URL = 'https://api.jup.ag/price/v2';
 // position records by `positionMint`/`nftMint`).
 const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY || '';
 
-// Protocol API endpoints
-const ORCA_API = 'https://api.mainnet.orca.so/v1/whirlpool';
+// Protocol API endpoints. Orca's public API is replaced by Shyft (see
+// SHYFT_ORCA_POOL_QUERY) due to a Cloudflare 1016 misroute on their side.
 const RAYDIUM_API = 'https://api-v3.raydium.io';
 const METEORA_API = 'https://dlmm-api.meteora.ag';
 
@@ -112,6 +111,48 @@ const SHYFT_METEORA_QUERY = `
     }
   }
 `;
+
+// Orca's public pool API (api.mainnet.orca.so) is currently returning a
+// Cloudflare 1016 error wrapped in a JSON envelope. We bypass it entirely
+// by fetching whirlpool state from Shyft (same source we already use for
+// positions). Shyft only stores on-chain fields, so symbols/decimals/logos
+// come separately from Helius DAS getAssetBatch.
+const SHYFT_ORCA_POOL_QUERY = `
+  query GetOrcaPools($pools: [String!]!) {
+    ORCA_WHIRLPOOLS_whirlpool(where: { pubkey: { _in: $pools } }) {
+      pubkey
+      tokenMintA
+      tokenMintB
+      tokenVaultA
+      tokenVaultB
+      sqrtPrice
+      tickCurrentIndex
+      tickSpacing
+      feeRate
+      liquidity
+    }
+  }
+`;
+
+interface ShyftOrcaWhirlpoolState {
+  pubkey: string;
+  tokenMintA: string;
+  tokenMintB: string;
+  tokenVaultA: string;
+  tokenVaultB: string;
+  sqrtPrice: string;
+  tickCurrentIndex: number | string;
+  tickSpacing: number | string;
+  feeRate: number | string;
+  liquidity: string;
+}
+
+interface TokenMetadata {
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoUrl?: string;
+}
 
 // ============================================
 // Data Fetching Functions
@@ -286,19 +327,83 @@ async function fetchShyftPositions(
 }
 
 /**
- * Fetch pool state from Orca API
+ * Fetch Orca whirlpool state(s) from Shyft. Replaces the broken Orca public
+ * API. Single GraphQL query handles N pools at once.
  */
-async function fetchOrcaPoolState(poolAddress: string): Promise<OrcaPoolState | null> {
-  try {
-    const response = await fetch(`${ORCA_API}/${poolAddress}`, {
-      next: { revalidate: 30 },
-    });
-    if (!response.ok) return null;
-    return await response.json();
-  } catch {
-    console.error(`[Solana LP] Failed to fetch Orca pool ${poolAddress}`);
-    return null;
+async function fetchOrcaPoolStatesViaShyft(
+  whirlpoolAddresses: string[],
+): Promise<Map<string, ShyftOrcaWhirlpoolState>> {
+  const map = new Map<string, ShyftOrcaWhirlpoolState>();
+  if (whirlpoolAddresses.length === 0) return map;
+
+  const data = await shyftQuery<{
+    ORCA_WHIRLPOOLS_whirlpool?: ShyftOrcaWhirlpoolState[];
+  }>(SHYFT_ORCA_POOL_QUERY, { pools: whirlpoolAddresses }, 'Orca pool state');
+
+  for (const pool of data?.ORCA_WHIRLPOOLS_whirlpool || []) {
+    map.set(pool.pubkey, pool);
   }
+  return map;
+}
+
+/**
+ * Fetch token metadata (symbol, name, decimals, logo) from Helius DAS.
+ * Used to enrich Shyft pool data which only stores on-chain fields.
+ * `getAssetBatch` works for both NFTs and fungible SPL tokens.
+ */
+async function fetchTokenMetadata(
+  mints: string[],
+): Promise<Record<string, TokenMetadata>> {
+  const result: Record<string, TokenMetadata> = {};
+  if (mints.length === 0 || !HELIUS_API_KEY) return result;
+
+  const uniqueMints = Array.from(new Set(mints));
+
+  try {
+    const response = await fetch(
+      `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'token-meta',
+          method: 'getAssetBatch',
+          params: { ids: uniqueMints },
+        }),
+        next: { revalidate: 300 },
+      },
+    );
+    if (!response.ok) {
+      console.error('[Solana LP] Helius getAssetBatch:', response.status);
+      return result;
+    }
+    type DASItem = {
+      id?: string;
+      content?: {
+        metadata?: { symbol?: string; name?: string };
+        links?: { image?: string };
+      };
+      token_info?: { symbol?: string; decimals?: number };
+    };
+    const data = await response.json();
+    const items: (DASItem | null)[] = data.result || [];
+    for (const item of items) {
+      if (!item || !item.id) continue;
+      result[item.id] = {
+        symbol:
+          item.token_info?.symbol ||
+          item.content?.metadata?.symbol ||
+          'UNKNOWN',
+        name: item.content?.metadata?.name || 'Unknown Token',
+        decimals: item.token_info?.decimals ?? 9,
+        logoUrl: item.content?.links?.image,
+      };
+    }
+  } catch (error) {
+    console.error('[Solana LP] Failed to fetch token metadata:', error);
+  }
+  return result;
 }
 
 /**
@@ -368,35 +473,51 @@ async function fetchJupiterPrices(mints: string[]): Promise<Record<string, numbe
 /**
  * Unify pool state from different protocol formats
  */
-function unifyOrcaPoolState(pool: OrcaPoolState): UnifiedPoolState {
+/**
+ * Build a UnifiedPoolState from Shyft on-chain data + Helius metadata.
+ * Computes currentPrice from sqrtPriceX64 + decimals — no external API needed.
+ */
+function unifyOrcaShyftPoolState(
+  pool: ShyftOrcaWhirlpoolState,
+  metaA: TokenMetadata | undefined,
+  metaB: TokenMetadata | undefined,
+): UnifiedPoolState {
+  const decimalsA = metaA?.decimals ?? 9;
+  const decimalsB = metaB?.decimals ?? 6;
+
+  // price = (sqrtPriceX64 / 2^64)^2 × 10^(decimalA - decimalB)
+  const Q64 = BigInt(1) << BigInt(64);
+  const sqrtPriceDec = Number(BigInt(pool.sqrtPrice)) / Number(Q64);
+  const currentPrice =
+    sqrtPriceDec * sqrtPriceDec * Math.pow(10, decimalsA - decimalsB);
+
   return {
-    address: pool.address,
+    address: pool.pubkey,
     protocol: 'orca-whirlpool',
     tokenA: {
       mint: pool.tokenMintA,
-      symbol: pool.tokenSymbolA || 'TOKEN_A',
-      name: pool.tokenNameA || 'Token A',
-      decimals: pool.tokenDecimalsA || 9,
-      logoUrl: pool.tokenLogoA,
-      priceUsd: 0, // Filled from Jupiter
+      symbol: metaA?.symbol || 'TOKEN_A',
+      name: metaA?.name || 'Token A',
+      decimals: decimalsA,
+      logoUrl: metaA?.logoUrl,
+      priceUsd: 0,
     },
     tokenB: {
       mint: pool.tokenMintB,
-      symbol: pool.tokenSymbolB || 'TOKEN_B',
-      name: pool.tokenNameB || 'Token B',
-      decimals: pool.tokenDecimalsB || 6,
-      logoUrl: pool.tokenLogoB,
+      symbol: metaB?.symbol || 'TOKEN_B',
+      name: metaB?.name || 'Token B',
+      decimals: decimalsB,
+      logoUrl: metaB?.logoUrl,
       priceUsd: 0,
     },
-    currentTick: pool.tickCurrentIndex,
+    currentTick: Number(pool.tickCurrentIndex),
     sqrtPrice: pool.sqrtPrice,
     liquidity: pool.liquidity,
-    feeRate: pool.feeRate / 10000, // Convert from bps to percentage
-    tickSpacing: pool.tickSpacing,
-    currentPrice: pool.price,
-    tvl: pool.tvl,
-    volume24h: pool.volume24h,
-    fees24h: pool.fees24h,
+    // Orca stores feeRate in hundredths of bps: 400 → 0.04%
+    feeRate: Number(pool.feeRate) / 10000,
+    tickSpacing: Number(pool.tickSpacing),
+    currentPrice,
+    // tvl/volume/fees24h aren't on-chain — would need DefiLlama for those.
   };
 }
 
@@ -501,21 +622,37 @@ export async function GET(request: NextRequest) {
     const raydiumPools = Array.from(new Set(raydiumPositions.map((p) => p.poolId)));
     const meteoraPools = Array.from(new Set(meteoraPositions.map((p) => p.lbPair)));
 
-    // Step 3: Fetch pool states in parallel
-    const [orcaPoolStates, raydiumPoolStates, meteoraPoolStates] = await Promise.all([
-      Promise.all(orcaPools.map(fetchOrcaPoolState)),
+    // Step 3: Fetch pool states. Orca via Shyft (its public API is currently
+    // returning Cloudflare 1016 errors); Raydium/Meteora via their own APIs.
+    const [orcaShyftPools, raydiumPoolStates, meteoraPoolStates] = await Promise.all([
+      fetchOrcaPoolStatesViaShyft(orcaPools),
       Promise.all(raydiumPools.map(fetchRaydiumPoolState)),
       Promise.all(meteoraPools.map(fetchMeteoraPoolState)),
     ]);
+
+    // Orca pools from Shyft don't carry token metadata (decimals, symbols,
+    // logos). Fetch those in one Helius getAssetBatch call covering both
+    // sides of every Orca pool we care about.
+    const orcaPoolEntries = Array.from(orcaShyftPools.entries());
+    const orcaTokenMintsForMeta: string[] = [];
+    for (const [, pool] of orcaPoolEntries) {
+      orcaTokenMintsForMeta.push(pool.tokenMintA, pool.tokenMintB);
+    }
+    const orcaTokenMeta = await fetchTokenMetadata(orcaTokenMintsForMeta);
+    console.log(
+      `[Solana LP] Orca pool metadata — pools: ${orcaShyftPools.size},` +
+      ` token meta: ${Object.keys(orcaTokenMeta).length}`,
+    );
 
     // Step 4: Build unified pool states map
     const poolStates: Record<string, UnifiedPoolState> = {};
     const tokenMints: string[] = [];
 
-    for (const pool of orcaPoolStates) {
-      if (!pool) continue;
-      const unified = unifyOrcaPoolState(pool);
-      poolStates[pool.address] = unified;
+    for (const [pubkey, shyftPool] of orcaPoolEntries) {
+      const metaA = orcaTokenMeta[shyftPool.tokenMintA];
+      const metaB = orcaTokenMeta[shyftPool.tokenMintB];
+      const unified = unifyOrcaShyftPoolState(shyftPool, metaA, metaB);
+      poolStates[pubkey] = unified;
       tokenMints.push(unified.tokenA.mint, unified.tokenB.mint);
     }
 
