@@ -30,7 +30,7 @@ const RAYDIUM_API = 'https://api-v3.raydium.io';
 const METEORA_API = 'https://dlmm-api.meteora.ag';
 
 // ============================================
-// Shyft GraphQL Query
+// Shyft GraphQL Queries
 // ============================================
 //
 // Schema notes (verified via introspection on 2026-05-08):
@@ -39,9 +39,12 @@ const METEORA_API = 'https://dlmm-api.meteora.ag';
 //            field names use `0`/`1` suffix instead of legacy `A`/`B`).
 // - Meteora: meteora_dlmm_Position (V1) and meteora_dlmm_PositionV2 (V2),
 //            both have `owner` and identical shape for our purposes.
+//
+// We split into two queries so a failure in one path (e.g., Shyft DB hiccup
+// on a malformed mint from Helius) doesn't take down the other.
 
-const SHYFT_QUERY = `
-  query GetSolanaLPPositions($mints: [String!]!, $wallet: String!) {
+const SHYFT_NFT_QUERY = `
+  query GetNFTBasedPositions($mints: [String!]!) {
     orca: ORCA_WHIRLPOOLS_position(
       where: { positionMint: { _in: $mints } }
     ) {
@@ -73,7 +76,11 @@ const SHYFT_QUERY = `
       tokenFeesOwed0
       tokenFeesOwed1
     }
+  }
+`;
 
+const SHYFT_METEORA_QUERY = `
+  query GetMeteoraPositions($wallet: String!) {
     meteoraV1: meteora_dlmm_Position(
       where: { owner: { _eq: $wallet } }
     ) {
@@ -110,8 +117,19 @@ const SHYFT_QUERY = `
 // Data Fetching Functions
 // ============================================
 
+// Solana mint addresses are base58 32-44 chars, but compressed-NFT asset IDs
+// from Helius DAS share the same format yet do NOT exist as on-chain accounts
+// — passing them to Shyft causes "database query error".
+const BASE58_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
 /**
  * List NFT mints owned by the wallet via Helius DAS getAssetsByOwner.
+ *
+ * Filters out:
+ *   - compressed NFTs (their `id` is a Merkle-tree leaf hash, not a real
+ *     SPL mint — Shyft can't resolve it and errors the whole query).
+ *   - obviously invalid IDs (defense-in-depth against schema changes).
+ *
  * Used to look up Orca/Raydium positions whose ownership is NFT-based.
  */
 async function fetchWalletNFTMints(wallet: string): Promise<string[]> {
@@ -147,21 +165,87 @@ async function fetchWalletNFTMints(wallet: string): Promise<string[]> {
     }
 
     const data = await response.json();
-    const items: { id?: string }[] = data.result?.items || [];
-    return items
-      .map((item) => item.id)
-      .filter((id): id is string => Boolean(id));
+    type DASItem = {
+      id?: string;
+      compression?: { compressed?: boolean };
+    };
+    const items: DASItem[] = data.result?.items || [];
+
+    const totalItems = items.length;
+    let droppedCompressed = 0;
+    let droppedInvalid = 0;
+
+    const mints = items
+      .filter((item) => {
+        if (item.compression?.compressed) {
+          droppedCompressed++;
+          return false;
+        }
+        if (!item.id || !BASE58_MINT_RE.test(item.id)) {
+          droppedInvalid++;
+          return false;
+        }
+        return true;
+      })
+      .map((item) => item.id!) as string[];
+
+    console.log(
+      `[Solana LP] Helius DAS: ${totalItems} assets → ${mints.length} candidate mints` +
+      ` (compressed dropped: ${droppedCompressed}, invalid: ${droppedInvalid})`,
+    );
+
+    return mints;
   } catch (error) {
     console.error('[Solana LP] Failed to fetch NFTs from Helius:', error);
     return [];
   }
 }
 
+/** Single Shyft GraphQL POST. Returns parsed body or null on error. */
+async function shyftQuery<T>(
+  query: string,
+  variables: Record<string, unknown>,
+  label: string,
+): Promise<T | null> {
+  if (!SHYFT_API_KEY) {
+    console.warn(`[Solana LP] ${label}: No SHYFT_API_KEY configured`);
+    return null;
+  }
+  try {
+    const response = await fetch(
+      `${SHYFT_GRAPHQL_URL}?api_key=${SHYFT_API_KEY}&network=mainnet-beta`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, variables }),
+        next: { revalidate: 30 },
+      },
+    );
+
+    if (!response.ok) {
+      console.error(`[Solana LP] ${label}: HTTP ${response.status}`);
+      return null;
+    }
+    const data = await response.json();
+    if (data.errors) {
+      console.error(
+        `[Solana LP] ${label}: GraphQL errors:`,
+        JSON.stringify(data.errors).slice(0, 500),
+      );
+      return null;
+    }
+    return data.data as T;
+  } catch (error) {
+    console.error(`[Solana LP] ${label}: fetch failed:`, error);
+    return null;
+  }
+}
+
 /**
- * Fetch all LP positions in a single Shyft GraphQL query:
- * - Orca + Raydium: matched by NFT mint (positionMint/nftMint IN the wallet's NFTs).
- * - Meteora V1+V2: matched by `owner` directly. Both versions concatenated since
- *   they share the same shape from the service's point of view.
+ * Fetch all LP positions across the 3 protocols. Split into two GraphQL
+ * calls so a failure on one path doesn't poison the other:
+ *   - NFT-based (Orca + Raydium): looked up by positionMint / nftMint.
+ *   - Owner-based (Meteora V1 + V2): looked up by `owner`.
  */
 async function fetchShyftPositions(
   wallet: string,
@@ -171,52 +255,34 @@ async function fetchShyftPositions(
   raydium: ShyftRaydiumPosition[];
   meteora: ShyftMeteoraPosition[];
 }> {
-  if (!SHYFT_API_KEY) {
-    console.warn('[Solana LP] No SHYFT_API_KEY configured');
-    return { orca: [], raydium: [], meteora: [] };
-  }
+  const [nftData, meteoraData] = await Promise.all([
+    nftMints.length > 0
+      ? shyftQuery<{
+          orca?: ShyftOrcaPosition[];
+          raydium?: ShyftRaydiumPosition[];
+        }>(SHYFT_NFT_QUERY, { mints: nftMints }, 'NFT-based query')
+      : Promise.resolve({ orca: [], raydium: [] }),
+    shyftQuery<{
+      meteoraV1?: ShyftMeteoraPosition[];
+      meteoraV2?: ShyftMeteoraPosition[];
+    }>(SHYFT_METEORA_QUERY, { wallet }, 'Meteora query'),
+  ]);
 
-  try {
-    const response = await fetch(
-      `${SHYFT_GRAPHQL_URL}?api_key=${SHYFT_API_KEY}&network=mainnet-beta`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: SHYFT_QUERY,
-          variables: { mints: nftMints, wallet },
-        }),
-        next: { revalidate: 30 },
-      },
-    );
+  const orca = nftData?.orca || [];
+  const raydium = nftData?.raydium || [];
+  const meteoraV1 = meteoraData?.meteoraV1 || [];
+  const meteoraV2 = meteoraData?.meteoraV2 || [];
 
-    if (!response.ok) {
-      console.error('[Solana LP] Shyft API error:', response.status);
-      return { orca: [], raydium: [], meteora: [] };
-    }
+  console.log(
+    `[Solana LP] Shyft results — orca: ${orca.length}, raydium: ${raydium.length},` +
+    ` meteora V1: ${meteoraV1.length}, V2: ${meteoraV2.length}`,
+  );
 
-    const data = await response.json();
-
-    if (data.errors) {
-      console.error(
-        '[Solana LP] Shyft GraphQL errors:',
-        JSON.stringify(data.errors).slice(0, 500),
-      );
-      return { orca: [], raydium: [], meteora: [] };
-    }
-
-    const meteoraV1: ShyftMeteoraPosition[] = data.data?.meteoraV1 || [];
-    const meteoraV2: ShyftMeteoraPosition[] = data.data?.meteoraV2 || [];
-
-    return {
-      orca: data.data?.orca || [],
-      raydium: data.data?.raydium || [],
-      meteora: [...meteoraV1, ...meteoraV2],
-    };
-  } catch (error) {
-    console.error('[Solana LP] Failed to fetch from Shyft:', error);
-    return { orca: [], raydium: [], meteora: [] };
-  }
+  return {
+    orca,
+    raydium,
+    meteora: [...meteoraV1, ...meteoraV2],
+  };
 }
 
 /**
