@@ -93,7 +93,7 @@ export function calculateCLMMAmounts(
  * Calculate unclaimed fees for a CLMM position.
  *
  * For Orca: fees are stored directly as feeOwedA/feeOwedB
- * For Raydium: tokenFeesOwedA/tokenFeesOwedB
+ * For Raydium: tokenFeesOwed0/tokenFeesOwed1
  */
 export function calculateCLMMFees(
   feeOwedA: bigint,

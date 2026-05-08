@@ -27,7 +27,7 @@ export interface ShyftOrcaPosition {
   }[];
 }
 
-/** Raydium CLMM position from Shyft GraphQL */
+/** Raydium CLMM position from Shyft GraphQL (RAYDIUM_CLMM_PersonalPositionState) */
 export interface ShyftRaydiumPosition {
   pubkey: string;
   poolId: string;
@@ -35,10 +35,10 @@ export interface ShyftRaydiumPosition {
   liquidity: string;
   tickLowerIndex: number;
   tickUpperIndex: number;
-  feeGrowthInsideLastX64A: string;
-  feeGrowthInsideLastX64B: string;
-  tokenFeesOwedA: string;
-  tokenFeesOwedB: string;
+  feeGrowthInside0LastX64: string;
+  feeGrowthInside1LastX64: string;
+  tokenFeesOwed0: string;
+  tokenFeesOwed1: string;
   rewardInfos?: {
     rewardGrowthInside: string;
     rewardAmountOwed: string;

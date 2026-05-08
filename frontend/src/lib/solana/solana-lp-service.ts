@@ -246,8 +246,8 @@ function transformRaydiumPosition(
 
     // Fees
     const fees = calculateCLMMFees(
-      BigInt(pos.tokenFeesOwedA || '0'),
-      BigInt(pos.tokenFeesOwedB || '0'),
+      BigInt(pos.tokenFeesOwed0 || '0'),
+      BigInt(pos.tokenFeesOwed1 || '0'),
       decimalsA,
       decimalsB,
       priceA,
