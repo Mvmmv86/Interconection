@@ -39,11 +39,13 @@ const METEORA_API = 'https://dlmm-api.meteora.ag';
 // - Meteora: meteora_dlmm_Position (V1) and meteora_dlmm_PositionV2 (V2),
 //            both have `owner` and identical shape for our purposes.
 //
-// We split into two queries so a failure in one path (e.g., Shyft DB hiccup
-// on a malformed mint from Helius) doesn't take down the other.
+// One unified query covers all 3 protocols. Earlier we split this in two
+// to isolate failures, but Shyft's free tier rate limit (1 Index req/sec)
+// makes parallel fan-out trip 429. After the schema fixes the unified
+// shape is stable enough to use a single round-trip.
 
-const SHYFT_NFT_QUERY = `
-  query GetNFTBasedPositions($mints: [String!]!) {
+const SHYFT_POSITIONS_QUERY = `
+  query GetSolanaLPPositions($mints: [String!]!, $wallet: String!) {
     orca: ORCA_WHIRLPOOLS_position(
       where: { positionMint: { _in: $mints } }
     ) {
@@ -75,11 +77,7 @@ const SHYFT_NFT_QUERY = `
       tokenFeesOwed0
       tokenFeesOwed1
     }
-  }
-`;
 
-const SHYFT_METEORA_QUERY = `
-  query GetMeteoraPositions($wallet: String!) {
     meteoraV1: meteora_dlmm_Position(
       where: { owner: { _eq: $wallet } }
     ) {
@@ -242,7 +240,12 @@ async function fetchWalletNFTMints(wallet: string): Promise<string[]> {
   }
 }
 
-/** Single Shyft GraphQL POST. Returns parsed body or null on error. */
+/**
+ * Single Shyft GraphQL POST with a one-shot retry on rate limit (429).
+ * Free tier allows 1 Index req/sec — when we make multiple sequential
+ * calls per request (positions then pools), the second can land within
+ * the same second window and trip 429.
+ */
 async function shyftQuery<T>(
   query: string,
   variables: Record<string, unknown>,
@@ -252,41 +255,55 @@ async function shyftQuery<T>(
     console.warn(`[Solana LP] ${label}: No SHYFT_API_KEY configured`);
     return null;
   }
-  try {
-    const response = await fetch(
-      `${SHYFT_GRAPHQL_URL}?api_key=${SHYFT_API_KEY}&network=mainnet-beta`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, variables }),
-        next: { revalidate: 30 },
-      },
-    );
+  const url = `${SHYFT_GRAPHQL_URL}?api_key=${SHYFT_API_KEY}&network=mainnet-beta`;
+  const body = JSON.stringify({ query, variables });
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    next: { revalidate: 30 } as { revalidate: number },
+  } as RequestInit;
 
-    if (!response.ok) {
-      console.error(`[Solana LP] ${label}: HTTP ${response.status}`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await fetch(url, init);
+
+      if (response.status === 429) {
+        if (attempt === 0) {
+          console.warn(`[Solana LP] ${label}: 429 rate limit, retrying in 1.1s`);
+          await new Promise((r) => setTimeout(r, 1100));
+          continue;
+        }
+        console.error(`[Solana LP] ${label}: 429 after retry`);
+        return null;
+      }
+
+      if (!response.ok) {
+        console.error(`[Solana LP] ${label}: HTTP ${response.status}`);
+        return null;
+      }
+      const data = await response.json();
+      if (data.errors) {
+        console.error(
+          `[Solana LP] ${label}: GraphQL errors:`,
+          JSON.stringify(data.errors).slice(0, 500),
+        );
+        return null;
+      }
+      return data.data as T;
+    } catch (error) {
+      console.error(`[Solana LP] ${label}: fetch failed:`, error);
       return null;
     }
-    const data = await response.json();
-    if (data.errors) {
-      console.error(
-        `[Solana LP] ${label}: GraphQL errors:`,
-        JSON.stringify(data.errors).slice(0, 500),
-      );
-      return null;
-    }
-    return data.data as T;
-  } catch (error) {
-    console.error(`[Solana LP] ${label}: fetch failed:`, error);
-    return null;
   }
+  return null;
 }
 
 /**
- * Fetch all LP positions across the 3 protocols. Split into two GraphQL
- * calls so a failure on one path doesn't poison the other:
- *   - NFT-based (Orca + Raydium): looked up by positionMint / nftMint.
- *   - Owner-based (Meteora V1 + V2): looked up by `owner`.
+ * Fetch all LP positions across Orca + Raydium (NFT-based, by positionMint
+ * /nftMint) and Meteora V1+V2 (owner-based) in a single Shyft query.
+ * The empty `mints` array still works — `_in: []` returns no rows but the
+ * Meteora branch still runs.
  */
 async function fetchShyftPositions(
   wallet: string,
@@ -296,23 +313,17 @@ async function fetchShyftPositions(
   raydium: ShyftRaydiumPosition[];
   meteora: ShyftMeteoraPosition[];
 }> {
-  const [nftData, meteoraData] = await Promise.all([
-    nftMints.length > 0
-      ? shyftQuery<{
-          orca?: ShyftOrcaPosition[];
-          raydium?: ShyftRaydiumPosition[];
-        }>(SHYFT_NFT_QUERY, { mints: nftMints }, 'NFT-based query')
-      : Promise.resolve({ orca: [], raydium: [] }),
-    shyftQuery<{
-      meteoraV1?: ShyftMeteoraPosition[];
-      meteoraV2?: ShyftMeteoraPosition[];
-    }>(SHYFT_METEORA_QUERY, { wallet }, 'Meteora query'),
-  ]);
+  const data = await shyftQuery<{
+    orca?: ShyftOrcaPosition[];
+    raydium?: ShyftRaydiumPosition[];
+    meteoraV1?: ShyftMeteoraPosition[];
+    meteoraV2?: ShyftMeteoraPosition[];
+  }>(SHYFT_POSITIONS_QUERY, { mints: nftMints, wallet }, 'positions');
 
-  const orca = nftData?.orca || [];
-  const raydium = nftData?.raydium || [];
-  const meteoraV1 = meteoraData?.meteoraV1 || [];
-  const meteoraV2 = meteoraData?.meteoraV2 || [];
+  const orca = data?.orca || [];
+  const raydium = data?.raydium || [];
+  const meteoraV1 = data?.meteoraV1 || [];
+  const meteoraV2 = data?.meteoraV2 || [];
 
   console.log(
     `[Solana LP] Shyft results — orca: ${orca.length}, raydium: ${raydium.length},` +
