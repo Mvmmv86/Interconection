@@ -190,7 +190,7 @@ export function RiskReportModal({
     // Title page header
     doc.setFontSize(8);
     doc.setTextColor(150, 150, 150);
-    doc.text('INTERCONECTION TREASURY MGMT', marginLeft, 15);
+    doc.text('CONNECTICOIN TREASURY MGMT', marginLeft, 15);
     doc.text(`Gerado em: ${new Date(generatedAt).toLocaleString('pt-BR')}`, pageWidth - marginRight, 15, { align: 'right' });
 
     // Separator line
@@ -340,7 +340,7 @@ export function RiskReportModal({
       doc.setFontSize(7);
       doc.setTextColor(180, 180, 180);
       doc.text(
-        `Interconection Treasury MGMT - Confidencial`,
+        `Connecticoin Treasury MGMT - Confidencial`,
         marginLeft,
         pageHeight - 10
       );

@@ -103,4 +103,4 @@ export const SYMBOL_TO_COINGECKO: Record<string, string> = {
 };
 
 // localStorage key para thresholds customizados
-export const RISK_THRESHOLDS_STORAGE_KEY = 'interconection-risk-thresholds';
+export const RISK_THRESHOLDS_STORAGE_KEY = 'connecticoin-risk-thresholds';

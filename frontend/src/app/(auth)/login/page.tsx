@@ -55,7 +55,7 @@ export default function LoginPage() {
           {/* Mobile logo (compact) */}
           <div className="lg:hidden mb-10">
             <h1 className="text-2xl font-bold text-center bg-gradient-to-r from-[#8b5cf6] via-[#3b82f6] to-[#06b6d4] bg-clip-text text-transparent mb-1">
-              Interconection
+              Connecticoin
             </h1>
             <p className="text-xs tracking-[0.25em] uppercase text-white/30 text-center">
               Treasury Management

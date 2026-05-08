@@ -137,7 +137,7 @@ export function LoginTransition({ onComplete }: LoginTransitionProps) {
           transition={{ delay: CONNECT_DURATION + 0.1, duration: 0.5, ease: 'easeOut' }}
         >
           <h2 className="text-xl font-bold bg-gradient-to-r from-[#8b5cf6] via-[#3b82f6] to-[#06b6d4] bg-clip-text text-transparent">
-            Interconection
+            Connecticoin
           </h2>
           <p className="text-[10px] font-mono tracking-[0.4em] text-[#8b5cf6]/70 uppercase">
             Conectando...

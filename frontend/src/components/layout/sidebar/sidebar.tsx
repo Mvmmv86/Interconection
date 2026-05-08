@@ -151,7 +151,7 @@ export function Sidebar() {
               'text-[11px] font-semibold tracking-tight uppercase',
               theme === 'dark' ? 'text-text-primary' : 'text-gray-900'
             )}>
-              Interconection
+              Connecticoin
             </span>
           )}
         </Link>

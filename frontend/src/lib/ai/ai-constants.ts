@@ -1,4 +1,4 @@
-export const AI_STORAGE_KEY = 'interconection-ai-config';
+export const AI_STORAGE_KEY = 'connecticoin-ai-config';
 
 export const AI_SYSTEM_PROMPT = `
 Você é um analista especializado em gestão de tesouraria cripto com experiência em:

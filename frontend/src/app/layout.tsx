@@ -3,7 +3,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Interconection Treasury MGMT",
+  title: "Connecticoin Treasury MGMT",
   description: "Treasury Management Platform for Crypto Assets",
 };
 

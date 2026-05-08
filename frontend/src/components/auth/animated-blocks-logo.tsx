@@ -17,7 +17,7 @@ const CONNECT_DURATION = 2; // seconds to connect (one-shot, no loop)
 /**
  * Two 3D blockchain blocks that connect like lego pieces.
  * Left = socket (female), Right = stud (male).
- * Colors adapted to Interconection design system (purple → blue → cyan).
+ * Colors adapted to Connecticoin design system (purple → blue → cyan).
  */
 export function AnimatedBlocksLogo() {
   return (
@@ -154,7 +154,7 @@ export function AnimatedBlocksLogo() {
         </div>
       </div>
 
-      {/* "Interconection" text */}
+      {/* "Connecticoin" text */}
       <motion.div
         className="text-center"
         initial={{ opacity: 0, y: 20 }}
@@ -162,7 +162,7 @@ export function AnimatedBlocksLogo() {
         transition={{ delay: 1.2, duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
       >
         <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight bg-gradient-to-r from-[#8b5cf6] via-[#3b82f6] to-[#06b6d4] bg-clip-text text-transparent drop-shadow-[0_2px_4px_rgba(139,92,246,0.3)]">
-          Interconection
+          Connecticoin
         </h1>
       </motion.div>
 
