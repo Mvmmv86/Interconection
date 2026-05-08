@@ -396,12 +396,18 @@ export default function DeFiPage() {
   const totalLpCount = deduplicatedLpPositions.length + poolPositions.length;
   const totalLpValue = deduplicatedLpPositions.reduce((sum, p) => sum + p.valueUsd, 0) + poolsTotalValue;
 
-  // For "all" tab: positions with LP deduplication applied
+  // For "all" tab: filter out Zerion entries that we already render
+  // as a rich PoolPositionCard. Both 'lp' and 'claimable' need to go:
+  // Zerion returns the position itself as 'lp' AND each unclaimed fee
+  // as a separate 'reward' (categorized as 'claimable'), all carrying
+  // the same NFT id in positionName like "#222171". Leaving the
+  // claimable entries showed the same unclaimed fees as duplicate
+  // small cards below the rich pool card.
   const deduplicatedPositions = useMemo(() => {
     if (poolPositions.length === 0) return positions;
     const poolNftIds = new Set(poolPositions.map(p => p.nftId).filter(Boolean));
     return positions.filter(pos => {
-      if (pos.category !== 'lp') return true;
+      if (pos.category !== 'lp' && pos.category !== 'claimable') return true;
       const match = pos.positionName.match(/#(\d+)/);
       return !match || !poolNftIds.has(match[1]);
     });
