@@ -37,7 +37,10 @@ export const SolanaWalletProvider: FC<SolanaWalletProviderProps> = ({ children }
 
   return (
     <ConnectionProvider endpoint={SOLANA_RPC_URL}>
-      <WalletProvider wallets={wallets} autoConnect={false}>
+      {/* autoConnect=true so Phantom/Solflare restore on page reload, matching
+          wagmi's default for EVM. Required for the DeFi dashboard since the
+          user expects to stay connected across refreshes. */}
+      <WalletProvider wallets={wallets} autoConnect>
         {children}
       </WalletProvider>
     </ConnectionProvider>
