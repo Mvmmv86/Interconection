@@ -7,7 +7,14 @@ import { clusterApiUrl } from '@solana/web3.js';
 
 // Solana network configuration
 export const SOLANA_NETWORK = WalletAdapterNetwork.Mainnet;
-export const SOLANA_RPC_URL = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || clusterApiUrl(SOLANA_NETWORK);
+
+// Prefer explicit override → Helius (if key available) → public RPC
+const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
+export const SOLANA_RPC_URL =
+  process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
+  (HELIUS_API_KEY
+    ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
+    : clusterApiUrl(SOLANA_NETWORK));
 
 // Wallet metadata for UI
 export const SOLANA_WALLETS_METADATA = {
