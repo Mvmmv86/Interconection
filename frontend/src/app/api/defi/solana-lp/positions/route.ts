@@ -284,7 +284,19 @@ async function shyftQuery<T>(
         console.error(`[Solana LP] ${label}: HTTP ${response.status}`);
         return null;
       }
-      const data = await response.json();
+
+      // Shyft (Hasura) returns `numeric` columns as raw JSON numbers — but
+      // sqrtPriceX64, fee growth checkpoints and liquidityShares routinely
+      // exceed Number.MAX_SAFE_INTEGER (2^53). JSON.parse silently truncates
+      // those, breaking BigInt() math downstream. Wrap any unquoted integer
+      // with 16+ digits in quotes so it round-trips losslessly as a string.
+      const text = await response.text();
+      const safeText = text.replace(
+        /([:,[]\s*)(-?\d{16,})(?=\s*[,\]}])/g,
+        '$1"$2"',
+      );
+      const data = JSON.parse(safeText);
+
       if (data.errors) {
         console.error(
           `[Solana LP] ${label}: GraphQL errors:`,
