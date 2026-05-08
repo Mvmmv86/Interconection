@@ -16,7 +16,9 @@ import type {
 
 const SHYFT_API_KEY = process.env.SHYFT_API_KEY || '';
 const SHYFT_GRAPHQL_URL = 'https://programs.shyft.to/v0/graphql/';
-const JUPITER_PRICE_URL = 'https://api.jup.ag/price/v2';
+// Jupiter v2 (api.jup.ag/price/v2) returns empty bodies in May 2026.
+// v3 lite is the working endpoint; response shape is mint → { usdPrice }.
+const JUPITER_PRICE_URL = 'https://lite-api.jup.ag/price/v3';
 
 // Helius for NFT discovery (Orca + Raydium positions are NFT-based — no `owner`
 // field on Shyft, so we list NFTs from the wallet via DAS, then look up the
@@ -452,7 +454,10 @@ async function fetchMeteoraPoolState(pairAddress: string): Promise<MeteoraPoolSt
 }
 
 /**
- * Fetch token prices from Jupiter Price API v2
+ * Fetch token prices from Jupiter v3 lite endpoint.
+ *
+ * Response shape (flat map, not wrapped in `data`):
+ *   { "<mint>": { usdPrice: number, decimals: number, ... } }
  */
 async function fetchJupiterPrices(mints: string[]): Promise<Record<string, number>> {
   if (mints.length === 0) return {};
@@ -464,19 +469,28 @@ async function fetchJupiterPrices(mints: string[]): Promise<Record<string, numbe
       next: { revalidate: 30 },
     });
 
-    if (!response.ok) return {};
+    if (!response.ok) {
+      console.error('[Solana LP] Jupiter v3 HTTP', response.status);
+      return {};
+    }
 
-    const data = await response.json();
+    const data = (await response.json()) as Record<
+      string,
+      { usdPrice?: number; price?: number | string }
+    >;
     const prices: Record<string, number> = {};
 
-    for (const [mint, info] of Object.entries(data.data || {})) {
-      const priceData = info as { price: string };
-      prices[mint] = parseFloat(priceData.price) || 0;
+    for (const [mint, info] of Object.entries(data || {})) {
+      // v3 returns `usdPrice` as number; tolerate `price` as a fallback in
+      // case the endpoint shape shifts again.
+      const raw = info?.usdPrice ?? info?.price;
+      const num = typeof raw === 'string' ? parseFloat(raw) : Number(raw);
+      if (Number.isFinite(num) && num > 0) prices[mint] = num;
     }
 
     return prices;
-  } catch {
-    console.error('[Solana LP] Failed to fetch Jupiter prices');
+  } catch (e) {
+    console.error('[Solana LP] Failed to fetch Jupiter prices:', e);
     return {};
   }
 }
@@ -524,8 +538,10 @@ function unifyOrcaShyftPoolState(
     currentTick: Number(pool.tickCurrentIndex),
     sqrtPrice: pool.sqrtPrice,
     liquidity: pool.liquidity,
-    // Orca stores feeRate in hundredths of bps: 400 → 0.04%
-    feeRate: Number(pool.feeRate) / 10000,
+    // On-chain Orca feeRate is in hundredths of a basis point (1e-6 fraction).
+    // Downstream code expects feeRate as a decimal (0.0004 = 0.04%, ×100 → %).
+    // 400 / 1_000_000 = 0.0004 → renders as 0.04%.
+    feeRate: Number(pool.feeRate) / 1_000_000,
     tickSpacing: Number(pool.tickSpacing),
     currentPrice,
     // tvl/volume/fees24h aren't on-chain — would need DefiLlama for those.
