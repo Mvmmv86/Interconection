@@ -41,3 +41,20 @@ nul
 
 # Deploy artifacts
 *-deploy.tar.gz
+
+# Local/temporary debug scripts and screenshots
+scripts/__pycache__/
+scripts/_*.py
+scripts/_*.json
+scripts/_*.png
+scripts/_smoke_*.png
+scripts/_modal_*.png
+scripts/test_solana*.py
+scripts/create_pool_baselines_table.py
+scripts/create_user.py
+scripts/delete_user.py
+scripts/inspect_schema.py
+scripts/inspect_users.py
+scripts/list_users.py
+
+frontend/_mints.json
