@@ -308,6 +308,7 @@ Estado atual do rollout:
 - [x] No código de clients: enforcement inicial por `require_permission(...)` aplicada em todos os endpoints com `route_key="clients"` no `backend/app/api/v1/endpoints/clients.py`.
 - [x] No código de wallets: enforcement inicial por `require_permission(...)` aplicada em endpoints com `route_key="wallets"` no `backend/app/api/v1/endpoints/wallets.py`.
 - [x] No código de manual-assets: enforcement inicial por `require_permission(...)` aplicada em todos os endpoints com `route_key="manual-assets"` no `backend/app/api/v1/endpoints/manual_assets.py`.
+- [x] No código de positions: enforcement inicial por `require_permission(...)` aplicada em todos os endpoints com `route_key="positions"` no `backend/app/api/v1/endpoints/positions.py`.
 
 ## 11.f) Proof de enforcement por módulo (clients)
 
@@ -344,6 +345,24 @@ Escopo deste corte:
   - `DELETE /api/v1/clients/{client_id}/manual-assets/{asset_id}` com token `viewer`: `403` (regra `manual_assets:delete`)
 - Escopo (opcional nesta etapa): com `RBAC_SCOPE_SPECIFIC=true` e `RBAC_SCOPE_SPECIFIC_ENDPOINTS=manual-assets`, validar:
   - membro `SCOPE: SPECIFIC` sem `client_id` autorizado no membership recebe `403` nas operações do módulo fora da lista permitida.
+- Rollback:
+  - manter flags OFF e `RBAC_ENFORCEMENT_V1_ENDPOINTS` vazio para restaurar comportamento legado sem alterar código.
+
+## 11.j) Proof de enforcement por módulo (positions)
+
+Escopo deste corte:
+
+- Módulo: `positions`
+- Flags:
+  - `RBAC_ENFORCEMENT_V1=true`
+  - `RBAC_ENFORCEMENT_V1_ENDPOINTS=positions`
+  - `RBAC_SCOPE_SPECIFIC` opcional (padrão `false` para validação inicial)
+- Prova mínima com DB real:
+  - `GET /api/v1/positions` com token `owner`: `200`
+  - `GET /api/v1/positions` com token `viewer`: `200` (regra `positions:list`, leitura permitida)
+  - `GET /api/v1/positions/summary` com token `viewer`: `200` (leitura permitida)
+- Escopo (opcional nesta etapa): com `RBAC_SCOPE_SPECIFIC=true` e `RBAC_SCOPE_SPECIFIC_ENDPOINTS=positions`, validar:
+  - membro `SCOPE: SPECIFIC` sem `client_id` autorizado recebe `403` ao consultar rotas com filtro explícito fora do escopo.
 - Rollback:
   - manter flags OFF e `RBAC_ENFORCEMENT_V1_ENDPOINTS` vazio para restaurar comportamento legado sem alterar código.
 
