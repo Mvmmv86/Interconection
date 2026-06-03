@@ -4,11 +4,11 @@ from decimal import Decimal
 from typing import List
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import CurrentUser, DBSession, rbac_route_guard
 from app.models.client import Client
 from app.schemas.client import (
     ClientCreate,
@@ -22,7 +22,7 @@ from app.schemas.client_portfolio import (
 )
 from app.services.client_service import ClientService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rbac_route_guard("clients"))])
 
 
 @router.get("", response_model=List[ClientPortfolioListItem])

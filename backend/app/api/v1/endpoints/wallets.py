@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 from typing import List
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import CurrentUser, DBSession, rbac_route_guard
 from app.models.client import Client
 from app.models.wallet import Wallet
 from app.schemas.wallet import (
@@ -17,7 +17,7 @@ from app.schemas.wallet import (
 )
 from app.schemas.common import SuccessResponse
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rbac_route_guard("wallets"))])
 
 
 async def verify_client_access(

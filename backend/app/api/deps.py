@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.security import verify_access_token
 from app.db.session import get_db
 from app.models.user import User
@@ -92,6 +93,66 @@ def require_role(allowed_roles: list[str]):
         return current_user
 
     return role_checker
+
+
+def is_rbac_enforcement_enabled(route_key: str | None = None) -> bool:
+    """Check if RBAC enforcement v1 is enabled globally and for a route key.
+
+    When no route key is provided, this checks only the global switch.
+    When keys are configured via RBAC_ENFORCEMENT_V1_ENDPOINTS, only those
+    keys are allowed to run under v1 enforcement.
+    """
+    if not settings.rbac_enforcement_v1:
+        return False
+
+    if route_key is None:
+        return True
+
+    normalized = route_key.strip().lower()
+    allowed = settings.rbac_enforcement_v1_routes
+    return not allowed or normalized in allowed
+
+
+def is_scope_specific_enforcement_enabled(route_key: str | None = None) -> bool:
+    """Check if RBAC scope-specific enforcement is enabled for a route."""
+    if not settings.rbac_scope_specific:
+        return False
+
+    if route_key is None:
+        return True
+
+    normalized = route_key.strip().lower()
+    allowed = settings.rbac_scope_specific_routes
+    return not allowed or normalized in allowed
+
+
+def rbac_route_guard(route_key: str, *, require_scope_check: bool = False):
+    """Return a no-op dependency that marks a route as RBAC rollout controlled.
+
+    This keeps endpoint signatures stable while enabling rollout-safe toggles:
+    - when `RBAC_ENFORCEMENT_V1` is OFF, behavior is fully legacy.
+    - when ON, route is marked as enforced and can be switched to strict checks.
+    """
+
+    async def _guard(
+        current_user: User = Depends(get_current_user),
+    ) -> User:
+        if not is_rbac_enforcement_enabled(route_key):
+            return current_user
+
+        # Future: replace with require_membership/permission checks.
+        if require_scope_check and not is_scope_specific_enforcement_enabled(route_key):
+            return current_user
+
+        if not current_user.organization_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Missing organization context for RBAC rollout",
+            )
+
+        return current_user
+
+    return _guard
 
 
 # Type aliases for cleaner endpoint signatures

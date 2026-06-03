@@ -4,11 +4,11 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import CurrentUser, DBSession, rbac_route_guard
 from app.models.position import Position, PositionType
 from app.models.asset import Asset
 from app.schemas.position import (
@@ -19,7 +19,7 @@ from app.schemas.position import (
     PositionsByProtocol,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rbac_route_guard("positions"))])
 
 
 @router.get("", response_model=List[PositionResponse])

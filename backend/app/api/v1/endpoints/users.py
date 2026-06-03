@@ -1,8 +1,8 @@
 """User endpoints."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import CurrentUser, DBSession, rbac_route_guard
 from app.core.security import get_password_hash, verify_password
 from app.schemas.user import (
     UserResponse,
@@ -11,7 +11,7 @@ from app.schemas.user import (
 )
 from app.schemas.common import SuccessResponse
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rbac_route_guard("settings"))])
 
 
 @router.get("/me", response_model=UserResponse)

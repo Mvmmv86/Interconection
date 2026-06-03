@@ -62,6 +62,28 @@ class Settings(BaseSettings):
     # Encryption
     encryption_key: str = ""
 
+    # RBAC rollout flags
+    # Legacy flow is active while these are false.
+    # Turn on only after endpoint-by-endpoint validation.
+    rbac_enforcement_v1: bool = False
+    rbac_scope_specific: bool = False
+    # Optional comma-separated endpoint keys enabled for each flag.
+    # Example: "exchanges,clients,wallets"
+    rbac_enforcement_v1_endpoints: str = ""
+    rbac_scope_specific_endpoints: str = ""
+
+    @property
+    def rbac_enforcement_v1_routes(self) -> set[str]:
+        """Return normalized route keys enabled for RBAC enforcement."""
+        raw = self.rbac_enforcement_v1_endpoints or ""
+        return {route.strip().lower() for route in raw.split(",") if route.strip()}
+
+    @property
+    def rbac_scope_specific_routes(self) -> set[str]:
+        """Return normalized route keys enabled for scope-specific enforcement."""
+        raw = self.rbac_scope_specific_endpoints or ""
+        return {route.strip().lower() for route in raw.split(",") if route.strip()}
+
     @property
     def is_production(self) -> bool:
         """Check if running in production."""
