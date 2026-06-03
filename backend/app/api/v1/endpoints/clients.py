@@ -1,14 +1,18 @@
 """Client endpoints."""
 
-from decimal import Decimal
-from typing import List
+from typing import Annotated, List
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, DBSession, rbac_route_guard
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    rbac_route_guard,
+    require_permission,
+    is_scope_specific_enforcement_enabled,
+)
 from app.models.client import Client
 from app.schemas.client import (
     ClientCreate,
@@ -27,7 +31,10 @@ router = APIRouter(dependencies=[Depends(rbac_route_guard("clients"))])
 
 @router.get("", response_model=List[ClientPortfolioListItem])
 async def list_clients(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("clients:list", route_key="clients")),
+    ],
     db: DBSession,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
@@ -39,21 +46,38 @@ async def list_clients(
     all calculated from real positions in the database.
     """
     service = ClientService(db)
-    return await service.get_clients_with_summaries(
-        organization_id=current_user.organization_id,
+    clients = await service.get_clients_with_summaries(
+        organization_id=permission_ctx.organization_id,
     )
+
+    filtered_clients = clients
+    if (
+        is_scope_specific_enforcement_enabled("clients")
+        and permission_ctx.client_access_mode is not None
+        and permission_ctx.client_access_mode.name.lower() == "specific"
+    ):
+        filtered_clients = [
+            client
+            for client in clients
+            if client.id in permission_ctx.scope_client_ids
+        ]
+
+    return filtered_clients[skip : skip + limit]
 
 
 @router.post("", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
 async def create_client(
     data: ClientCreate,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("clients:create", route_key="clients")),
+    ],
     db: DBSession,
 ) -> ClientResponse:
     """Create a new client."""
     client = Client(
         id=uuid4(),
-        organization_id=current_user.organization_id,
+        organization_id=permission_ctx.organization_id,
         **data.model_dump(),
     )
     db.add(client)
@@ -66,14 +90,26 @@ async def create_client(
 @router.get("/{client_id}", response_model=ClientResponse)
 async def get_client(
     client_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("clients:list", route_key="clients")),
+    ],
     db: DBSession,
 ) -> ClientResponse:
     """Get a specific client."""
+    if (
+        is_scope_specific_enforcement_enabled("clients")
+        and not permission_ctx.can_access_client(client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
     result = await db.execute(
         select(Client).where(
             Client.id == client_id,
-            Client.organization_id == current_user.organization_id,
+            Client.organization_id == permission_ctx.organization_id,
         )
     )
     client = result.scalar_one_or_none()
@@ -91,14 +127,26 @@ async def get_client(
 async def update_client(
     client_id: UUID,
     data: ClientUpdate,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("clients:edit", route_key="clients")),
+    ],
     db: DBSession,
 ) -> ClientResponse:
     """Update a client."""
+    if (
+        is_scope_specific_enforcement_enabled("clients")
+        and not permission_ctx.can_access_client(client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
     result = await db.execute(
         select(Client).where(
             Client.id == client_id,
-            Client.organization_id == current_user.organization_id,
+            Client.organization_id == permission_ctx.organization_id,
         )
     )
     client = result.scalar_one_or_none()
@@ -122,14 +170,26 @@ async def update_client(
 @router.delete("/{client_id}", response_model=SuccessResponse)
 async def delete_client(
     client_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("clients:delete", route_key="clients")),
+    ],
     db: DBSession,
 ) -> SuccessResponse:
     """Delete a client."""
+    if (
+        is_scope_specific_enforcement_enabled("clients")
+        and not permission_ctx.can_access_client(client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
     result = await db.execute(
         select(Client).where(
             Client.id == client_id,
-            Client.organization_id == current_user.organization_id,
+            Client.organization_id == permission_ctx.organization_id,
         )
     )
     client = result.scalar_one_or_none()
@@ -149,7 +209,10 @@ async def delete_client(
 @router.get("/{client_id}/portfolio", response_model=ClientPortfolio)
 async def get_client_portfolio(
     client_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("clients:list", route_key="clients")),
+    ],
     db: DBSession,
 ) -> ClientPortfolio:
     """
@@ -159,10 +222,19 @@ async def get_client_portfolio(
     exchanges (with balances from positions), manual assets, staking positions,
     pool positions, and a summary with real metrics.
     """
+    if (
+        is_scope_specific_enforcement_enabled("clients")
+        and not permission_ctx.can_access_client(client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
     service = ClientService(db)
     portfolio = await service.get_client_portfolio(
         client_id=client_id,
-        organization_id=current_user.organization_id,
+        organization_id=permission_ctx.organization_id,
     )
 
     if not portfolio:

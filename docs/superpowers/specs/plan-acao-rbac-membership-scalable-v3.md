@@ -305,6 +305,25 @@ Estado atual do rollout:
 - [x] No código de manual-assets: rollout guard aplicado com `rbac_route_guard("manual-assets")` em `backend/app/api/v1/endpoints/manual_assets.py`.
 - [x] No código de positions: rollout guard aplicado com `rbac_route_guard("positions")` em `backend/app/api/v1/endpoints/positions.py`.
 - [x] No código de settings (usuário): rollout guard aplicado com `rbac_route_guard("settings")` em `backend/app/api/v1/endpoints/users.py` (`/users/me*`).
+- [x] No código de clients: enforcement inicial por `require_permission(...)` aplicada em todos os endpoints com `route_key="clients"` no `backend/app/api/v1/endpoints/clients.py`.
+
+## 11.f) Proof de enforcement por módulo (clients)
+
+Escopo deste corte:
+
+- Módulo: `clients`
+- Flags:
+  - `RBAC_ENFORCEMENT_V1=true`
+  - `RBAC_ENFORCEMENT_V1_ENDPOINTS=clients`
+  - `RBAC_SCOPE_SPECIFIC` opcional (padrão `false` para validação inicial)
+- Prova mínima com DB real:
+  - `GET /api/v1/clients` com token `owner`: `200`
+  - `GET /api/v1/clients` com token `viewer`: `403` (regra `clients:list`)
+  - `POST /api/v1/clients` com token `viewer`: `403` (regra `clients:create`)
+- Escopo (opcional nesta etapa): com `RBAC_SCOPE_SPECIFIC=true` e `RBAC_SCOPE_SPECIFIC_ENDPOINTS=clients`, validar:
+  - membro `SCOPE: SPECIFIC` sem `client_id` no membership recebe `403` em `GET /api/v1/clients/{id}` e `DELETE /api/v1/clients/{id}` fora da lista permitida.
+- Rollback:
+  - manter flags OFF e `RBAC_ENFORCEMENT_V1_ENDPOINTS` vazio para restaurar comportamento legado sem alterar código.
 
 ## 11.e) Prova de rollout 0b (sem Docker)
 
