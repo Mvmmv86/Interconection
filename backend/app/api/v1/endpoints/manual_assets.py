@@ -1,14 +1,19 @@
 """Manual Asset endpoints."""
 
 from decimal import Decimal
-from typing import List
+from typing import Annotated, List
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, DBSession, rbac_route_guard
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    is_scope_specific_enforcement_enabled,
+    require_permission,
+    rbac_route_guard,
+)
 from app.models.client import Client
 from app.models.manual_asset import ManualAsset
 from app.schemas.manual_asset import (
@@ -23,14 +28,22 @@ router = APIRouter(dependencies=[Depends(rbac_route_guard("manual-assets"))])
 
 async def get_client_or_404(
     client_id: UUID,
-    organization_id: UUID,
+    permission_ctx: MembershipAuthContext,
     db: DBSession,
 ) -> Client:
     """Get client or raise 404."""
+    if is_scope_specific_enforcement_enabled("manual-assets") and not permission_ctx.can_access_client(
+        client_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
     result = await db.execute(
         select(Client).where(
             Client.id == client_id,
-            Client.organization_id == organization_id,
+            Client.organization_id == permission_ctx.organization_id,
         )
     )
     client = result.scalar_one_or_none()
@@ -75,13 +88,16 @@ def build_manual_asset_response(asset: ManualAsset) -> ManualAssetResponse:
 @router.get("", response_model=List[ManualAssetResponse])
 async def list_manual_assets(
     client_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("manual_assets:list", route_key="manual-assets")),
+    ],
     db: DBSession,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
 ) -> List[ManualAssetResponse]:
     """List all manual assets for a client."""
-    await get_client_or_404(client_id, current_user.organization_id, db)
+    await get_client_or_404(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(ManualAsset)
@@ -99,11 +115,14 @@ async def list_manual_assets(
 async def create_manual_asset(
     client_id: UUID,
     data: ManualAssetCreate,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("manual_assets:create", route_key="manual-assets")),
+    ],
     db: DBSession,
 ) -> ManualAssetResponse:
     """Create a new manual asset for a client."""
-    await get_client_or_404(client_id, current_user.organization_id, db)
+    await get_client_or_404(client_id, permission_ctx, db)
 
     asset = ManualAsset(
         id=uuid4(),
@@ -121,11 +140,14 @@ async def create_manual_asset(
 async def get_manual_asset(
     client_id: UUID,
     asset_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("manual_assets:view", route_key="manual-assets")),
+    ],
     db: DBSession,
 ) -> ManualAssetResponse:
     """Get a specific manual asset."""
-    await get_client_or_404(client_id, current_user.organization_id, db)
+    await get_client_or_404(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(ManualAsset).where(
@@ -149,11 +171,14 @@ async def update_manual_asset(
     client_id: UUID,
     asset_id: UUID,
     data: ManualAssetUpdate,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("manual_assets:edit", route_key="manual-assets")),
+    ],
     db: DBSession,
 ) -> ManualAssetResponse:
     """Update a manual asset."""
-    await get_client_or_404(client_id, current_user.organization_id, db)
+    await get_client_or_404(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(ManualAsset).where(
@@ -183,11 +208,14 @@ async def update_manual_asset(
 async def delete_manual_asset(
     client_id: UUID,
     asset_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("manual_assets:delete", route_key="manual-assets")),
+    ],
     db: DBSession,
 ) -> SuccessResponse:
     """Delete a manual asset."""
-    await get_client_or_404(client_id, current_user.organization_id, db)
+    await get_client_or_404(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(ManualAsset).where(
