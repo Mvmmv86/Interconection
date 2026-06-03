@@ -1,30 +1,61 @@
 """Position endpoints."""
 
 from decimal import Decimal
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import false, select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, DBSession, rbac_route_guard
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    is_scope_specific_enforcement_enabled,
+    require_permission,
+    rbac_route_guard,
+)
 from app.models.position import Position, PositionType
 from app.models.asset import Asset
 from app.schemas.position import (
     PositionResponse,
     PositionSummary,
-    PositionsByType,
-    PositionsByChain,
-    PositionsByProtocol,
 )
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("positions"))])
 
 
+def _apply_position_scope_filter(
+    permission_ctx: MembershipAuthContext,
+    query,
+    client_id: UUID | None = None,
+):
+    if not is_scope_specific_enforcement_enabled("positions"):
+        return query
+
+    if permission_ctx.client_access_mode is None or permission_ctx.client_access_mode.name.lower() != "specific":
+        return query
+
+    if client_id is not None:
+        if not permission_ctx.can_access_client(client_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Forbidden by membership client scope",
+            )
+        return query.where(Position.client_id == client_id)
+
+    scope_client_ids = list(permission_ctx.scope_client_ids)
+    if not scope_client_ids:
+        return query.where(false())
+    return query.where(Position.client_id.in_(scope_client_ids))
+
+
 @router.get("", response_model=List[PositionResponse])
 async def list_positions(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:list", route_key="positions")),
+    ],
     db: DBSession,
     client_id: Optional[UUID] = None,
     position_type: Optional[PositionType] = None,
@@ -36,12 +67,11 @@ async def list_positions(
     """List all positions with optional filters."""
     query = (
         select(Position)
-        .where(Position.organization_id == current_user.organization_id)
+        .where(Position.organization_id == permission_ctx.organization_id)
         .options(selectinload(Position.asset))
     )
+    query = _apply_position_scope_filter(permission_ctx, query, client_id)
 
-    if client_id:
-        query = query.where(Position.client_id == client_id)
     if position_type:
         query = query.where(Position.position_type == position_type)
     if chain:
@@ -96,17 +126,18 @@ async def list_positions(
 
 @router.get("/summary", response_model=PositionSummary)
 async def get_positions_summary(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:list", route_key="positions")),
+    ],
     db: DBSession,
     client_id: Optional[UUID] = None,
 ) -> PositionSummary:
     """Get summary of all positions."""
     query = select(Position).where(
-        Position.organization_id == current_user.organization_id
+        Position.organization_id == permission_ctx.organization_id
     )
-
-    if client_id:
-        query = query.where(Position.client_id == client_id)
+    query = _apply_position_scope_filter(permission_ctx, query, client_id)
 
     result = await db.execute(query)
     positions = result.scalars().all()
@@ -165,7 +196,10 @@ async def get_positions_summary(
 
 @router.get("/staking", response_model=List[PositionResponse])
 async def list_staking_positions(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:list", route_key="positions")),
+    ],
     db: DBSession,
     client_id: Optional[UUID] = None,
 ) -> List[PositionResponse]:
@@ -173,15 +207,13 @@ async def list_staking_positions(
     query = (
         select(Position)
         .where(
-            Position.organization_id == current_user.organization_id,
+            Position.organization_id == permission_ctx.organization_id,
             Position.position_type == PositionType.STAKING,
         )
         .options(selectinload(Position.asset))
         .order_by(Position.current_value_usd.desc())
     )
-
-    if client_id:
-        query = query.where(Position.client_id == client_id)
+    query = _apply_position_scope_filter(permission_ctx, query, client_id)
 
     result = await db.execute(query)
     positions = result.scalars().all()
@@ -217,7 +249,10 @@ async def list_staking_positions(
 
 @router.get("/lp", response_model=List[PositionResponse])
 async def list_lp_positions(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:list", route_key="positions")),
+    ],
     db: DBSession,
     client_id: Optional[UUID] = None,
 ) -> List[PositionResponse]:
@@ -225,15 +260,13 @@ async def list_lp_positions(
     query = (
         select(Position)
         .where(
-            Position.organization_id == current_user.organization_id,
+            Position.organization_id == permission_ctx.organization_id,
             Position.position_type == PositionType.LP,
         )
         .options(selectinload(Position.asset))
         .order_by(Position.current_value_usd.desc())
     )
-
-    if client_id:
-        query = query.where(Position.client_id == client_id)
+    query = _apply_position_scope_filter(permission_ctx, query, client_id)
 
     result = await db.execute(query)
     positions = result.scalars().all()
