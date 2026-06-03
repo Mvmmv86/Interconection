@@ -4,6 +4,7 @@ Updated to use 24h change as fallback PnL when trade history is unavailable.
 """
 
 import logging
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
@@ -13,7 +14,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.security import decrypt_api_key
+from app.core.security import decrypt_api_key, encrypt_api_key
 from app.models.exchange import Exchange
 from app.models.client import Client
 from app.models.position import Position, SourceType, PositionType
@@ -85,6 +86,20 @@ class ExchangeService:
         #     return BinanceAdapter(api_key, api_secret)
 
         raise ValueError(f"Unsupported exchange: {exchange.exchange}")
+
+    async def test_connection_with_credentials(
+        self,
+        exchange: str,
+        api_key: str,
+        api_secret: str,
+    ) -> tuple[bool, Optional[str], Optional[ExchangeAccountSummary]]:
+        """Test exchange credentials directly (used by connection test endpoint)."""
+        temp_exchange = SimpleNamespace(
+            exchange=exchange,
+            api_key_encrypted=encrypt_api_key(api_key),
+            api_secret_encrypted=encrypt_api_key(api_secret),
+        )
+        return await self.test_connection_with_summary(temp_exchange)
 
     async def test_connection(self, exchange: Exchange) -> tuple[bool, Optional[str]]:
         """

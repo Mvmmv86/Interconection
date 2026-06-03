@@ -300,13 +300,13 @@ export function useExchangeDetail(exchangeId: string): UseExchangeDetailReturn {
     setError(null);
 
     try {
-      const response = await fetch(`/api/v1/exchanges/${exchangeId}/live`, { headers: api.authHeaders() });
+      const response = await api.request<Record<string, unknown>>(`/api/v1/exchanges/${exchangeId}/live`);
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch: ${response.statusText}`);
+      if (!response.success || !response.data) {
+        throw new Error(response.error || `Failed to fetch exchange details`);
       }
 
-      const apiData = await response.json();
+      const apiData = response.data;
 
       if (!apiData) {
         throw new Error('No data returned from exchange API');

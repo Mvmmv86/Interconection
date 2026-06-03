@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { api } from '@/lib/api/client';
 import type { ExchangeTransactionData } from '@/types/positions';
 
 interface UseExchangeTransactionsOptions {
@@ -38,14 +39,16 @@ export function useExchangeTransactions(
       }
 
       const url = `/api/v1/exchanges/transactions?${params}`;
-      const response = await fetch(url);
+      const response = await api.request<{
+        transactions: Array<Record<string, unknown>>;
+        count: number;
+      }>(url);
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch transactions: ${response.statusText}`);
+      if (!response.success) {
+        throw new Error(`Failed to fetch transactions: ${response.error || 'Unknown error'}`);
       }
 
-      const data = await response.json();
-      const rawTransactions = data.transactions || [];
+      const rawTransactions = response.data?.transactions || [];
 
       // Transform snake_case API response to camelCase
       const transformed: ExchangeTransactionData[] = rawTransactions.map(

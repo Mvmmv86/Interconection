@@ -174,10 +174,12 @@ export function useExchangeLivePositions(
     try {
       const results = await Promise.allSettled(
         connectedExchanges.map(async (ex) => {
-          const response = await fetch(`/api/v1/exchanges/${ex.id}/live`, { headers: api.authHeaders() });
-          if (!response.ok) throw new Error(`Failed to fetch ${ex.name}`);
-          const apiData = await response.json();
-          return { id: ex.id, data: transformLiveResponse(apiData) };
+          const response = await api.request<Record<string, unknown>>(`/api/v1/exchanges/${ex.id}/live`);
+          if (!response.success || !response.data) {
+            throw new Error(response.error || `Failed to fetch ${ex.name}`);
+          }
+
+          return { id: ex.id, data: transformLiveResponse(response.data) };
         })
       );
 

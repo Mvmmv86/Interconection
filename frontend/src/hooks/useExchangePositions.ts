@@ -136,13 +136,39 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
       }
 
       const url = `/api/v1/exchanges/positions${params.toString() ? `?${params}` : ''}`;
-      const response = await fetch(url, { headers: api.authHeaders() });
+      const response = await api.request<{
+        total_value: string | number;
+        spot_holdings: string | number;
+        margin_positions: string | number;
+        futures_positions: string | number;
+        exchanges: Array<{
+          id: string;
+          name: string;
+          logo: string;
+          label?: string | null;
+          client_id?: string | null;
+          client_name?: string | null;
+          status: string;
+          last_sync: string;
+          total_value: string | number;
+          spot_value: string | number;
+          margin_value: string | number;
+          futures_value: string | number;
+          pnl_24h: string | number;
+          positions: number;
+          top_assets: Array<{
+            symbol: string;
+            value: string | number;
+            change: string | number;
+          }>;
+        }>;
+      }>(url);
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch: ${response.statusText}`);
+      if (!response.success || !response.data) {
+        throw new Error(`Failed to fetch: ${response.error || 'Unknown error'}`);
       }
 
-      const apiData = await response.json();
+      const apiData = response.data;
       const transformed = transformApiResponse(apiData);
 
       setData(transformed);
@@ -156,19 +182,52 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
     }
   }, [clientId]);
 
-  const syncExchange = useCallback(async (exchangeId: string): Promise<boolean> => {
+  const resolveClientIdForExchange = useCallback(
+    async (exchangeId: string): Promise<string | null> => {
+      if (clientId) {
+        return clientId;
+      }
+
+      const existing = data?.exchanges.find((exchange) => exchange.id === exchangeId);
+      if (existing?.clientId) {
+        return existing.clientId;
+      }
+
+      const latest = await fetchPositions();
+      const refreshed = latest?.exchanges.find((exchange) => exchange.id === exchangeId);
+      return refreshed?.clientId || null;
+    },
+    [clientId, data, fetchPositions]
+  );
+
+  const syncWithClient = useCallback(async (targetClientId: string, exchangeId: string): Promise<boolean> => {
     try {
-      const cid = clientId || '00000000-0000-0000-0000-000000000001';
-      const response = await fetch(`/api/v1/clients/${cid}/exchanges/${exchangeId}/sync`, {
-        method: 'POST',
-        headers: api.authHeaders(),
-      });
-      return response.ok;
+      const response = await api.request<unknown>(
+        `/api/v1/clients/${targetClientId}/exchanges/${exchangeId}/sync`,
+        { method: 'POST' }
+      );
+      return response.success;
     } catch (err) {
       console.error('Failed to sync exchange:', err);
       return false;
     }
-  }, [clientId]);
+  }, []);
+
+  const syncExchange = useCallback(async (exchangeId: string): Promise<boolean> => {
+    try {
+      const cid = await resolveClientIdForExchange(exchangeId);
+
+      if (!cid) {
+        console.error('Cannot sync exchange: missing client scope');
+        return false;
+      }
+
+      return await syncWithClient(cid, exchangeId);
+    } catch (err) {
+      console.error('Failed to sync exchange:', err);
+      return false;
+    }
+  }, [resolveClientIdForExchange, syncWithClient]);
 
   // Sync all exchanges then refresh from DB
   const syncAllAndRefresh = useCallback(async () => {
@@ -182,17 +241,49 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
         params.append('client_id', clientId);
       }
       const url = `/api/v1/exchanges/positions${params.toString() ? `?${params}` : ''}`;
-      const response = await fetch(url, { headers: api.authHeaders() });
-      if (!response.ok) throw new Error(`Failed to fetch: ${response.statusText}`);
+      const response = await api.request<{
+        total_value: string | number;
+        spot_holdings: string | number;
+        margin_positions: string | number;
+        futures_positions: string | number;
+        exchanges: Array<{
+          id: string;
+          name: string;
+          logo: string;
+          label?: string | null;
+          client_id?: string | null;
+          client_name?: string | null;
+          status: string;
+          last_sync: string;
+          total_value: string | number;
+          spot_value: string | number;
+          margin_value: string | number;
+          futures_value: string | number;
+          pnl_24h: string | number;
+          positions: number;
+          top_assets: Array<{
+            symbol: string;
+            value: string | number;
+            change: string | number;
+          }>;
+        }>;
+      }>(url);
 
-      const apiData = await response.json();
+      if (!response.success || !response.data) {
+        throw new Error(`Failed to fetch: ${response.error || 'Unknown error'}`);
+      }
+
+      const apiData = response.data;
       const transformed = transformApiResponse(apiData);
 
       // Sync each exchange
-      const cid = clientId || '00000000-0000-0000-0000-000000000001';
       for (const ex of transformed.exchanges) {
+        const targetClientId = ex.clientId || clientId;
+        if (!targetClientId) {
+          continue;
+        }
         try {
-          await fetch(`/api/v1/clients/${cid}/exchanges/${ex.id}/sync`, { method: 'POST', headers: api.authHeaders() });
+          await syncWithClient(targetClientId, ex.id);
         } catch {
           // Continue syncing others even if one fails
         }
@@ -216,11 +307,13 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
           (ex) => ex.status === 'pending' || ex.lastSync === 'never'
         );
         if (pending.length > 0) {
-          const cid = clientId || '00000000-0000-0000-0000-000000000001';
           for (const ex of pending) {
-            try {
-              await fetch(`/api/v1/clients/${cid}/exchanges/${ex.id}/sync`, { method: 'POST', headers: api.authHeaders() });
-            } catch {
+            const targetClientId = ex.clientId || clientId;
+            if (!targetClientId) {
+              continue;
+            }
+            const success = await syncWithClient(targetClientId, ex.id);
+            if (!success) {
               // ignore
             }
           }
@@ -230,8 +323,7 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
       }
     };
     init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [syncWithClient, fetchPositions, clientId]);
 
   // Auto-refresh every 5 minutes
   useEffect(() => {

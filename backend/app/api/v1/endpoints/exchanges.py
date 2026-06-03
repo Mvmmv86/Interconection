@@ -6,11 +6,11 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import CurrentUser, DBSession, rbac_route_guard
 from app.core.security import encrypt_api_key, mask_api_key
 from app.models.client import Client
 from app.models.exchange import Exchange
@@ -28,7 +28,7 @@ from app.schemas.common import SuccessResponse
 from app.services.exchange_service import ExchangeService
 from app.integrations.exchanges import ExchangeAdapterError
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rbac_route_guard("exchange"))])
 
 
 # Supported exchanges info
@@ -127,11 +127,11 @@ async def list_exchanges(
 async def create_exchange(
     client_id: UUID,
     data: ExchangeCreate,
+    current_user: CurrentUser,
     db: DBSession,
 ) -> ExchangeResponse:
     """Add an exchange connection to a client."""
-    # TODO: Re-enable auth when implemented
-    # await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, current_user, db)
 
     # Get the client to access organization_id
     client_result = await db.execute(select(Client).where(Client.id == client_id))
@@ -240,11 +240,11 @@ async def delete_exchange(
 async def sync_exchange(
     client_id: UUID,
     exchange_id: UUID,
+    current_user: CurrentUser,
     db: DBSession,
 ) -> ExchangeSyncResult:
     """Force sync an exchange for balances and positions."""
-    # TODO: Re-enable auth
-    # await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, current_user, db)
 
     # Get exchange with client to access organization_id
     result = await db.execute(
@@ -300,11 +300,16 @@ async def sync_exchange(
 # ============================================
 
 # Create a separate router for global exchange endpoints
-exchange_positions_router = APIRouter()
+exchange_positions_router = APIRouter(
+    dependencies=[Depends(rbac_route_guard("exchange"))]
+)
 
 
 @exchange_positions_router.get("/supported", response_model=List[SupportedExchangeInfo])
-async def list_supported_exchanges() -> List[SupportedExchangeInfo]:
+async def list_supported_exchanges(
+    current_user: CurrentUser,
+) -> List[SupportedExchangeInfo]:
+    _ = current_user
     """List all supported exchanges."""
     return list(EXCHANGE_INFO.values())
 
@@ -431,6 +436,7 @@ async def get_exchange_live_data(
 @exchange_positions_router.get("/{exchange_id}/transactions")
 async def get_single_exchange_transactions(
     exchange_id: UUID,
+    current_user: CurrentUser,
     db: DBSession,
     limit: int = Query(50, ge=1, le=200, description="Max transactions to return"),
 ):
@@ -443,6 +449,7 @@ async def get_single_exchange_transactions(
 
     try:
         transactions = await service.get_exchange_transactions(
+            organization_id=current_user.organization_id,
             exchange_id=exchange_id,
             limit=limit,
         )
@@ -459,7 +466,9 @@ async def get_single_exchange_transactions(
 async def test_exchange_connection(
     data: ExchangeTestConnectionRequest,
     db: DBSession,
+    current_user: CurrentUser,
 ) -> ExchangeTestConnectionResponse:
+    _ = current_user
     """
     Test exchange API credentials before saving.
 
@@ -473,41 +482,27 @@ async def test_exchange_connection(
             message=f"Exchange '{data.exchange}' is not supported",
         )
 
-    # Create a temporary exchange object for testing
-    temp_exchange = Exchange(
-        id=uuid4(),
-        client_id=uuid4(),  # Dummy
-        exchange=data.exchange,
-        label="test",
-        api_key_encrypted=encrypt_api_key(data.api_key),
-        api_secret_encrypted=encrypt_api_key(data.api_secret),
-        api_key_masked=mask_api_key(data.api_key),
-    )
-
     service = ExchangeService(db)
 
     try:
-        # Get adapter and test connection
-        adapter = service.get_adapter(temp_exchange)
-        success = await adapter.test_connection()
+        success, error, summary = await service.test_connection_with_credentials(
+            exchange=data.exchange,
+            api_key=data.api_key,
+            api_secret=data.api_secret,
+        )
 
-        if success:
-            # Also fetch account summary to get asset count
-            summary = await adapter.get_account_summary()
-            await adapter.close()
-
+        if success and summary:
             return ExchangeTestConnectionResponse(
                 success=True,
                 message="Connection successful!",
                 assets_found=summary.position_count,
                 total_value_usd=summary.total_value_usd,
             )
-        else:
-            await adapter.close()
-            return ExchangeTestConnectionResponse(
-                success=False,
-                message="Connection failed. Please check your API credentials.",
-            )
+
+        return ExchangeTestConnectionResponse(
+            success=False,
+            message=error or "Connection failed. Please check your API credentials.",
+        )
 
     except ExchangeAdapterError as e:
         return ExchangeTestConnectionResponse(
