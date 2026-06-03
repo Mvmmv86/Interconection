@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.models.manual_asset import ManualAsset
     from app.models.staking_position import StakingPosition
     from app.models.pool_position import PoolPosition
+    from app.models.membership import Membership
 
 
 class Client(Base, UUIDMixin, TimestampMixin):
@@ -47,6 +48,11 @@ class Client(Base, UUIDMixin, TimestampMixin):
         "Exchange",
         back_populates="client",
         cascade="all, delete-orphan",
+    )
+    memberships: Mapped[List["Membership"]] = relationship(
+        "Membership",
+        secondary="membership_clients",
+        back_populates="clients",
     )
     positions: Mapped[List["Position"]] = relationship(
         "Position",

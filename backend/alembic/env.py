@@ -24,6 +24,8 @@ from app.models import (
     ExchangeBalance, ExchangeFuturesPosition, ExchangeEarnPosition, ExchangeSubaccount,
     ExchangeTransaction, WalletToken, WalletTransaction,
     DefiPositionCache, NotificationHistory,
+    # Team/RBAC
+    Role, RolePermission, Membership, MembershipPermissionOverride, MembershipClient, Invitation,
 )
 
 # this is the Alembic Config object

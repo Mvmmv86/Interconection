@@ -30,6 +30,14 @@ from app.models.exchange_balance import (
 from app.models.exchange_transaction import ExchangeTransaction
 from app.models.wallet_data import WalletToken, WalletTransaction
 from app.models.defi_cache import DefiPositionCache, NotificationHistory
+from app.models.membership import (
+    Role,
+    RolePermission,
+    Membership,
+    MembershipPermissionOverride,
+    MembershipClient,
+    Invitation,
+)
 
 __all__ = [
     # Core
@@ -77,4 +85,11 @@ __all__ = [
     # Cache & Notifications
     "DefiPositionCache",
     "NotificationHistory",
+    # Team membership & RBAC
+    "Role",
+    "RolePermission",
+    "Membership",
+    "MembershipPermissionOverride",
+    "MembershipClient",
+    "Invitation",
 ]
