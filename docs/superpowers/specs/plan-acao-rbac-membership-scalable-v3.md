@@ -307,6 +307,7 @@ Estado atual do rollout:
 - [x] No código de settings (usuário): rollout guard aplicado com `rbac_route_guard("settings")` em `backend/app/api/v1/endpoints/users.py` (`/users/me*`).
 - [x] No código de clients: enforcement inicial por `require_permission(...)` aplicada em todos os endpoints com `route_key="clients"` no `backend/app/api/v1/endpoints/clients.py`.
 - [x] No código de wallets: enforcement inicial por `require_permission(...)` aplicada em endpoints com `route_key="wallets"` no `backend/app/api/v1/endpoints/wallets.py`.
+- [x] No código de manual-assets: enforcement inicial por `require_permission(...)` aplicada em todos os endpoints com `route_key="manual-assets"` no `backend/app/api/v1/endpoints/manual_assets.py`.
 
 ## 11.f) Proof de enforcement por módulo (clients)
 
@@ -323,6 +324,26 @@ Escopo deste corte:
   - `POST /api/v1/clients` com token `viewer`: `403` (regra `clients:create`)
 - Escopo (opcional nesta etapa): com `RBAC_SCOPE_SPECIFIC=true` e `RBAC_SCOPE_SPECIFIC_ENDPOINTS=clients`, validar:
   - membro `SCOPE: SPECIFIC` sem `client_id` no membership recebe `403` em `GET /api/v1/clients/{id}` e `DELETE /api/v1/clients/{id}` fora da lista permitida.
+- Rollback:
+  - manter flags OFF e `RBAC_ENFORCEMENT_V1_ENDPOINTS` vazio para restaurar comportamento legado sem alterar código.
+
+## 11.h) Proof de enforcement por módulo (manual-assets)
+
+Escopo deste corte:
+
+- Módulo: `manual-assets`
+- Flags:
+  - `RBAC_ENFORCEMENT_V1=true`
+  - `RBAC_ENFORCEMENT_V1_ENDPOINTS=manual-assets`
+  - `RBAC_SCOPE_SPECIFIC` opcional (padrão `false` para validação inicial)
+- Prova mínima com DB real:
+  - `GET /api/v1/clients/{client_id}/manual-assets` com token `owner`: `200`
+  - `GET /api/v1/clients/{client_id}/manual-assets` com token `viewer`: `200` (regra `manual_assets:list`, leitura permitida)
+  - `POST /api/v1/clients/{client_id}/manual-assets` com token `viewer`: `403` (regra `manual_assets:create`)
+  - `PATCH /api/v1/clients/{client_id}/manual-assets/{asset_id}` com token `viewer`: `403` (regra `manual_assets:edit`)
+  - `DELETE /api/v1/clients/{client_id}/manual-assets/{asset_id}` com token `viewer`: `403` (regra `manual_assets:delete`)
+- Escopo (opcional nesta etapa): com `RBAC_SCOPE_SPECIFIC=true` e `RBAC_SCOPE_SPECIFIC_ENDPOINTS=manual-assets`, validar:
+  - membro `SCOPE: SPECIFIC` sem `client_id` autorizado no membership recebe `403` nas operações do módulo fora da lista permitida.
 - Rollback:
   - manter flags OFF e `RBAC_ENFORCEMENT_V1_ENDPOINTS` vazio para restaurar comportamento legado sem alterar código.
 
@@ -379,7 +400,7 @@ Próximo passo operacional (sem Docker):
 - [ ] Pendência de infraestrutura para fechar a trilha final do rollout:
   - `GET /api/v1/users/me` com token válido ainda depende de Postgres local disponível no ambiente do usuário (sem Docker).
 
-### 11.g) Correção crítica de enum da migration 0b
+### 11.i) Correção crítica de enum da migration 0b
 
 - [x] Ajuste aplicado na migration `backend/alembic/versions/20260603_rbac_membership_foundation.py` para casar com os enums dos models (valores MAIÚSCULOS):
   - `membershipstatus`: `ACTIVE | INVITED | SUSPENDED`, default `INVITED`
