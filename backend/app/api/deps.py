@@ -145,9 +145,9 @@ def require_membership(route_key: str | None = None):
     """Dependency factory that resolves membership context by tenant."""
 
     async def _membership_dependency(
-        account_id_header: Annotated[str | None, Header(default=None, alias="X-Account-Id")],
         current_user: Annotated[User, Depends(get_current_user)],
         db: Annotated[AsyncSession, Depends(get_db)],
+        account_id_header: Annotated[str | None, Header(alias="X-Account-Id")] = None,
     ) -> MembershipAuthContext:
         normalized_route = _normalize_route_key(route_key)
         if not is_rbac_enforcement_enabled(normalized_route):
