@@ -1,13 +1,19 @@
 """Wallet endpoints."""
 
 from datetime import datetime, timezone
-from typing import List
+from typing import Annotated, List
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
-from app.api.deps import CurrentUser, DBSession, rbac_route_guard
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    is_scope_specific_enforcement_enabled,
+    require_permission,
+    rbac_route_guard,
+)
 from app.models.client import Client
 from app.models.wallet import Wallet
 from app.schemas.wallet import (
@@ -22,14 +28,22 @@ router = APIRouter(dependencies=[Depends(rbac_route_guard("wallets"))])
 
 async def verify_client_access(
     client_id: UUID,
-    current_user,
-    db,
+    permission_ctx: MembershipAuthContext,
+    db: DBSession,
 ) -> Client:
     """Verify user has access to client."""
+    if is_scope_specific_enforcement_enabled("wallets") and not permission_ctx.can_access_client(
+        client_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
     result = await db.execute(
         select(Client).where(
             Client.id == client_id,
-            Client.organization_id == current_user.organization_id,
+            Client.organization_id == permission_ctx.organization_id,
         )
     )
     client = result.scalar_one_or_none()
@@ -45,11 +59,14 @@ async def verify_client_access(
 @router.get("", response_model=List[WalletResponse])
 async def list_wallets(
     client_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("wallets:view", route_key="wallets")),
+    ],
     db: DBSession,
 ) -> List[WalletResponse]:
     """List all wallets for a client."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(Wallet).where(Wallet.client_id == client_id).order_by(Wallet.label)
@@ -63,11 +80,14 @@ async def list_wallets(
 async def create_wallet(
     client_id: UUID,
     data: WalletCreate,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("wallets:create", route_key="wallets")),
+    ],
     db: DBSession,
 ) -> WalletResponse:
     """Add a wallet to a client."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     # Check if wallet already exists for this client
     result = await db.execute(
@@ -100,11 +120,14 @@ async def create_wallet(
 async def get_wallet(
     client_id: UUID,
     wallet_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("wallets:view", route_key="wallets")),
+    ],
     db: DBSession,
 ) -> WalletResponse:
     """Get a specific wallet."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(Wallet).where(
@@ -127,11 +150,14 @@ async def get_wallet(
 async def delete_wallet(
     client_id: UUID,
     wallet_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("wallets:delete", route_key="wallets")),
+    ],
     db: DBSession,
 ) -> SuccessResponse:
     """Delete a wallet."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(Wallet).where(
@@ -157,11 +183,14 @@ async def delete_wallet(
 async def scan_wallet(
     client_id: UUID,
     wallet_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("wallets:edit", route_key="wallets")),
+    ],
     db: DBSession,
 ) -> WalletScanResult:
     """Force scan a wallet for tokens and positions."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(Wallet).where(
@@ -184,7 +213,7 @@ async def scan_wallet(
     try:
         result_data = await service.scan_wallet(
             wallet_id=wallet_id,
-            organization_id=current_user.organization_id,
+            organization_id=permission_ctx.organization_id,
         )
 
         return WalletScanResult(
