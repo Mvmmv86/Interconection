@@ -90,7 +90,7 @@ async def list_manual_assets(
     client_id: UUID,
     permission_ctx: Annotated[
         MembershipAuthContext,
-        Depends(require_permission("manual_assets:list", route_key="manual-assets")),
+        Depends(require_permission("manual_assets:view", route_key="manual-assets")),
     ],
     db: DBSession,
     skip: int = Query(0, ge=0),

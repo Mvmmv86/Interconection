@@ -54,7 +54,7 @@ def _apply_position_scope_filter(
 async def list_positions(
     permission_ctx: Annotated[
         MembershipAuthContext,
-        Depends(require_permission("positions:list", route_key="positions")),
+        Depends(require_permission("positions:view", route_key="positions")),
     ],
     db: DBSession,
     client_id: Optional[UUID] = None,
@@ -128,7 +128,7 @@ async def list_positions(
 async def get_positions_summary(
     permission_ctx: Annotated[
         MembershipAuthContext,
-        Depends(require_permission("positions:list", route_key="positions")),
+        Depends(require_permission("positions:view", route_key="positions")),
     ],
     db: DBSession,
     client_id: Optional[UUID] = None,
@@ -198,7 +198,7 @@ async def get_positions_summary(
 async def list_staking_positions(
     permission_ctx: Annotated[
         MembershipAuthContext,
-        Depends(require_permission("positions:list", route_key="positions")),
+        Depends(require_permission("positions:view", route_key="positions")),
     ],
     db: DBSession,
     client_id: Optional[UUID] = None,
@@ -251,7 +251,7 @@ async def list_staking_positions(
 async def list_lp_positions(
     permission_ctx: Annotated[
         MembershipAuthContext,
-        Depends(require_permission("positions:list", route_key="positions")),
+        Depends(require_permission("positions:view", route_key="positions")),
     ],
     db: DBSession,
     client_id: Optional[UUID] = None,

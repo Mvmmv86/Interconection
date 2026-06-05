@@ -341,7 +341,7 @@ Escopo deste corte:
   - `RBAC_SCOPE_SPECIFIC` opcional (padrão `false` para validação inicial)
 - Prova mínima com DB real:
   - `GET /api/v1/clients/{client_id}/manual-assets` com token `owner`: `200`
-  - `GET /api/v1/clients/{client_id}/manual-assets` com token `viewer`: `200` (regra `manual_assets:list`, leitura permitida)
+  - `GET /api/v1/clients/{client_id}/manual-assets` com token `viewer`: `200` (regra `manual_assets:view`, leitura permitida)
   - `POST /api/v1/clients/{client_id}/manual-assets` com token `viewer`: `403` (regra `manual_assets:create`)
   - `PATCH /api/v1/clients/{client_id}/manual-assets/{asset_id}` com token `viewer`: `403` (regra `manual_assets:edit`)
   - `DELETE /api/v1/clients/{client_id}/manual-assets/{asset_id}` com token `viewer`: `403` (regra `manual_assets:delete`)
@@ -361,7 +361,8 @@ Escopo deste corte:
   - `RBAC_SCOPE_SPECIFIC` opcional (padrão `false` para validação inicial)
 - Prova mínima com DB real:
   - `GET /api/v1/positions` com token `owner`: `200`
-  - `GET /api/v1/positions` com token `viewer`: `200` (regra `positions:list`, leitura permitida)
+  - `GET /api/v1/positions` com token `viewer`: `200` (regra `positions:view`, leitura permitida)
+  - [x] Corrigido: permissão de leitura de positions ajustada para `positions:view` para casar com o registry (`owner/admin/manager/viewer`).
   - `GET /api/v1/positions/summary` com token `viewer`: `200` (leitura permitida)
 - Escopo (opcional nesta etapa): com `RBAC_SCOPE_SPECIFIC=true` e `RBAC_SCOPE_SPECIFIC_ENDPOINTS=positions`, validar:
   - membro `SCOPE: SPECIFIC` sem `client_id` autorizado recebe `403` ao consultar rotas com filtro explícito fora do escopo.
