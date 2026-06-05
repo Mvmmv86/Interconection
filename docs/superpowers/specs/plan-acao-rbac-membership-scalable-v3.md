@@ -471,3 +471,31 @@ Próximo passo operacional (sem Docker):
 - [ ] Executar prova real no Postgres com dados migrados para confirmar:
   - `SELECT` de `Membership` / `Invitation`
   - `AUTH_QUERY_PATH_OK` com `GET /api/v1/users/me` autenticado
+
+## 12) Fase 2 - Admin da conta (execucao iniciada)
+
+Primeiro pacote backend:
+
+- [x] Criado router `/api/v1/team`.
+- [x] Criados schemas de equipe em `backend/app/schemas/team.py`.
+- [x] Endpoints administrativos protegidos com RBAC estrito (`force=True`):
+  - `GET /api/v1/team/roles` -> `roles:view`
+  - `GET /api/v1/team/members` -> `members:view`
+  - `POST /api/v1/team/invitations` -> `members:invite`
+  - `PATCH /api/v1/team/members/{membership_id}` -> `members:edit`
+  - `DELETE /api/v1/team/members/{membership_id}` -> `members:revoke`
+  - `PATCH /api/v1/team/members/{membership_id}/scope` -> `members:set_scope`
+- [x] Endpoint publico de aceite:
+  - `POST /api/v1/team/invitations/{token}/accept`
+- [x] Aceite trata usuario existente vs novo:
+  - usuario existente: apenas cria/ativa membership.
+  - usuario novo: cria user sem criar organizacao fantasma e cria membership correta.
+- [x] Updates administrativos usam lock de membership (`FOR UPDATE`) para reduzir race em role/status/scope.
+- [x] Escopo por carteira valida `client_ids` dentro da organizacao antes de aplicar.
+
+Prova esperada para review:
+
+- Criar convite para e-mail novo -> aceitar -> user criado com `organization_id` legado da org convidante e membership ativa.
+- Criar convite para e-mail existente -> aceitar -> nenhuma org nova criada e membership ativa adicionada.
+- Viewer nao acessa endpoints administrativos de team.
+- Owner/admin consegue listar roles, convidar, editar role/status e setar scope.

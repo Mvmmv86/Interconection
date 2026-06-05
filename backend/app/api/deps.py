@@ -141,7 +141,7 @@ async def get_current_organization(
     return org
 
 
-def require_membership(route_key: str | None = None):
+def require_membership(route_key: str | None = None, *, force: bool = False):
     """Dependency factory that resolves membership context by tenant."""
 
     async def _membership_dependency(
@@ -150,7 +150,7 @@ def require_membership(route_key: str | None = None):
         account_id_header: Annotated[str | None, Header(alias="X-Account-Id")] = None,
     ) -> MembershipAuthContext:
         normalized_route = _normalize_route_key(route_key)
-        if not is_rbac_enforcement_enabled(normalized_route):
+        if not force and not is_rbac_enforcement_enabled(normalized_route):
             organization_id = current_user.organization_id
             if organization_id is None:
                 raise HTTPException(
@@ -263,16 +263,24 @@ def require_membership(route_key: str | None = None):
     return _membership_dependency
 
 
-def require_permission(permission_key: str, *, route_key: str | None = None):
+def require_permission(
+    permission_key: str,
+    *,
+    route_key: str | None = None,
+    force: bool = False,
+):
     """Dependency factory for explicit permission enforcement."""
 
     async def _permission_dependency(
         membership_ctx: Annotated[
-            MembershipAuthContext, Depends(require_membership(route_key))
+            MembershipAuthContext, Depends(require_membership(route_key, force=force))
         ],
     ) -> MembershipAuthContext:
         normalized_route = _normalize_route_key(route_key)
-        if not is_rbac_enforcement_enabled(normalized_route) or membership_ctx.is_legacy:
+        if (
+            not force
+            and (not is_rbac_enforcement_enabled(normalized_route) or membership_ctx.is_legacy)
+        ):
             return membership_ctx
 
         normalized = permission_key.strip().lower()
