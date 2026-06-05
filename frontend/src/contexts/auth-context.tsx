@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api/client';
+import { api, type AccountMembership } from '@/lib/api/client';
 
 /**
  * Remove wallet-related localStorage entries left over from a previous
@@ -37,10 +37,17 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   user: User | null;
+  memberships: AccountMembership[];
+  activeAccountId: string | null;
+  activeMembership: AccountMembership | null;
+  permissions: string[];
   error: string | null;
   login: (email: string, password: string) => Promise<boolean>;
   register: (email: string, password: string, name: string, organizationName: string) => Promise<boolean>;
   logout: () => void;
+  setActiveAccount: (accountId: string) => boolean;
+  refreshMemberships: () => Promise<void>;
+  can: (permissionKey: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -49,8 +56,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
+  const [memberships, setMemberships] = useState<AccountMembership[]>([]);
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const queryClient = useQueryClient();
+
+  const applyMemberships = useCallback((items: AccountMembership[], fallbackOrgId?: string | null) => {
+    const storedAccountId = api.getActiveAccountId();
+    const selectedMembership =
+      items.find((membership) => membership.organization_id === storedAccountId)
+      || items[0]
+      || null;
+    const selectedAccountId = selectedMembership?.organization_id || fallbackOrgId || null;
+
+    api.setActiveAccountId(selectedAccountId);
+    setMemberships(items);
+    setActiveAccountId(selectedAccountId);
+    setPermissions(selectedMembership?.permissions || []);
+  }, []);
+
+  const refreshMemberships = useCallback(async () => {
+    const result = await api.getMyMemberships();
+    if (result.success && result.data) {
+      applyMemberships(result.data, user?.organization_id);
+    }
+  }, [applyMemberships, user?.organization_id]);
 
   // Verify existing token on mount
   useEffect(() => {
@@ -64,6 +95,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const result = await api.getMe();
       if (result.success && result.data) {
         setUser(result.data);
+        const membershipResult = await api.getMyMemberships();
+        if (membershipResult.success && membershipResult.data) {
+          applyMemberships(membershipResult.data, result.data.organization_id);
+        }
         setIsAuthenticated(true);
       } else {
         // Token invalid — try refreshing
@@ -72,6 +107,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const retryMe = await api.getMe();
           if (retryMe.success && retryMe.data) {
             setUser(retryMe.data);
+            const membershipResult = await api.getMyMemberships();
+            if (membershipResult.success && membershipResult.data) {
+              applyMemberships(membershipResult.data, retryMe.data.organization_id);
+            }
             setIsAuthenticated(true);
           } else {
             api.logout();
@@ -85,7 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     verifyAuth();
-  }, []);
+  }, [applyMemberships]);
 
   const login = useCallback(async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
@@ -104,6 +143,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const meResult = await api.getMe();
       if (meResult.success && meResult.data) {
         setUser(meResult.data);
+        const membershipResult = await api.getMyMemberships();
+        if (membershipResult.success && membershipResult.data) {
+          applyMemberships(membershipResult.data, meResult.data.organization_id);
+        }
       }
       setIsAuthenticated(true);
       setIsLoading(false);
@@ -113,7 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       return false;
     }
-  }, [queryClient]);
+  }, [applyMemberships, queryClient]);
 
   const register = useCallback(async (
     email: string,
@@ -130,6 +173,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const meResult = await api.getMe();
       if (meResult.success && meResult.data) {
         setUser(meResult.data);
+        const membershipResult = await api.getMyMemberships();
+        if (membershipResult.success && membershipResult.data) {
+          applyMemberships(membershipResult.data, meResult.data.organization_id);
+        }
       }
       setIsAuthenticated(true);
       setIsLoading(false);
@@ -139,7 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       return false;
     }
-  }, []);
+  }, [applyMemberships]);
 
   const logout = useCallback(() => {
     api.logout();
@@ -150,11 +197,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear();
     setIsAuthenticated(false);
     setUser(null);
+    setMemberships([]);
+    setActiveAccountId(null);
+    setPermissions([]);
     setError(null);
   }, [queryClient]);
 
+  const setActiveAccount = useCallback((accountId: string): boolean => {
+    const membership = memberships.find((item) => item.organization_id === accountId);
+    if (!membership) return false;
+    api.setActiveAccountId(accountId);
+    setActiveAccountId(accountId);
+    setPermissions(membership.permissions);
+    queryClient.clear();
+    return true;
+  }, [memberships, queryClient]);
+
+  const can = useCallback((permissionKey: string): boolean => {
+    return permissions.includes('*') || permissions.includes(permissionKey);
+  }, [permissions]);
+
+  const activeMembership =
+    memberships.find((membership) => membership.organization_id === activeAccountId)
+    || null;
+
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, user, error, login, register, logout }}>
+    <AuthContext.Provider
+      value={{
+        isAuthenticated,
+        isLoading,
+        user,
+        memberships,
+        activeAccountId,
+        activeMembership,
+        permissions,
+        error,
+        login,
+        register,
+        logout,
+        setActiveAccount,
+        refreshMemberships,
+        can,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

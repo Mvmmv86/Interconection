@@ -499,3 +499,51 @@ Prova esperada para review:
 - Criar convite para e-mail existente -> aceitar -> nenhuma org nova criada e membership ativa adicionada.
 - Viewer nao acessa endpoints administrativos de team.
 - Owner/admin consegue listar roles, convidar, editar role/status e setar scope.
+
+Segundo pacote frontend:
+
+- [x] Criado endpoint de contexto de conta para o usuario autenticado:
+  - `GET /api/v1/users/me/memberships`
+  - retorna memberships ativas, organizacao, role, permissoes efetivas e escopo de clients.
+- [x] `frontend/src/lib/api/client.ts`:
+  - `api.request()` agora e publico para padronizar hooks.
+  - adiciona `X-Account-Id` automaticamente em chamadas autenticadas quando ha conta ativa.
+  - adiciona `setActiveAccountId()` / `getActiveAccountId()`.
+  - adiciona metodos de team e convite.
+- [x] `frontend/src/contexts/auth-context.tsx`:
+  - carrega `memberships[]`, `activeAccountId`, `activeMembership` e `permissions[]`.
+  - expõe `can(permission)` e `setActiveAccount(accountId)`.
+  - limpa cache do React Query ao trocar conta para evitar vazamento visual cross-tenant.
+- [x] Header:
+  - seletor de conta ativa baseado nas memberships.
+- [x] Settings:
+  - criada pagina `/settings`.
+  - criada pagina `/settings/team` para listar membros, convidar, editar role/status, revogar e ajustar escopo all/specific.
+- [x] Convite publico:
+  - criada pagina `/invite/[token]`.
+  - aceita usuario existente sem nome/senha.
+  - aceita usuario novo com nome/senha, sem criar organizacao fantasma.
+
+Observacao sobre middleware:
+
+- [ ] Gating server-side real via `middleware.ts` ainda nao foi aplicado porque a autenticacao atual usa `localStorage`, inacessivel no middleware do Next.js.
+- Recomendacao: mover access/refresh token para cookie `HttpOnly` em pacote futuro antes de prometer enforcement server-side no frontend. Ate la, o backend continua sendo a fronteira real de seguranca e o layout dashboard mantém guard client-side.
+
+Prova esperada para review frontend:
+
+- Login owner carrega memberships e seleciona conta ativa.
+- Toda chamada autenticada em `api.request()` envia `X-Account-Id`.
+- Trocar conta no header atualiza `X-Account-Id` e limpa cache de dados.
+- `/settings/team`:
+  - owner/admin ve membros e cria convite.
+  - viewer recebe tela de acesso restrito.
+  - edicao de role/status/scope chama os endpoints corretos.
+- `/invite/[token]`:
+  - usuario existente aceita sem criar user/org.
+  - usuario novo aceita com nome/senha sem criar org fantasma.
+
+Follow-up aplicado apos review frontend:
+
+- [x] `GET /api/v1/users/me` agora exige apenas autenticacao (`get_current_user`), nao `dashboard:view`.
+- Motivo: identidade propria nao deve depender de permissao funcional; evita que um role custom sem `dashboard:view` quebre carregamento de perfil/autenticacao.
+- `PATCH /api/v1/users/me` e `PUT /api/v1/users/me/password` continuam protegidos por `dashboard:view`/settings nesta fase.

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Search, Bell, Sun, Moon, LogOut } from 'lucide-react';
+import { Search, Bell, Sun, Moon, LogOut, Building2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
 import { useAuth } from '@/contexts/auth-context';
@@ -14,7 +14,7 @@ interface HeaderProps {
 
 export function Header({ className }: HeaderProps) {
   const { theme, toggleTheme } = useTheme();
-  const { user, logout } = useAuth();
+  const { user, logout, memberships, activeAccountId, setActiveAccount } = useAuth();
   const { disconnectAll } = useWallet();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -97,6 +97,36 @@ export function Header({ className }: HeaderProps) {
 
       {/* Right side */}
       <div className="flex items-center gap-2">
+        {memberships.length > 0 && (
+          <div className={cn(
+            'hidden md:flex items-center gap-1.5 h-8 px-2 rounded-md border',
+            theme === 'dark'
+              ? 'border-white/[0.06] bg-white/[0.03] text-white/70'
+              : 'border-gray-200 bg-gray-50 text-gray-600'
+          )}>
+            <Building2 className="w-3.5 h-3.5" />
+            <select
+              value={activeAccountId || ''}
+              onChange={(event) => setActiveAccount(event.target.value)}
+              className={cn(
+                'bg-transparent text-[11px] font-medium outline-none max-w-[180px]',
+                theme === 'dark' ? 'text-white' : 'text-gray-900'
+              )}
+              title="Conta ativa"
+            >
+              {memberships.map((membership) => (
+                <option
+                  key={membership.id}
+                  value={membership.organization_id}
+                  className={theme === 'dark' ? 'bg-background-secondary text-white' : 'bg-white text-gray-900'}
+                >
+                  {membership.organization.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Theme Toggle */}
         <button
           onClick={toggleTheme}

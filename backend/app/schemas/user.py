@@ -1,7 +1,7 @@
 """User schemas."""
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import EmailStr, Field
@@ -54,6 +54,28 @@ class UserResponse(UserBase):
     two_factor_enabled: bool
     created_at: datetime
     last_login_at: Optional[datetime] = None
+
+
+class UserMembershipOrganization(BaseSchema):
+    """Organization summary for an account available to the current user."""
+
+    id: UUID
+    name: str
+    slug: str
+
+
+class UserMembershipResponse(BaseSchema):
+    """Membership/account context used by the frontend account switcher."""
+
+    id: UUID
+    organization_id: UUID
+    organization: UserMembershipOrganization
+    role_id: UUID
+    role_name: str
+    status: str
+    client_access_mode: str
+    client_ids: List[UUID] = []
+    permissions: List[str] = []
 
 
 class UserLogin(BaseSchema):

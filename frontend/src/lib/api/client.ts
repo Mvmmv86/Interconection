@@ -4,6 +4,7 @@
 
 // Use relative paths — Next.js proxy rewrites /api/* to backend
 const API_URL = '';
+const ACTIVE_ACCOUNT_STORAGE_KEY = 'active_account_id';
 
 interface ApiResponse<T> {
   data?: T;
@@ -211,21 +212,95 @@ interface ManualAssetCreateData {
   notes?: string;
 }
 
+interface AccountMembership {
+  id: string;
+  organization_id: string;
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  role_id: string;
+  role_name: string;
+  status: string;
+  client_access_mode: 'all' | 'specific';
+  client_ids: string[];
+  permissions: string[];
+}
+
+interface TeamRole {
+  id: string;
+  name: string;
+  is_system: boolean;
+  description: string | null;
+  permissions: string[];
+}
+
+interface TeamMember {
+  id: string;
+  user_id: string;
+  organization_id: string;
+  role_id: string;
+  role_name: string;
+  status: 'active' | 'invited' | 'suspended';
+  client_access_mode: 'all' | 'specific';
+  client_ids: string[];
+  invited_by_user_id: string | null;
+  accepted_at: string | null;
+  invited_at: string;
+  created_at: string;
+  updated_at: string;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    avatar_url: string | null;
+    is_active: boolean;
+  };
+}
+
+interface TeamInvitation {
+  id: string;
+  organization_id: string;
+  email: string;
+  role_id: string;
+  role_name: string;
+  token: string;
+  status: 'pending' | 'accepted' | 'revoked' | 'expired';
+  expires_at: string;
+  invited_by_user_id: string | null;
+  accepted_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TeamInvitationAcceptResponse {
+  user_id: string;
+  membership_id: string;
+  organization_id: string;
+  status: string;
+  created_user: boolean;
+  requires_login: boolean;
+}
+
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
+  private activeAccountId: string | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
     // Try to get token from localStorage
     if (typeof window !== 'undefined') {
       this.accessToken = localStorage.getItem('access_token');
+      this.activeAccountId = localStorage.getItem(ACTIVE_ACCOUNT_STORAGE_KEY);
     }
   }
 
   private isRefreshing = false;
 
-  private async request<T>(
+  async request<T>(
     endpoint: string,
     options: RequestInit = {},
     skipAutoRefresh = false
@@ -237,6 +312,9 @@ class ApiClient {
 
     if (this.accessToken) {
       (headers as Record<string, string>)['Authorization'] = `Bearer ${this.accessToken}`;
+    }
+    if (this.accessToken && this.activeAccountId) {
+      (headers as Record<string, string>)['X-Account-Id'] = this.activeAccountId;
     }
 
     try {
@@ -356,11 +434,17 @@ class ApiClient {
     return this.request('/api/v1/auth/me');
   }
 
+  async getMyMemberships(): Promise<ApiResponse<AccountMembership[]>> {
+    return this.request<AccountMembership[]>('/api/v1/users/me/memberships');
+  }
+
   logout() {
     this.accessToken = null;
+    this.activeAccountId = null;
     if (typeof window !== 'undefined') {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
+      localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY);
     }
   }
 
@@ -373,6 +457,24 @@ class ApiClient {
     if (typeof window !== 'undefined') {
       localStorage.setItem('access_token', token);
     }
+  }
+
+  setActiveAccountId(accountId: string | null) {
+    this.activeAccountId = accountId;
+    if (typeof window !== 'undefined') {
+      if (accountId) {
+        localStorage.setItem(ACTIVE_ACCOUNT_STORAGE_KEY, accountId);
+      } else {
+        localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY);
+      }
+    }
+  }
+
+  getActiveAccountId(): string | null {
+    if (this.activeAccountId) return this.activeAccountId;
+    if (typeof window === 'undefined') return null;
+    this.activeAccountId = localStorage.getItem(ACTIVE_ACCOUNT_STORAGE_KEY);
+    return this.activeAccountId;
   }
 
   /**
@@ -389,7 +491,72 @@ class ApiClient {
       ...extra,
     };
     if (token) headers['Authorization'] = `Bearer ${token}`;
+    const activeAccountId = this.getActiveAccountId();
+    if (token && activeAccountId) headers['X-Account-Id'] = activeAccountId;
     return headers;
+  }
+
+  // ========================
+  // Team methods
+  // ========================
+
+  async getTeamRoles(): Promise<ApiResponse<TeamRole[]>> {
+    return this.request<TeamRole[]>('/api/v1/team/roles');
+  }
+
+  async getTeamMembers(): Promise<ApiResponse<TeamMember[]>> {
+    return this.request<TeamMember[]>('/api/v1/team/members');
+  }
+
+  async createTeamInvitation(data: {
+    email: string;
+    role_id: string;
+    notes?: string;
+    expires_in_days?: number;
+  }): Promise<ApiResponse<TeamInvitation>> {
+    return this.request<TeamInvitation>('/api/v1/team/invitations', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async acceptTeamInvitation(
+    token: string,
+    data: { name?: string; password?: string } = {}
+  ): Promise<ApiResponse<TeamInvitationAcceptResponse>> {
+    return this.request<TeamInvitationAcceptResponse>(
+      `/api/v1/team/invitations/${token}/accept`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async updateTeamMember(
+    membershipId: string,
+    data: { role_id?: string; status?: 'active' | 'invited' | 'suspended' }
+  ): Promise<ApiResponse<TeamMember>> {
+    return this.request<TeamMember>(`/api/v1/team/members/${membershipId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async revokeTeamMember(membershipId: string): Promise<ApiResponse<{ message: string }>> {
+    return this.request<{ message: string }>(`/api/v1/team/members/${membershipId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateTeamMemberScope(
+    membershipId: string,
+    data: { client_access_mode: 'all' | 'specific'; client_ids: string[] }
+  ): Promise<ApiResponse<TeamMember>> {
+    return this.request<TeamMember>(`/api/v1/team/members/${membershipId}/scope`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
   }
 
   // ========================
@@ -612,4 +779,9 @@ export type {
   ExchangeTestConnectionResponse,
   WalletScanResult,
   ManualAssetCreateData,
+  AccountMembership,
+  TeamRole,
+  TeamMember,
+  TeamInvitation,
+  TeamInvitationAcceptResponse,
 };
