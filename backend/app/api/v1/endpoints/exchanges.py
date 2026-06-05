@@ -3,14 +3,20 @@
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, DBSession, rbac_route_guard
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    is_scope_specific_enforcement_enabled,
+    require_permission,
+    rbac_route_guard,
+)
 from app.core.security import encrypt_api_key, mask_api_key
 from app.models.client import Client
 from app.models.exchange import Exchange
@@ -86,14 +92,24 @@ EXCHANGE_INFO = {
 
 async def verify_client_access(
     client_id: UUID,
-    current_user,
+    permission_ctx: MembershipAuthContext,
     db,
 ) -> Client:
     """Verify user has access to client."""
+    if (
+        is_scope_specific_enforcement_enabled("exchange")
+        and permission_ctx.client_access_mode is not None
+        and not permission_ctx.can_access_client(client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
     result = await db.execute(
         select(Client).where(
             Client.id == client_id,
-            Client.organization_id == current_user.organization_id,
+            Client.organization_id == permission_ctx.organization_id,
         )
     )
     client = result.scalar_one_or_none()
@@ -109,11 +125,14 @@ async def verify_client_access(
 @router.get("", response_model=List[ExchangeResponse])
 async def list_exchanges(
     client_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:view", route_key="exchange")),
+    ],
     db: DBSession,
 ) -> List[ExchangeResponse]:
     """List all exchanges for a client."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(Exchange).where(Exchange.client_id == client_id).order_by(Exchange.label)
@@ -127,11 +146,14 @@ async def list_exchanges(
 async def create_exchange(
     client_id: UUID,
     data: ExchangeCreate,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:create", route_key="exchange")),
+    ],
     db: DBSession,
 ) -> ExchangeResponse:
     """Add an exchange connection to a client."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     # Get the client to access organization_id
     client_result = await db.execute(select(Client).where(Client.id == client_id))
@@ -183,11 +205,14 @@ async def create_exchange(
 async def get_exchange(
     client_id: UUID,
     exchange_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:view", route_key="exchange")),
+    ],
     db: DBSession,
 ) -> ExchangeResponse:
     """Get a specific exchange."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(Exchange).where(
@@ -210,11 +235,14 @@ async def get_exchange(
 async def delete_exchange(
     client_id: UUID,
     exchange_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:delete", route_key="exchange")),
+    ],
     db: DBSession,
 ) -> SuccessResponse:
     """Delete an exchange connection."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     result = await db.execute(
         select(Exchange).where(
@@ -240,11 +268,14 @@ async def delete_exchange(
 async def sync_exchange(
     client_id: UUID,
     exchange_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:sync", route_key="exchange")),
+    ],
     db: DBSession,
 ) -> ExchangeSyncResult:
     """Force sync an exchange for balances and positions."""
-    await verify_client_access(client_id, current_user, db)
+    await verify_client_access(client_id, permission_ctx, db)
 
     # Get exchange with client to access organization_id
     result = await db.execute(
@@ -307,16 +338,22 @@ exchange_positions_router = APIRouter(
 
 @exchange_positions_router.get("/supported", response_model=List[SupportedExchangeInfo])
 async def list_supported_exchanges(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:view", route_key="exchange")),
+    ],
 ) -> List[SupportedExchangeInfo]:
-    _ = current_user
+    _ = permission_ctx
     """List all supported exchanges."""
     return list(EXCHANGE_INFO.values())
 
 
 @exchange_positions_router.get("/positions", response_model=ExchangePositionsSummary)
 async def get_exchange_positions(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:view", route_key="exchange")),
+    ],
     db: DBSession,
     client_id: Optional[UUID] = Query(None, description="Filter by specific client"),
 ) -> ExchangePositionsSummary:
@@ -333,8 +370,19 @@ async def get_exchange_positions(
     to show only one client's exchanges.
     """
     service = ExchangeService(db)
+    if (
+        is_scope_specific_enforcement_enabled("exchange")
+        and client_id is not None
+        and permission_ctx.client_access_mode is not None
+        and not permission_ctx.can_access_client(client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
     result = await service.get_exchange_positions_summary(
-        organization_id=current_user.organization_id,
+        organization_id=permission_ctx.organization_id,
         client_id=client_id,
     )
 
@@ -349,7 +397,10 @@ async def get_exchange_positions(
 
 @exchange_positions_router.get("/transactions")
 async def get_exchange_transactions(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:view", route_key="exchange")),
+    ],
     db: DBSession,
     exchange_id: Optional[UUID] = Query(None, description="Filter by specific exchange"),
     limit: int = Query(50, ge=1, le=200, description="Max transactions to return"),
@@ -362,9 +413,31 @@ async def get_exchange_transactions(
     """
     service = ExchangeService(db)
 
+    if (
+        exchange_id is not None
+        and is_scope_specific_enforcement_enabled("exchange")
+        and permission_ctx.client_access_mode is not None
+    ):
+        result = await db.execute(
+            select(Exchange)
+            .where(Exchange.id == exchange_id)
+            .options(selectinload(Exchange.client))
+        )
+        exchange = result.scalar_one_or_none()
+        if (
+            exchange is None
+            or exchange.client is None
+            or exchange.client.organization_id != permission_ctx.organization_id
+            or not permission_ctx.can_access_client(exchange.client_id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden by membership client scope",
+            )
+
     try:
         transactions = await service.get_exchange_transactions(
-            organization_id=current_user.organization_id,
+            organization_id=permission_ctx.organization_id,
             exchange_id=exchange_id,
             limit=limit,
         )
@@ -380,7 +453,10 @@ async def get_exchange_transactions(
 @exchange_positions_router.get("/{exchange_id}/live")
 async def get_exchange_live_data(
     exchange_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:view", route_key="exchange")),
+    ],
     db: DBSession,
 ):
     """
@@ -406,10 +482,23 @@ async def get_exchange_live_data(
 
     # Return 404 (not 403) when the exchange belongs to another org so we
     # don't leak existence of UUIDs that don't belong to the caller.
-    if not exchange or not exchange.client or exchange.client.organization_id != current_user.organization_id:
+    if (
+        not exchange
+        or not exchange.client
+        or exchange.client.organization_id != permission_ctx.organization_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Exchange not found",
+        )
+    if (
+        is_scope_specific_enforcement_enabled("exchange")
+        and permission_ctx.client_access_mode is not None
+        and not permission_ctx.can_access_client(exchange.client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
         )
 
     service = ExchangeService(db)
@@ -417,7 +506,7 @@ async def get_exchange_live_data(
     try:
         live_data = await service.get_exchange_live_data(
             exchange_id=exchange_id,
-            organization_id=exchange.client.organization_id,
+            organization_id=permission_ctx.organization_id,
         )
         return live_data
 
@@ -436,7 +525,10 @@ async def get_exchange_live_data(
 @exchange_positions_router.get("/{exchange_id}/transactions")
 async def get_single_exchange_transactions(
     exchange_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:view", route_key="exchange")),
+    ],
     db: DBSession,
     limit: int = Query(50, ge=1, le=200, description="Max transactions to return"),
 ):
@@ -445,11 +537,32 @@ async def get_single_exchange_transactions(
 
     Returns deposits, withdrawals, and internal transfers.
     """
+    if (
+        is_scope_specific_enforcement_enabled("exchange")
+        and permission_ctx.client_access_mode is not None
+    ):
+        exchange_lookup = await db.execute(
+            select(Exchange)
+            .where(Exchange.id == exchange_id)
+            .options(selectinload(Exchange.client))
+        )
+        exchange = exchange_lookup.scalar_one_or_none()
+        if (
+            exchange is None
+            or exchange.client is None
+            or exchange.client.organization_id != permission_ctx.organization_id
+            or not permission_ctx.can_access_client(exchange.client_id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Exchange not found",
+            )
+
     service = ExchangeService(db)
 
     try:
         transactions = await service.get_exchange_transactions(
-            organization_id=current_user.organization_id,
+            organization_id=permission_ctx.organization_id,
             exchange_id=exchange_id,
             limit=limit,
         )
@@ -466,9 +579,12 @@ async def get_single_exchange_transactions(
 async def test_exchange_connection(
     data: ExchangeTestConnectionRequest,
     db: DBSession,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:create", route_key="exchange")),
+    ],
 ) -> ExchangeTestConnectionResponse:
-    _ = current_user
+    _ = permission_ctx
     """
     Test exchange API credentials before saving.
 

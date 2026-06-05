@@ -309,6 +309,8 @@ Estado atual do rollout:
 - [x] No código de wallets: enforcement inicial por `require_permission(...)` aplicada em endpoints com `route_key="wallets"` no `backend/app/api/v1/endpoints/wallets.py`.
 - [x] No código de manual-assets: enforcement inicial por `require_permission(...)` aplicada em todos os endpoints com `route_key="manual-assets"` no `backend/app/api/v1/endpoints/manual_assets.py`.
 - [x] No código de positions: enforcement inicial por `require_permission(...)` aplicada em todos os endpoints com `route_key="positions"` no `backend/app/api/v1/endpoints/positions.py`.
+- [x] No código de exchange: enforcement inicial por `require_permission(...)` aplicada em todos os endpoints com `route_key="exchange"` no `backend/app/api/v1/endpoints/exchanges.py`.
+- [x] No código de settings: enforcement inicial por `require_permission(...)` aplicada em `/users/me` no `backend/app/api/v1/endpoints/users.py`.
 
 ## 11.f) Proof de enforcement por módulo (clients)
 
@@ -363,6 +365,43 @@ Escopo deste corte:
   - `GET /api/v1/positions/summary` com token `viewer`: `200` (leitura permitida)
 - Escopo (opcional nesta etapa): com `RBAC_SCOPE_SPECIFIC=true` e `RBAC_SCOPE_SPECIFIC_ENDPOINTS=positions`, validar:
   - membro `SCOPE: SPECIFIC` sem `client_id` autorizado recebe `403` ao consultar rotas com filtro explícito fora do escopo.
+- Rollback:
+  - manter flags OFF e `RBAC_ENFORCEMENT_V1_ENDPOINTS` vazio para restaurar comportamento legado sem alterar código.
+
+## 11.k) Proof de enforcement por módulo (exchange)
+
+Escopo deste corte:
+
+- Módulo: `exchange`
+- Flags:
+  - `RBAC_ENFORCEMENT_V1=true`
+  - `RBAC_ENFORCEMENT_V1_ENDPOINTS=exchange`
+  - `RBAC_SCOPE_SPECIFIC` opcional (padrão `false` para validação inicial)
+- Prova mínima com DB real:
+  - `GET /api/v1/clients/{client_id}/exchanges` com token `owner`: `200`
+  - `POST /api/v1/clients/{client_id}/exchanges` com token `viewer`: `403` (regra `exchanges:create`)
+  - `GET /api/v1/clients/{client_id}/exchanges/{exchange_id}` com token `owner`: `200`
+- `GET /api/v1/exchanges/positions` com token `viewer`: `200` (regra `exchanges:view`)
+  - `POST /api/v1/clients/{client_id}/exchanges/{exchange_id}/sync` com token `viewer`: `403` (regra `exchanges:sync`)
+- Escopo (opcional nesta etapa): com `RBAC_SCOPE_SPECIFIC=true` e `RBAC_SCOPE_SPECIFIC_ENDPOINTS=exchange`, validar:
+  - membro `SCOPE: SPECIFIC` sem `client_id` autorizado recebe `403` nos endpoints com parâmetro `client_id`.
+  - membro autorizado a um cliente específico não acessa `exchange_id` fora do escopo.
+- Rollback:
+  - manter flags OFF e `RBAC_ENFORCEMENT_V1_ENDPOINTS` vazio para restaurar comportamento legado sem alterar código.
+
+## 11.l) Proof de enforcement por módulo (settings)
+
+Escopo deste corte:
+
+- Módulo: `settings`
+- Flags:
+  - `RBAC_ENFORCEMENT_V1=true`
+  - `RBAC_ENFORCEMENT_V1_ENDPOINTS=settings`
+- Prova mínima com DB real:
+  - `GET /api/v1/users/me` com token `owner`: `200`
+  - `PATCH /api/v1/users/me` com token `owner`: `200`
+  - `PUT /api/v1/users/me/password` com token `owner`: `200` (ou `400` com senha inválida conforme payload)
+  - `GET /api/v1/users/me` com token inválido: `401`
 - Rollback:
   - manter flags OFF e `RBAC_ENFORCEMENT_V1_ENDPOINTS` vazio para restaurar comportamento legado sem alterar código.
 
