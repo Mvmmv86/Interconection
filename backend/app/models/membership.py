@@ -10,9 +10,11 @@ from sqlalchemy import (
     DateTime,
     Enum as SAEnum,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -278,5 +280,12 @@ class Invitation(Base, UUIDMixin, TimestampMixin):
     )
 
     __table_args__ = (
-        UniqueConstraint("organization_id", "email", name="uq_invitations_org_email"),
+        Index(
+            "uq_invitations_org_email_active",
+            "organization_id",
+            "email",
+            unique=True,
+            postgresql_where=text("status = 'PENDING'"),
+            sqlite_where=text("status = 'PENDING'"),
+        ),
     )

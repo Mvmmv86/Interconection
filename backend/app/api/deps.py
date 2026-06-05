@@ -345,19 +345,7 @@ def rbac_route_guard(route_key: str, *, require_scope_check: bool = False):
     async def _guard(
         current_user: User = Depends(get_current_user),
     ) -> User:
-        if not is_rbac_enforcement_enabled(route_key):
-            return current_user
-
-        # Future: replace with require_membership/permission checks.
-        if require_scope_check and not is_scope_specific_enforcement_enabled(route_key):
-            return current_user
-
-        if not current_user.organization_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Missing organization context for RBAC rollout",
-            )
-
+        _ = (route_key, require_scope_check)
         return current_user
 
     return _guard

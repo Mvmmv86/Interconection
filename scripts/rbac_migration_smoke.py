@@ -9,6 +9,7 @@ This script is intentionally simple and safe for production-like environments:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import asyncio
@@ -20,6 +21,41 @@ try:
     from dotenv import load_dotenv
 except Exception:  # pragma: no cover
     load_dotenv = None
+
+
+FALLBACK_REQUIRED_OWNER_PERMISSIONS = {
+    "dashboard:view",
+    "clients:list",
+    "clients:create",
+    "clients:edit",
+    "clients:delete",
+    "wallets:view",
+    "wallets:create",
+    "wallets:edit",
+    "wallets:delete",
+    "exchanges:view",
+    "exchanges:create",
+    "exchanges:delete",
+    "exchanges:sync",
+    "manual_assets:view",
+    "manual_assets:create",
+    "manual_assets:edit",
+    "manual_assets:delete",
+    "positions:view",
+}
+
+
+def _collect_required_route_permissions(repo_root: Path) -> set[str]:
+    endpoints_dir = repo_root / "backend" / "app" / "api" / "v1" / "endpoints"
+    if not endpoints_dir.exists():
+        return FALLBACK_REQUIRED_OWNER_PERMISSIONS
+
+    required_permissions: set[str] = set()
+    pattern = re.compile(r'require_permission\("([^"]+)"')
+    for path in endpoints_dir.glob("*.py"):
+        required_permissions.update(pattern.findall(path.read_text(encoding="utf-8")))
+
+    return required_permissions or FALLBACK_REQUIRED_OWNER_PERMISSIONS
 
 
 async def _assert(
@@ -38,6 +74,8 @@ async def _assert(
 async def main() -> None:
     # Keep backward compatibility for different working directories.
     base_dir = Path(__file__).resolve().parent
+    repo_root = base_dir.parent
+    required_owner_permissions = _collect_required_route_permissions(repo_root)
     backend_dotenv = base_dir.parent / "backend" / ".env"
     if backend_dotenv.exists() and load_dotenv is not None:
         load_dotenv(backend_dotenv)
@@ -147,6 +185,48 @@ async def main() -> None:
                 f"{expected_total} role named {role_name} (is_system=true, organization_id IS NULL)",
                 roles.get(role_name),
             )
+
+        owner_permissions_result = await conn.execute(
+            text(
+                """
+                SELECT rp.permission_key
+                FROM role_permissions rp
+                JOIN roles r ON r.id = rp.role_id
+                WHERE r.organization_id IS NULL
+                  AND r.is_system = true
+                  AND r.name = 'owner'
+                """
+            )
+        )
+        owner_permissions = {row.permission_key for row in owner_permissions_result}
+        missing_owner_permissions = required_owner_permissions - owner_permissions
+        await _assert(
+            "owner route permission coverage",
+            not missing_owner_permissions,
+            "owner has every permission used by RBAC-protected routes",
+            ", ".join(sorted(missing_owner_permissions)) or None,
+        )
+
+        invitation_indexes_result = await conn.execute(
+            text(
+                """
+                SELECT indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'invitations'
+                  AND indexname = 'uq_invitations_org_email_active'
+                """
+            )
+        )
+        invitation_index = invitation_indexes_result.scalar_one_or_none()
+        await _assert(
+            "pending invitation partial unique index",
+            invitation_index is not None
+            and "WHERE" in invitation_index
+            and "PENDING" in invitation_index,
+            "partial unique index on pending invitation email per organization",
+            invitation_index,
+        )
 
         legacy_backfill_gap = await conn.scalar(
             text(
