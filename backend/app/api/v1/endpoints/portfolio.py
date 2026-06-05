@@ -2,13 +2,19 @@
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    apply_client_scope_filter,
+    rbac_route_guard,
+    require_permission,
+)
 from app.models.position import Position, PositionType
 from app.models.client import Client
 from app.models.wallet import Wallet
@@ -23,22 +29,26 @@ from app.schemas.portfolio import (
     PortfolioSnapshot,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rbac_route_guard("portfolio"))])
 
 
 @router.get("/summary", response_model=PortfolioSummary)
 async def get_portfolio_summary(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("dashboard:view", route_key="portfolio")),
+    ],
     db: DBSession,
     client_id: Optional[UUID] = None,
 ) -> PortfolioSummary:
     """Get portfolio summary."""
-    org_id = current_user.organization_id
+    org_id = permission_ctx.organization_id
 
     # Get positions
     query = select(Position).where(Position.organization_id == org_id)
-    if client_id:
-        query = query.where(Position.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, Position.client_id, "portfolio", client_id
+    )
 
     result = await db.execute(query)
     positions = result.scalars().all()
@@ -84,19 +94,31 @@ async def get_portfolio_summary(
     projected_monthly = projected_yearly / 12
 
     # Count clients, wallets, exchanges
-    client_count = await db.scalar(
-        select(func.count(Client.id)).where(Client.organization_id == org_id)
+    client_count_query = select(func.count(Client.id)).where(Client.organization_id == org_id)
+    client_count_query = apply_client_scope_filter(
+        permission_ctx, client_count_query, Client.id, "portfolio"
     )
-    wallet_count = await db.scalar(
+    client_count = await db.scalar(client_count_query)
+
+    wallet_count_query = (
         select(func.count(Wallet.id))
         .join(Client)
         .where(Client.organization_id == org_id)
     )
-    exchange_count = await db.scalar(
+    wallet_count_query = apply_client_scope_filter(
+        permission_ctx, wallet_count_query, Client.id, "portfolio"
+    )
+    wallet_count = await db.scalar(wallet_count_query)
+
+    exchange_count_query = (
         select(func.count(Exchange.id))
         .join(Client)
         .where(Client.organization_id == org_id)
     )
+    exchange_count_query = apply_client_scope_filter(
+        permission_ctx, exchange_count_query, Client.id, "portfolio"
+    )
+    exchange_count = await db.scalar(exchange_count_query)
 
     return PortfolioSummary(
         total_value_usd=total_value,
@@ -126,16 +148,20 @@ async def get_portfolio_summary(
 
 @router.get("/allocation", response_model=PortfolioAllocation)
 async def get_portfolio_allocation(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("dashboard:view", route_key="portfolio")),
+    ],
     db: DBSession,
     client_id: Optional[UUID] = None,
 ) -> PortfolioAllocation:
     """Get portfolio allocation breakdown."""
-    org_id = current_user.organization_id
+    org_id = permission_ctx.organization_id
 
     query = select(Position).where(Position.organization_id == org_id)
-    if client_id:
-        query = query.where(Position.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, Position.client_id, "portfolio", client_id
+    )
 
     result = await db.execute(query)
     positions = result.scalars().all()
@@ -184,20 +210,24 @@ async def get_portfolio_allocation(
 
 @router.get("/history", response_model=PortfolioHistory)
 async def get_portfolio_history(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("dashboard:view", route_key="portfolio")),
+    ],
     db: DBSession,
     period: str = Query("30d", pattern=r"^(24h|7d|30d|90d|1y|all)$"),
     client_id: Optional[UUID] = None,
 ) -> PortfolioHistory:
     """Get portfolio historical data."""
-    org_id = current_user.organization_id
+    org_id = permission_ctx.organization_id
 
     # Get snapshots from database
     query = select(PortfolioSnapshotModel).where(
         PortfolioSnapshotModel.organization_id == org_id
     )
-    if client_id:
-        query = query.where(PortfolioSnapshotModel.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, PortfolioSnapshotModel.client_id, "portfolio", client_id
+    )
 
     query = query.order_by(PortfolioSnapshotModel.timestamp.desc()).limit(365)
 
@@ -235,19 +265,23 @@ async def get_portfolio_history(
 
 @router.get("/snapshots", response_model=List[PortfolioSnapshot])
 async def get_portfolio_snapshots(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("dashboard:view", route_key="portfolio")),
+    ],
     db: DBSession,
     client_id: Optional[UUID] = None,
     limit: int = Query(30, ge=1, le=365),
 ) -> List[PortfolioSnapshot]:
     """Get daily portfolio snapshots."""
-    org_id = current_user.organization_id
+    org_id = permission_ctx.organization_id
 
     query = select(PortfolioSnapshotModel).where(
         PortfolioSnapshotModel.organization_id == org_id
     )
-    if client_id:
-        query = query.where(PortfolioSnapshotModel.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, PortfolioSnapshotModel.client_id, "portfolio", client_id
+    )
 
     query = query.order_by(PortfolioSnapshotModel.timestamp.desc()).limit(limit)
 

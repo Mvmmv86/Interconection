@@ -23,6 +23,7 @@ import {
   HardDrive,
   Users,
   Sparkles,
+  Shield,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/contexts/theme-context';
@@ -63,7 +64,10 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { theme } = useTheme();
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
+  const platformAdminItems: NavItem[] = user?.is_superuser
+    ? [{ label: 'Platform Admin', href: '/admin', icon: Shield }]
+    : [];
 
   const NavLink = ({ item }: { item: NavItem }) => {
     const isActive = pathname === item.href;
@@ -175,6 +179,9 @@ export function Sidebar() {
         {/* Main */}
         <div className="space-y-0.5">
           {mainNavItems.map((item) => (
+            <NavLink key={item.href} item={item} />
+          ))}
+          {platformAdminItems.map((item) => (
             <NavLink key={item.href} item={item} />
           ))}
         </div>

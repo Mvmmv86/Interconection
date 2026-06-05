@@ -44,9 +44,11 @@ class UserResponse(UserBase):
     """User response schema."""
 
     id: UUID
-    organization_id: UUID
+    organization_id: Optional[UUID] = None
     avatar_url: Optional[str] = None
     role: UserRole
+    is_superuser: bool = False
+    token_version: int = 0
     timezone: str
     currency: str
     is_active: bool

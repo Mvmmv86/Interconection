@@ -2,13 +2,20 @@
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    apply_client_scope_filter,
+    ensure_client_scope,
+    rbac_route_guard,
+    require_permission,
+)
 from app.models.position import Position, PositionType
 from app.schemas.analytics import (
     PerformanceMetrics,
@@ -18,18 +25,22 @@ from app.schemas.analytics import (
     AnalyticsDashboard,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rbac_route_guard("analytics"))])
 
 
 @router.get("/performance", response_model=PerformanceMetrics)
 async def get_performance_metrics(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("dashboard:view", route_key="analytics")),
+    ],
     db: DBSession,
     period: str = Query("30d", pattern=r"^(24h|7d|30d|90d|1y)$"),
     client_id: Optional[UUID] = None,
 ) -> PerformanceMetrics:
     """Get performance metrics for the portfolio."""
-    org_id = current_user.organization_id
+    if client_id:
+        ensure_client_scope(permission_ctx, client_id, "analytics")
 
     # TODO: Implement actual performance calculations from historical data
     # This requires portfolio snapshots and price history
@@ -50,13 +61,17 @@ async def get_performance_metrics(
 
 @router.get("/risk", response_model=RiskMetrics)
 async def get_risk_metrics(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("dashboard:view", route_key="analytics")),
+    ],
     db: DBSession,
     period: str = Query("30d", pattern=r"^(24h|7d|30d|90d|1y)$"),
     client_id: Optional[UUID] = None,
 ) -> RiskMetrics:
     """Get risk metrics for the portfolio."""
-    org_id = current_user.organization_id
+    if client_id:
+        ensure_client_scope(permission_ctx, client_id, "analytics")
 
     # TODO: Implement actual risk calculations
     # VaR, Sharpe ratio, Sortino ratio, drawdown, etc.
@@ -76,17 +91,21 @@ async def get_risk_metrics(
 
 @router.get("/pnl", response_model=PnLBreakdown)
 async def get_pnl_breakdown(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("dashboard:view", route_key="analytics")),
+    ],
     db: DBSession,
     period: str = Query("30d", pattern=r"^(24h|7d|30d|90d|1y)$"),
     client_id: Optional[UUID] = None,
 ) -> PnLBreakdown:
     """Get P&L breakdown for the portfolio."""
-    org_id = current_user.organization_id
+    org_id = permission_ctx.organization_id
 
     query = select(Position).where(Position.organization_id == org_id)
-    if client_id:
-        query = query.where(Position.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, Position.client_id, "analytics", client_id
+    )
 
     result = await db.execute(query)
     positions = result.scalars().all()
@@ -122,16 +141,20 @@ async def get_pnl_breakdown(
 
 @router.get("/yield", response_model=YieldAnalysis)
 async def get_yield_analysis(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("dashboard:view", route_key="analytics")),
+    ],
     db: DBSession,
     client_id: Optional[UUID] = None,
 ) -> YieldAnalysis:
     """Get yield analysis for the portfolio."""
-    org_id = current_user.organization_id
+    org_id = permission_ctx.organization_id
 
     query = select(Position).where(Position.organization_id == org_id)
-    if client_id:
-        query = query.where(Position.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, Position.client_id, "analytics", client_id
+    )
 
     result = await db.execute(query)
     positions = result.scalars().all()
@@ -208,16 +231,19 @@ async def get_yield_analysis(
 
 @router.get("/dashboard", response_model=AnalyticsDashboard)
 async def get_analytics_dashboard(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("dashboard:view", route_key="analytics")),
+    ],
     db: DBSession,
     period: str = Query("30d", pattern=r"^(24h|7d|30d|90d|1y)$"),
     client_id: Optional[UUID] = None,
 ) -> AnalyticsDashboard:
     """Get complete analytics dashboard."""
-    performance = await get_performance_metrics(current_user, db, period, client_id)
-    risk = await get_risk_metrics(current_user, db, period, client_id)
-    pnl = await get_pnl_breakdown(current_user, db, period, client_id)
-    yield_analysis = await get_yield_analysis(current_user, db, client_id)
+    performance = await get_performance_metrics(permission_ctx, db, period, client_id)
+    risk = await get_risk_metrics(permission_ctx, db, period, client_id)
+    pnl = await get_pnl_breakdown(permission_ctx, db, period, client_id)
+    yield_analysis = await get_yield_analysis(permission_ctx, db, client_id)
 
     return AnalyticsDashboard(
         performance=performance,

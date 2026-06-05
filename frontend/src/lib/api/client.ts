@@ -284,6 +284,32 @@ interface TeamInvitationAcceptResponse {
   requires_login: boolean;
 }
 
+interface AdminOrganization {
+  id: string;
+  name: string;
+  slug: string;
+  plan: 'free' | 'pro' | 'enterprise';
+  is_active: boolean;
+  user_count: number;
+  client_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AdminUser {
+  id: string;
+  organization_id: string | null;
+  email: string;
+  name: string;
+  role: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  token_version: number;
+  created_at: string;
+  updated_at: string;
+  last_login_at: string | null;
+}
+
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
@@ -430,7 +456,15 @@ class ApiClient {
     return result;
   }
 
-  async getMe(): Promise<ApiResponse<{ id: string; email: string; name: string; role: string; organization_id: string }>> {
+  async getMe(): Promise<ApiResponse<{
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    organization_id: string | null;
+    is_superuser: boolean;
+    token_version: number;
+  }>> {
     return this.request('/api/v1/auth/me');
   }
 
@@ -554,6 +588,39 @@ class ApiClient {
     data: { client_access_mode: 'all' | 'specific'; client_ids: string[] }
   ): Promise<ApiResponse<TeamMember>> {
     return this.request<TeamMember>(`/api/v1/team/members/${membershipId}/scope`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // ========================
+  // Platform admin methods
+  // ========================
+
+  async getAdminOrganizations(): Promise<ApiResponse<AdminOrganization[]>> {
+    return this.request<AdminOrganization[]>('/api/v1/admin/organizations');
+  }
+
+  async updateAdminOrganization(
+    organizationId: string,
+    data: { plan?: 'free' | 'pro' | 'enterprise'; is_active?: boolean }
+  ): Promise<ApiResponse<AdminOrganization>> {
+    return this.request<AdminOrganization>(`/api/v1/admin/organizations/${organizationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getAdminUsers(organizationId?: string): Promise<ApiResponse<AdminUser[]>> {
+    const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+    return this.request<AdminUser[]>(`/api/v1/admin/users${qs}`);
+  }
+
+  async updateAdminUser(
+    userId: string,
+    data: { is_active?: boolean; is_superuser?: boolean }
+  ): Promise<ApiResponse<AdminUser>> {
+    return this.request<AdminUser>(`/api/v1/admin/users/${userId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
@@ -784,4 +851,6 @@ export type {
   TeamMember,
   TeamInvitation,
   TeamInvitationAcceptResponse,
+  AdminOrganization,
+  AdminUser,
 };

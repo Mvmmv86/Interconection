@@ -1,24 +1,33 @@
 """Staking Position endpoints."""
 
-from typing import List
+from typing import Annotated, List
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    apply_client_scope_filter,
+    rbac_route_guard,
+    require_permission,
+)
 from app.models.staking_position import StakingPosition, StakingProtocol, StakingNetwork
 from app.schemas.staking_position import (
     StakingPositionResponse,
     StakingPositionSummary,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rbac_route_guard("positions"))])
 
 
 @router.get("", response_model=List[StakingPositionResponse])
 async def list_staking_positions(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
     client_id: UUID = None,
     protocol: StakingProtocol = None,
@@ -32,11 +41,11 @@ async def list_staking_positions(
     Can be filtered by client_id, protocol, or network.
     """
     query = select(StakingPosition).where(
-        StakingPosition.organization_id == current_user.organization_id
+        StakingPosition.organization_id == permission_ctx.organization_id
     )
-
-    if client_id:
-        query = query.where(StakingPosition.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, StakingPosition.client_id, "positions", client_id
+    )
     if protocol:
         query = query.where(StakingPosition.protocol == protocol)
     if network:
@@ -52,7 +61,10 @@ async def list_staking_positions(
 
 @router.get("/summary", response_model=StakingPositionSummary)
 async def get_staking_summary(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
     client_id: UUID = None,
 ) -> StakingPositionSummary:
@@ -62,11 +74,11 @@ async def get_staking_summary(
     Returns totals, averages, and breakdowns by protocol/network.
     """
     query = select(StakingPosition).where(
-        StakingPosition.organization_id == current_user.organization_id
+        StakingPosition.organization_id == permission_ctx.organization_id
     )
-
-    if client_id:
-        query = query.where(StakingPosition.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, StakingPosition.client_id, "positions", client_id
+    )
 
     result = await db.execute(query)
     positions = result.scalars().all()
@@ -118,16 +130,21 @@ async def get_staking_summary(
 @router.get("/{position_id}", response_model=StakingPositionResponse)
 async def get_staking_position(
     position_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
 ) -> StakingPositionResponse:
     """Get a specific staking position."""
-    result = await db.execute(
-        select(StakingPosition).where(
-            StakingPosition.id == position_id,
-            StakingPosition.organization_id == current_user.organization_id,
-        )
+    query = select(StakingPosition).where(
+        StakingPosition.id == position_id,
+        StakingPosition.organization_id == permission_ctx.organization_id,
     )
+    query = apply_client_scope_filter(
+        permission_ctx, query, StakingPosition.client_id, "positions"
+    )
+    result = await db.execute(query)
     position = result.scalar_one_or_none()
 
     if not position:
@@ -142,16 +159,23 @@ async def get_staking_position(
 @router.get("/by-protocol/{protocol}", response_model=List[StakingPositionResponse])
 async def list_by_protocol(
     protocol: StakingProtocol,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
 ) -> List[StakingPositionResponse]:
     """List all staking positions for a specific protocol."""
-    result = await db.execute(
+    query = (
         select(StakingPosition).where(
-            StakingPosition.organization_id == current_user.organization_id,
+            StakingPosition.organization_id == permission_ctx.organization_id,
             StakingPosition.protocol == protocol,
         ).order_by(StakingPosition.value_usd.desc())
     )
+    query = apply_client_scope_filter(
+        permission_ctx, query, StakingPosition.client_id, "positions"
+    )
+    result = await db.execute(query)
     positions = result.scalars().all()
 
     return [StakingPositionResponse.model_validate(p) for p in positions]
@@ -160,16 +184,23 @@ async def list_by_protocol(
 @router.get("/by-network/{network}", response_model=List[StakingPositionResponse])
 async def list_by_network(
     network: StakingNetwork,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
 ) -> List[StakingPositionResponse]:
     """List all staking positions for a specific network."""
-    result = await db.execute(
+    query = (
         select(StakingPosition).where(
-            StakingPosition.organization_id == current_user.organization_id,
+            StakingPosition.organization_id == permission_ctx.organization_id,
             StakingPosition.network == network,
         ).order_by(StakingPosition.value_usd.desc())
     )
+    query = apply_client_scope_filter(
+        permission_ctx, query, StakingPosition.client_id, "positions"
+    )
+    result = await db.execute(query)
     positions = result.scalars().all()
 
     return [StakingPositionResponse.model_validate(p) for p in positions]

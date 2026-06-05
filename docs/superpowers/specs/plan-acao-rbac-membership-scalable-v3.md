@@ -547,3 +547,70 @@ Follow-up aplicado apos review frontend:
 - [x] `GET /api/v1/users/me` agora exige apenas autenticacao (`get_current_user`), nao `dashboard:view`.
 - Motivo: identidade propria nao deve depender de permissao funcional; evita que um role custom sem `dashboard:view` quebre carregamento de perfil/autenticacao.
 - `PATCH /api/v1/users/me` e `PUT /api/v1/users/me/password` continuam protegidos por `dashboard:view`/settings nesta fase.
+
+## 13) Fase 3 - Escopo por carteira (execucao para review)
+
+Escopo aplicado neste pacote:
+
+- [x] Criado helper central em `backend/app/api/deps.py`:
+  - `ensure_client_scope(ctx, client_id, route_key)`
+  - `apply_client_scope_filter(ctx, query, client_column, route_key, client_id=None)`
+- [x] Escopo especifico passa a ser aplicado tambem em endpoints globais/auxiliares:
+  - `portfolio` (`/api/v1/portfolio/*`)
+  - `analytics` (`/api/v1/analytics/*`)
+  - `staking` (`/api/v1/staking/*`)
+  - `pools` (`/api/v1/pools/*`)
+- [x] Fluxos ja existentes de escopo seguem cobertos:
+  - `clients`
+  - `wallets`
+  - `manual-assets`
+  - `exchange`
+  - `positions`
+- [x] `.env.example` atualizado com route keys sugeridas para rollout:
+  - `clients,wallets,manual-assets,positions,exchange,settings,portfolio,analytics`
+
+Prova esperada para review:
+
+- Com `RBAC_ENFORCEMENT_V1=true` e route keys habilitadas:
+  - owner/admin segue com `200` nas rotas globais.
+  - viewer com permissoes de leitura segue com `200` em leitura.
+- Com `RBAC_SCOPE_SPECIFIC=true` e membership em `client_access_mode=SPECIFIC`:
+  - `GET /clients` retorna somente clients do escopo.
+  - `GET /portfolio/summary` agrega somente clients do escopo.
+  - `GET /analytics/pnl` agrega somente clients do escopo.
+  - `GET /staking` e `GET /pools` retornam somente posicoes do escopo.
+  - qualquer request com `client_id` fora do escopo retorna `403`.
+
+## 14) Fase 4 - Super-admin plataforma (execucao para review)
+
+Escopo aplicado neste pacote:
+
+- [x] `organizations.is_active` adicionado no model e migration:
+  - `backend/alembic/versions/20260605_add_organization_active_status.py`
+- [x] `require_superuser` criado em `backend/app/api/deps.py`.
+- [x] `require_membership` passa a bloquear tenant suspenso (`organization.is_active=false`).
+- [x] Criado router separado:
+  - `GET /api/v1/admin/organizations`
+  - `PATCH /api/v1/admin/organizations/{organization_id}`
+  - `GET /api/v1/admin/users`
+  - `PATCH /api/v1/admin/users/{user_id}`
+- [x] Listagens globais usam agregacao em lote para evitar N+1:
+  - user_count por organization
+  - client_count por organization
+- [x] Suspender tenant incrementa `token_version` dos usuarios da org para preparar revogacao imediata.
+- [x] Desativar/alterar superuser de usuario incrementa `token_version`.
+- [x] Frontend:
+  - `/admin` criado para superusers.
+  - Sidebar mostra `Platform Admin` apenas quando `user.is_superuser=true`.
+  - `api.client` tem metodos `/admin/*`.
+
+Prova esperada para review:
+
+- Usuario nao-superuser recebe `403` em `/api/v1/admin/*`.
+- Superuser lista tenants/users.
+- Superuser suspende org:
+  - `organizations.is_active=false`
+  - usuarios da org recebem `token_version + 1`
+  - chamadas tenant via `require_membership` retornam `403 Organization is suspended`.
+- Superuser reativa org e chamadas tenant voltam a passar.
+- Listagem `/admin/organizations` nao faz N+1 para contar users/clients.

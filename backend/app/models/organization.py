@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
-from sqlalchemy import String, Text, Enum as SAEnum
+from sqlalchemy import Boolean, String, Text, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
@@ -37,6 +37,7 @@ class Organization(Base, UUIDMixin, TimestampMixin):
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     logo_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     settings: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     plan: Mapped[PlanType] = mapped_column(
         SAEnum(PlanType),
         default=PlanType.FREE,

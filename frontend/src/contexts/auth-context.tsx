@@ -30,7 +30,9 @@ interface User {
   email: string;
   name: string;
   role: string;
-  organization_id: string;
+  organization_id: string | null;
+  is_superuser: boolean;
+  token_version: number;
 }
 
 interface AuthContextType {

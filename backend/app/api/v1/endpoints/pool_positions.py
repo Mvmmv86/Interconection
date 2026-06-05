@@ -1,24 +1,33 @@
 """Pool Position endpoints."""
 
-from typing import List
+from typing import Annotated, List
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select
 
-from app.api.deps import CurrentUser, DBSession
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    apply_client_scope_filter,
+    rbac_route_guard,
+    require_permission,
+)
 from app.models.pool_position import PoolPosition, PoolProtocol, PoolChain, PoolStatus
 from app.schemas.pool_position import (
     PoolPositionResponse,
     PoolPositionSummary,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(rbac_route_guard("positions"))])
 
 
 @router.get("", response_model=List[PoolPositionResponse])
 async def list_pool_positions(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
     client_id: UUID = None,
     protocol: PoolProtocol = None,
@@ -33,11 +42,11 @@ async def list_pool_positions(
     Can be filtered by client_id, protocol, chain, or status.
     """
     query = select(PoolPosition).where(
-        PoolPosition.organization_id == current_user.organization_id
+        PoolPosition.organization_id == permission_ctx.organization_id
     )
-
-    if client_id:
-        query = query.where(PoolPosition.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, PoolPosition.client_id, "positions", client_id
+    )
     if protocol:
         query = query.where(PoolPosition.protocol == protocol)
     if chain:
@@ -55,7 +64,10 @@ async def list_pool_positions(
 
 @router.get("/summary", response_model=PoolPositionSummary)
 async def get_pool_summary(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
     client_id: UUID = None,
 ) -> PoolPositionSummary:
@@ -65,11 +77,11 @@ async def get_pool_summary(
     Returns totals, fees, IL, and breakdowns by protocol/chain.
     """
     query = select(PoolPosition).where(
-        PoolPosition.organization_id == current_user.organization_id
+        PoolPosition.organization_id == permission_ctx.organization_id
     )
-
-    if client_id:
-        query = query.where(PoolPosition.client_id == client_id)
+    query = apply_client_scope_filter(
+        permission_ctx, query, PoolPosition.client_id, "positions", client_id
+    )
 
     result = await db.execute(query)
     positions = result.scalars().all()
@@ -125,16 +137,21 @@ async def get_pool_summary(
 @router.get("/{position_id}", response_model=PoolPositionResponse)
 async def get_pool_position(
     position_id: UUID,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
 ) -> PoolPositionResponse:
     """Get a specific pool position."""
-    result = await db.execute(
-        select(PoolPosition).where(
-            PoolPosition.id == position_id,
-            PoolPosition.organization_id == current_user.organization_id,
-        )
+    query = select(PoolPosition).where(
+        PoolPosition.id == position_id,
+        PoolPosition.organization_id == permission_ctx.organization_id,
     )
+    query = apply_client_scope_filter(
+        permission_ctx, query, PoolPosition.client_id, "positions"
+    )
+    result = await db.execute(query)
     position = result.scalar_one_or_none()
 
     if not position:
@@ -149,16 +166,23 @@ async def get_pool_position(
 @router.get("/by-protocol/{protocol}", response_model=List[PoolPositionResponse])
 async def list_by_protocol(
     protocol: PoolProtocol,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
 ) -> List[PoolPositionResponse]:
     """List all pool positions for a specific protocol."""
-    result = await db.execute(
+    query = (
         select(PoolPosition).where(
-            PoolPosition.organization_id == current_user.organization_id,
+            PoolPosition.organization_id == permission_ctx.organization_id,
             PoolPosition.protocol == protocol,
         ).order_by(PoolPosition.total_value_usd.desc())
     )
+    query = apply_client_scope_filter(
+        permission_ctx, query, PoolPosition.client_id, "positions"
+    )
+    result = await db.execute(query)
     positions = result.scalars().all()
 
     return [PoolPositionResponse.model_validate(p) for p in positions]
@@ -167,16 +191,23 @@ async def list_by_protocol(
 @router.get("/by-chain/{chain}", response_model=List[PoolPositionResponse])
 async def list_by_chain(
     chain: PoolChain,
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
 ) -> List[PoolPositionResponse]:
     """List all pool positions for a specific chain."""
-    result = await db.execute(
+    query = (
         select(PoolPosition).where(
-            PoolPosition.organization_id == current_user.organization_id,
+            PoolPosition.organization_id == permission_ctx.organization_id,
             PoolPosition.chain == chain,
         ).order_by(PoolPosition.total_value_usd.desc())
     )
+    query = apply_client_scope_filter(
+        permission_ctx, query, PoolPosition.client_id, "positions"
+    )
+    result = await db.execute(query)
     positions = result.scalars().all()
 
     return [PoolPositionResponse.model_validate(p) for p in positions]
@@ -184,16 +215,23 @@ async def list_by_chain(
 
 @router.get("/in-range", response_model=List[PoolPositionResponse])
 async def list_in_range_positions(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
 ) -> List[PoolPositionResponse]:
     """List all positions that are currently in range."""
-    result = await db.execute(
+    query = (
         select(PoolPosition).where(
-            PoolPosition.organization_id == current_user.organization_id,
+            PoolPosition.organization_id == permission_ctx.organization_id,
             PoolPosition.status == PoolStatus.IN_RANGE,
         ).order_by(PoolPosition.total_value_usd.desc())
     )
+    query = apply_client_scope_filter(
+        permission_ctx, query, PoolPosition.client_id, "positions"
+    )
+    result = await db.execute(query)
     positions = result.scalars().all()
 
     return [PoolPositionResponse.model_validate(p) for p in positions]
@@ -201,16 +239,23 @@ async def list_in_range_positions(
 
 @router.get("/out-of-range", response_model=List[PoolPositionResponse])
 async def list_out_of_range_positions(
-    current_user: CurrentUser,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("positions:view", route_key="positions")),
+    ],
     db: DBSession,
 ) -> List[PoolPositionResponse]:
     """List all positions that are currently out of range."""
-    result = await db.execute(
+    query = (
         select(PoolPosition).where(
-            PoolPosition.organization_id == current_user.organization_id,
+            PoolPosition.organization_id == permission_ctx.organization_id,
             PoolPosition.status == PoolStatus.OUT_OF_RANGE,
         ).order_by(PoolPosition.total_value_usd.desc())
     )
+    query = apply_client_scope_filter(
+        permission_ctx, query, PoolPosition.client_id, "positions"
+    )
+    result = await db.execute(query)
     positions = result.scalars().all()
 
     return [PoolPositionResponse.model_validate(p) for p in positions]

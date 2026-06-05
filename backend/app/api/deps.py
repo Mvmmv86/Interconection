@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import and_, select
+from sqlalchemy import and_, false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -157,6 +157,15 @@ def require_membership(route_key: str | None = None, *, force: bool = False):
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Missing organization context for RBAC rollout",
                 )
+            org_result = await db.execute(
+                select(Organization).where(Organization.id == organization_id)
+            )
+            org = org_result.scalar_one_or_none()
+            if org is not None and hasattr(org, "is_active") and not org.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Organization is suspended",
+                )
 
             return MembershipAuthContext(
                 user=current_user,
@@ -181,6 +190,15 @@ def require_membership(route_key: str | None = None, *, force: bool = False):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Missing organization context for RBAC rollout",
+                )
+            org_result = await db.execute(
+                select(Organization).where(Organization.id == organization_id)
+            )
+            org = org_result.scalar_one_or_none()
+            if org is not None and hasattr(org, "is_active") and not org.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Organization is suspended",
                 )
 
             return MembershipAuthContext(
@@ -207,6 +225,21 @@ def require_membership(route_key: str | None = None, *, force: bool = False):
                     detail="Missing organization context for RBAC rollout",
                 )
             organization_id = current_user.organization_id
+
+        org_result = await db.execute(
+            select(Organization).where(Organization.id == organization_id)
+        )
+        org = org_result.scalar_one_or_none()
+        if org is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Organization not found",
+            )
+        if hasattr(org, "is_active") and not org.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Organization is suspended",
+            )
 
         membership_result = await db.execute(
             select(Membership)
@@ -311,6 +344,66 @@ def require_role(allowed_roles: list[str]):
     return role_checker
 
 
+async def require_superuser(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Require platform superuser privileges."""
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform superuser privileges required",
+        )
+    return current_user
+
+
+def ensure_client_scope(
+    membership_ctx: MembershipAuthContext,
+    client_id: UUID,
+    route_key: str,
+) -> None:
+    """Raise 403 when client-specific scope blocks the requested client."""
+    if not is_scope_specific_enforcement_enabled(route_key):
+        return
+    if membership_ctx.client_access_mode is None:
+        return
+    if not membership_ctx.can_access_client(client_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
+
+def apply_client_scope_filter(
+    membership_ctx: MembershipAuthContext,
+    query,
+    client_column,
+    route_key: str,
+    client_id: UUID | None = None,
+):
+    """Apply membership client scope to a SQLAlchemy query."""
+    if not is_scope_specific_enforcement_enabled(route_key):
+        if client_id is not None:
+            return query.where(client_column == client_id)
+        return query
+
+    if membership_ctx.client_access_mode is None:
+        if client_id is not None:
+            return query.where(client_column == client_id)
+        return query
+
+    if client_id is not None:
+        ensure_client_scope(membership_ctx, client_id, route_key)
+        return query.where(client_column == client_id)
+
+    if membership_ctx.client_access_mode == MembershipClientAccessMode.ALL:
+        return query
+
+    if not membership_ctx.scope_client_ids:
+        return query.where(false())
+
+    return query.where(client_column.in_(list(membership_ctx.scope_client_ids)))
+
+
 def is_rbac_enforcement_enabled(route_key: str | None = None) -> bool:
     """Check if RBAC enforcement v1 is enabled globally and for a route key.
 
@@ -367,3 +460,4 @@ DBSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentMembership = Annotated[MembershipAuthContext, Depends(require_membership())]
 AdminUser = Annotated[User, Depends(require_role(["admin"]))]
 ManagerUser = Annotated[User, Depends(require_role(["admin", "manager"]))]
+SuperUser = Annotated[User, Depends(require_superuser)]
