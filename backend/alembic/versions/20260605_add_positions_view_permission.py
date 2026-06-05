@@ -30,10 +30,11 @@ def upgrade() -> None:
     roles_result = connection.execute(
         sa.text(
             """
-            SELECT id
+            SELECT roles.id
             FROM roles
-            WHERE organization_id IS NULL
-              AND name IN ('owner', 'admin', 'manager', 'viewer')
+            WHERE roles.organization_id IS NULL
+              AND roles.is_system = true
+              AND roles.name IN ('owner', 'admin', 'manager', 'viewer')
             """
         )
     )
@@ -43,19 +44,13 @@ def upgrade() -> None:
             sa.text(
                 """
                 INSERT INTO role_permissions (id, role_id, permission_key)
-                SELECT :id, :role_id, :permission
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM role_permissions
-                    WHERE role_id = :role_id
-                      AND permission_key = :permission
-                )
+                VALUES (CAST(:id AS uuid), CAST(:role_id AS uuid), 'positions:view')
+                ON CONFLICT (role_id, permission_key) DO NOTHING
                 """
             ),
             {
                 "id": str(uuid4()),
                 "role_id": str(row.id),
-                "permission": "positions:view",
             },
         )
 
@@ -66,13 +61,16 @@ def downgrade() -> None:
     if is_offline:
         return
 
-    connection = op.get_bind()
-    connection.execute(
+    op.execute(
         sa.text(
             """
             DELETE FROM role_permissions
-            WHERE permission_key = :permission
+            USING roles
+            WHERE role_permissions.role_id = roles.id
+              AND role_permissions.permission_key = 'positions:view'
+              AND roles.organization_id IS NULL
+              AND roles.is_system = true
+              AND roles.name IN ('owner', 'admin', 'manager', 'viewer')
             """
-        ),
-        {"permission": "positions:view"},
+        )
     )
