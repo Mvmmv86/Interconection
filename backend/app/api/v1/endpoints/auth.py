@@ -2,19 +2,19 @@
 
 from datetime import datetime, timezone
 from typing import Annotated
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import DBSession, CurrentUser
+from app.api.deps import DBSession, CurrentUser, invalidate_authz_cache
 from app.core.security import (
     create_access_token,
     create_refresh_token,
     get_password_hash,
     verify_password,
-    verify_refresh_token,
+    verify_refresh_token_payload,
 )
 from app.core.config import settings
 from app.models.user import User
@@ -77,8 +77,9 @@ async def register(
     await db.flush()
 
     # Generate tokens
-    access_token = create_access_token(subject=user.id)
-    refresh_token = create_refresh_token(subject=user.id)
+    token_data = {"token_version": int(user.token_version or 0)}
+    access_token = create_access_token(subject=user.id, extra_data=token_data)
+    refresh_token = create_refresh_token(subject=user.id, extra_data=token_data)
 
     return TokenResponse(
         access_token=access_token,
@@ -113,8 +114,9 @@ async def login(
     await db.flush()
 
     # Generate tokens
-    access_token = create_access_token(subject=user.id)
-    refresh_token = create_refresh_token(subject=user.id)
+    token_data = {"token_version": int(user.token_version or 0)}
+    access_token = create_access_token(subject=user.id, extra_data=token_data)
+    refresh_token = create_refresh_token(subject=user.id, extra_data=token_data)
 
     return TokenResponse(
         access_token=access_token,
@@ -129,13 +131,22 @@ async def refresh_token(
     db: DBSession,
 ) -> TokenResponse:
     """Refresh access token."""
-    user_id = verify_refresh_token(data.refresh_token)
+    payload = verify_refresh_token_payload(data.refresh_token)
 
-    if not user_id:
+    if payload is None or payload.get("sub") is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
         )
+
+    try:
+        user_id = UUID(str(payload["sub"]))
+        token_version = int(payload.get("token_version", 0))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+        ) from exc
 
     result = await db.execute(
         select(User).where(User.id == user_id, User.is_active == True)
@@ -148,9 +159,16 @@ async def refresh_token(
             detail="User not found",
         )
 
+    if int(user.token_version or 0) != token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session revoked",
+        )
+
     # Generate new tokens
-    access_token = create_access_token(subject=user.id)
-    new_refresh_token = create_refresh_token(subject=user.id)
+    token_data = {"token_version": int(user.token_version or 0)}
+    access_token = create_access_token(subject=user.id, extra_data=token_data)
+    new_refresh_token = create_refresh_token(subject=user.id, extra_data=token_data)
 
     return TokenResponse(
         access_token=access_token,
@@ -162,11 +180,12 @@ async def refresh_token(
 @router.post("/logout", response_model=SuccessResponse)
 async def logout(
     current_user: CurrentUser,
+    db: DBSession,
 ) -> SuccessResponse:
-    """Logout (client should discard tokens)."""
-    # In a more complete implementation, you would:
-    # - Add the token to a blacklist
-    # - Invalidate refresh tokens in database
+    """Logout and revoke the current token version."""
+    current_user.token_version = int(current_user.token_version or 0) + 1
+    invalidate_authz_cache(user_id=current_user.id)
+    await db.flush()
     return SuccessResponse(message="Successfully logged out")
 
 

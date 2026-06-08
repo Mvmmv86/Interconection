@@ -1,6 +1,7 @@
 """API Dependencies - authentication, database session, etc."""
 
 from dataclasses import dataclass, field
+import time
 from typing import Annotated
 from uuid import UUID
 
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.security import verify_access_token
+from app.core.security import verify_access_token_payload
 from app.db.session import get_db
 from app.models.membership import (
     Membership,
@@ -25,6 +26,9 @@ from app.models.user import User
 
 # Security scheme
 security = HTTPBearer()
+
+_AUTHZ_CACHE_TTL_SECONDS = 30
+_AUTHZ_CACHE: dict[tuple[UUID, UUID], tuple[float, dict]] = {}
 
 
 def _normalize_route_key(route_key: str | None) -> str | None:
@@ -60,6 +64,70 @@ class MembershipAuthContext:
         return client_id in self.scope_client_ids
 
 
+def invalidate_authz_cache(
+    *,
+    user_id: UUID | None = None,
+    organization_id: UUID | None = None,
+) -> None:
+    """Invalidate in-memory authorization cache entries.
+
+    The cache is deliberately process-local and short-lived. It is a
+    fast-path, never the source of truth. Mutations that can change access
+    call this helper explicitly; token_version still provides hard session
+    revocation across processes.
+    """
+    if user_id is None and organization_id is None:
+        _AUTHZ_CACHE.clear()
+        return
+
+    for key in list(_AUTHZ_CACHE):
+        cached_user_id, cached_organization_id = key
+        if user_id is not None and cached_user_id != user_id:
+            continue
+        if organization_id is not None and cached_organization_id != organization_id:
+            continue
+        _AUTHZ_CACHE.pop(key, None)
+
+
+def _cache_membership_context(context: MembershipAuthContext) -> None:
+    if context.is_legacy or context.client_access_mode is None:
+        return
+
+    _AUTHZ_CACHE[(context.user.id, context.organization_id)] = (
+        time.monotonic() + _AUTHZ_CACHE_TTL_SECONDS,
+        {
+            "role_name": context.role_name,
+            "permissions": set(context.permissions),
+            "client_access_mode": context.client_access_mode,
+            "scope_client_ids": set(context.scope_client_ids),
+        },
+    )
+
+
+def _get_cached_membership_context(
+    user: User,
+    organization_id: UUID,
+) -> MembershipAuthContext | None:
+    cached = _AUTHZ_CACHE.get((user.id, organization_id))
+    if cached is None:
+        return None
+
+    expires_at, payload = cached
+    if expires_at <= time.monotonic():
+        _AUTHZ_CACHE.pop((user.id, organization_id), None)
+        return None
+
+    return MembershipAuthContext(
+        user=user,
+        organization_id=organization_id,
+        membership=None,
+        role_name=payload["role_name"],
+        permissions=set(payload["permissions"]),
+        client_access_mode=payload["client_access_mode"],
+        scope_client_ids=set(payload["scope_client_ids"]),
+    )
+
+
 def _collect_membership_permissions(
     role_permissions: list[str],
     overrides: dict[str, MembershipPermissionEffect] | None = None,
@@ -86,17 +154,27 @@ async def get_current_user(
 ) -> User:
     """Get current authenticated user from JWT token."""
     token = credentials.credentials
-    user_id = verify_access_token(token)
+    payload = verify_access_token_payload(token)
 
-    if user_id is None:
+    if payload is None or payload.get("sub") is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    try:
+        user_id = UUID(str(payload["sub"]))
+        token_version = int(payload.get("token_version", 0))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
     result = await db.execute(
-        select(User).where(User.id == UUID(user_id), User.is_active.is_(True))
+        select(User).where(User.id == user_id, User.is_active.is_(True))
     )
     user = result.scalar_one_or_none()
 
@@ -104,6 +182,13 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if int(user.token_version or 0) != token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session revoked",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -241,6 +326,10 @@ def require_membership(route_key: str | None = None, *, force: bool = False):
                 detail="Organization is suspended",
             )
 
+        cached_context = _get_cached_membership_context(current_user, organization_id)
+        if cached_context is not None:
+            return cached_context
+
         membership_result = await db.execute(
             select(Membership)
             .options(
@@ -283,7 +372,7 @@ def require_membership(route_key: str | None = None, *, force: bool = False):
             else set()
         )
 
-        return MembershipAuthContext(
+        context = MembershipAuthContext(
             user=current_user,
             organization_id=organization_id,
             membership=membership,
@@ -292,6 +381,8 @@ def require_membership(route_key: str | None = None, *, force: bool = False):
             client_access_mode=membership.client_access_mode,
             scope_client_ids=scope_client_ids,
         )
+        _cache_membership_context(context)
+        return context
 
     return _membership_dependency
 

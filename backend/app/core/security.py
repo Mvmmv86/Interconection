@@ -55,6 +55,7 @@ def create_access_token(
 def create_refresh_token(
     subject: str | UUID,
     expires_delta: Optional[timedelta] = None,
+    extra_data: Optional[dict[str, Any]] = None,
 ) -> str:
     """Create JWT refresh token."""
     if expires_delta:
@@ -69,6 +70,9 @@ def create_refresh_token(
         "exp": expire,
         "type": "refresh",
     }
+
+    if extra_data:
+        to_encode.update(extra_data)
 
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
@@ -96,6 +100,16 @@ def verify_access_token(token: str) -> Optional[str]:
     return payload.get("sub")
 
 
+def verify_access_token_payload(token: str) -> Optional[dict[str, Any]]:
+    """Verify access token and return decoded payload."""
+    payload = decode_token(token)
+    if payload is None:
+        return None
+    if payload.get("type") != "access":
+        return None
+    return payload
+
+
 def verify_refresh_token(token: str) -> Optional[str]:
     """Verify refresh token and return subject (user_id)."""
     payload = decode_token(token)
@@ -104,6 +118,16 @@ def verify_refresh_token(token: str) -> Optional[str]:
     if payload.get("type") != "refresh":
         return None
     return payload.get("sub")
+
+
+def verify_refresh_token_payload(token: str) -> Optional[dict[str, Any]]:
+    """Verify refresh token and return decoded payload."""
+    payload = decode_token(token)
+    if payload is None:
+        return None
+    if payload.get("type") != "refresh":
+        return None
+    return payload
 
 
 # Encryption for API keys stored in database

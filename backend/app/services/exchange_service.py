@@ -4,13 +4,14 @@ Updated to use 24h change as fallback PnL when trade history is unavailable.
 """
 
 import logging
+from collections import defaultdict
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
-from sqlalchemy import select, delete
+from sqlalchemy import BigInteger, cast, select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,6 +30,8 @@ from app.integrations.exchanges import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ADVISORY_LOCK_MAX = 2**63 - 1
 
 
 # Exchange logo mappings (2-letter codes)
@@ -86,6 +89,25 @@ class ExchangeService:
         #     return BinanceAdapter(api_key, api_secret)
 
         raise ValueError(f"Unsupported exchange: {exchange.exchange}")
+
+    async def _acquire_sync_lock(self, exchange_id: UUID) -> None:
+        """Acquire a transaction-scoped PostgreSQL advisory lock for sync.
+
+        This serializes sync for a single exchange and prevents concurrent
+        delete/reinsert cycles from interleaving and corrupting positions.
+        The lock is released automatically when the request transaction ends.
+        """
+        bind = self.db.get_bind()
+        if bind is not None and bind.dialect.name != "postgresql":
+            return
+
+        lock_key = exchange_id.int % _ADVISORY_LOCK_MAX
+        result = await self.db.execute(
+            select(func.pg_try_advisory_xact_lock(cast(lock_key, BigInteger)))
+        )
+        acquired = result.scalar_one()
+        if not acquired:
+            raise ValueError("Exchange sync already in progress")
 
     async def test_connection_with_credentials(
         self,
@@ -191,6 +213,8 @@ class ExchangeService:
 
         if not exchange:
             raise ValueError("Exchange not found")
+
+        await self._acquire_sync_lock(exchange_id)
 
         try:
             adapter = self.get_adapter(exchange)
@@ -544,6 +568,19 @@ class ExchangeService:
 
         result = await self.db.execute(query)
         exchanges = result.scalars().all()
+        exchange_ids = [exchange.id for exchange in exchanges]
+        positions_by_exchange: dict[UUID, list[Position]] = defaultdict(list)
+        if exchange_ids:
+            positions_result = await self.db.execute(
+                select(Position)
+                .where(
+                    Position.source_type == SourceType.EXCHANGE,
+                    Position.source_id.in_(exchange_ids),
+                )
+                .options(selectinload(Position.asset))
+            )
+            for position in positions_result.scalars().all():
+                positions_by_exchange[position.source_id].append(position)
 
         # Aggregate data for each exchange
         exchange_data = []
@@ -556,16 +593,7 @@ class ExchangeService:
         total_unrealized_pnl = Decimal("0")
 
         for exchange in exchanges:
-            # Get positions for this exchange
-            positions_result = await self.db.execute(
-                select(Position)
-                .where(
-                    Position.source_type == SourceType.EXCHANGE,
-                    Position.source_id == exchange.id,
-                )
-                .options(selectinload(Position.asset))
-            )
-            positions = positions_result.scalars().all()
+            positions = positions_by_exchange.get(exchange.id, [])
 
             # Calculate breakdowns
             spot_value = Decimal("0")

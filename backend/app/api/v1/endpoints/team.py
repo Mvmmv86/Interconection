@@ -10,7 +10,12 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import DBSession, MembershipAuthContext, require_permission
+from app.api.deps import (
+    DBSession,
+    MembershipAuthContext,
+    invalidate_authz_cache,
+    require_permission,
+)
 from app.core.security import get_password_hash
 from app.models.client import Client
 from app.models.membership import (
@@ -367,7 +372,9 @@ async def accept_team_invitation(
 
     invitation.status = InvitationStatus.ACCEPTED
     invitation.accepted_at = now
+    user.token_version = int(user.token_version or 0) + 1
     await db.flush()
+    invalidate_authz_cache(user_id=user.id, organization_id=invitation.organization_id)
 
     return TeamInvitationAcceptResponse(
         user_id=user.id,
@@ -400,17 +407,29 @@ async def update_team_member(
             detail="You cannot suspend your own membership",
         )
 
+    security_changed = False
     if data.role_id is not None:
         role = await _get_assignable_role(data.role_id, permission_ctx.organization_id, db)
-        membership.role_id = role.id
-        membership.role = role
+        if membership.role_id != role.id:
+            membership.role_id = role.id
+            membership.role = role
+            security_changed = True
     if data.status is not None:
-        membership.status = data.status
+        if membership.status != data.status:
+            security_changed = True
+            membership.status = data.status
         if data.status == MembershipStatus.ACTIVE and membership.accepted_at is None:
             membership.accepted_at = _now()
-        membership.user.token_version += 1
+
+    if security_changed:
+        membership.user.token_version = int(membership.user.token_version or 0) + 1
 
     await db.flush()
+    if security_changed:
+        invalidate_authz_cache(
+            user_id=membership.user_id,
+            organization_id=membership.organization_id,
+        )
     return _team_member_response(membership)
 
 
@@ -436,8 +455,12 @@ async def revoke_team_member(
         )
 
     membership.status = MembershipStatus.SUSPENDED
-    membership.user.token_version += 1
+    membership.user.token_version = int(membership.user.token_version or 0) + 1
     await db.flush()
+    invalidate_authz_cache(
+        user_id=membership.user_id,
+        organization_id=membership.organization_id,
+    )
     return SuccessResponse(message="Member revoked successfully")
 
 
@@ -466,8 +489,22 @@ async def update_team_member_scope(
             detail="client_ids are required for specific scope",
         )
 
+    previous_mode = membership.client_access_mode
+    previous_client_ids = {client.id for client in membership.clients}
     clients = await _load_scope_clients(data.client_ids, permission_ctx.organization_id, db)
+    next_client_ids = {client.id for client in clients}
     membership.client_access_mode = data.client_access_mode
     membership.clients = clients if data.client_access_mode == MembershipClientAccessMode.SPECIFIC else []
+    next_effective_client_ids = (
+        next_client_ids
+        if data.client_access_mode == MembershipClientAccessMode.SPECIFIC
+        else set()
+    )
+    if previous_mode != data.client_access_mode or previous_client_ids != next_effective_client_ids:
+        membership.user.token_version = int(membership.user.token_version or 0) + 1
     await db.flush()
+    invalidate_authz_cache(
+        user_id=membership.user_id,
+        organization_id=membership.organization_id,
+    )
     return _team_member_response(membership)

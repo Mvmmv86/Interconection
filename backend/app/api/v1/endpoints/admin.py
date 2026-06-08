@@ -4,10 +4,11 @@ from typing import Annotated, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 
-from app.api.deps import DBSession, SuperUser, require_superuser
+from app.api.deps import DBSession, SuperUser, invalidate_authz_cache, require_superuser
 from app.models.client import Client
+from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.admin import (
@@ -95,11 +96,20 @@ async def update_admin_organization(
         setattr(organization, field, value)
 
     if "is_active" in update_data and update_data["is_active"] != previous_active:
+        member_user_ids = select(Membership.user_id).where(
+            Membership.organization_id == organization.id
+        )
         await db.execute(
             update(User)
-            .where(User.organization_id == organization.id)
+            .where(
+                or_(
+                    User.organization_id == organization.id,
+                    User.id.in_(member_user_ids),
+                )
+            )
             .values(token_version=User.token_version + 1)
         )
+        invalidate_authz_cache(organization_id=organization.id)
 
     await db.flush()
     await db.refresh(organization)
@@ -172,7 +182,8 @@ async def update_admin_user(
             changed_security_flag = True
 
     if changed_security_flag:
-        user.token_version += 1
+        user.token_version = int(user.token_version or 0) + 1
+        invalidate_authz_cache(user_id=user.id)
 
     await db.flush()
     await db.refresh(user)
