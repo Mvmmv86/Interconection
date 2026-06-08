@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ from app.core.security import (
     verify_refresh_token_payload,
 )
 from app.core.config import settings
+from app.models.audit_log import AuditAction
 from app.models.user import User
 from app.models.organization import Organization
 from app.schemas.user import (
@@ -27,6 +28,7 @@ from app.schemas.user import (
     RefreshTokenRequest,
 )
 from app.schemas.common import SuccessResponse
+from app.services.audit_service import record_audit_event
 
 router = APIRouter()
 
@@ -35,6 +37,7 @@ router = APIRouter()
 async def register(
     data: UserCreate,
     db: DBSession,
+    request: Request,
 ) -> TokenResponse:
     """Register a new user and organization."""
     # Check if email already exists
@@ -75,6 +78,17 @@ async def register(
     )
     db.add(user)
     await db.flush()
+    await record_audit_event(
+        db,
+        organization_id=organization.id,
+        user_id=user.id,
+        action=AuditAction.CREATE,
+        resource_type="organization",
+        resource_id=organization.id,
+        description="Organization registered",
+        metadata={"email": user.email, "organization_name": organization.name},
+        request=request,
+    )
 
     # Generate tokens
     token_data = {"token_version": int(user.token_version or 0)}
@@ -92,6 +106,7 @@ async def register(
 async def login(
     data: UserLogin,
     db: DBSession,
+    request: Request,
 ) -> TokenResponse:
     """Login and get access token."""
     result = await db.execute(select(User).where(User.email == data.email))
@@ -111,6 +126,17 @@ async def login(
 
     # Update last login
     user.last_login_at = datetime.now(timezone.utc)
+    await record_audit_event(
+        db,
+        organization_id=user.organization_id,
+        user_id=user.id,
+        action=AuditAction.LOGIN,
+        resource_type="auth",
+        resource_id=user.id,
+        description="User logged in",
+        metadata={"email": user.email},
+        request=request,
+    )
     await db.flush()
 
     # Generate tokens
@@ -181,10 +207,22 @@ async def refresh_token(
 async def logout(
     current_user: CurrentUser,
     db: DBSession,
+    request: Request,
 ) -> SuccessResponse:
     """Logout and revoke the current token version."""
     current_user.token_version = int(current_user.token_version or 0) + 1
     invalidate_authz_cache(user_id=current_user.id)
+    await record_audit_event(
+        db,
+        organization_id=current_user.organization_id,
+        user_id=current_user.id,
+        action=AuditAction.LOGOUT,
+        resource_type="auth",
+        resource_id=current_user.id,
+        description="User logged out and session token version was revoked",
+        metadata={"token_version": current_user.token_version},
+        request=request,
+    )
     await db.flush()
     return SuccessResponse(message="Successfully logged out")
 

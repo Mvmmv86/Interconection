@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Annotated, List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -18,6 +18,7 @@ from app.api.deps import (
     rbac_route_guard,
 )
 from app.core.security import encrypt_api_key, mask_api_key
+from app.models.audit_log import AuditAction
 from app.models.client import Client
 from app.models.exchange import Exchange
 from app.schemas.exchange import (
@@ -31,6 +32,7 @@ from app.schemas.exchange import (
     SUPPORTED_EXCHANGES,
 )
 from app.schemas.common import SuccessResponse
+from app.services.audit_service import record_audit_event, record_audit_event_immediate
 from app.services.exchange_service import ExchangeService
 from app.integrations.exchanges import ExchangeAdapterError
 
@@ -151,6 +153,7 @@ async def create_exchange(
         Depends(require_permission("exchanges:create", route_key="exchange")),
     ],
     db: DBSession,
+    request: Request,
 ) -> ExchangeResponse:
     """Add an exchange connection to a client."""
     await verify_client_access(client_id, permission_ctx, db)
@@ -185,6 +188,21 @@ async def create_exchange(
     db.add(exchange)
     await db.flush()
     await db.refresh(exchange)
+    await record_audit_event(
+        db,
+        organization_id=client.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.CREATE,
+        resource_type="exchange",
+        resource_id=exchange.id,
+        description="Exchange connection created",
+        metadata={
+            "client_id": client_id,
+            "exchange": exchange.exchange,
+            "label": exchange.label,
+        },
+        request=request,
+    )
 
     # Auto-sync: fetch positions from exchange right after creating
     try:
@@ -240,6 +258,7 @@ async def delete_exchange(
         Depends(require_permission("exchanges:delete", route_key="exchange")),
     ],
     db: DBSession,
+    request: Request,
 ) -> SuccessResponse:
     """Delete an exchange connection."""
     await verify_client_access(client_id, permission_ctx, db)
@@ -258,6 +277,21 @@ async def delete_exchange(
             detail="Exchange not found",
         )
 
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.DELETE,
+        resource_type="exchange",
+        resource_id=exchange.id,
+        description="Exchange connection deleted",
+        metadata={
+            "client_id": client_id,
+            "exchange": exchange.exchange,
+            "label": exchange.label,
+        },
+        request=request,
+    )
     await db.delete(exchange)
     await db.flush()
 
@@ -273,6 +307,7 @@ async def sync_exchange(
         Depends(require_permission("exchanges:sync", route_key="exchange")),
     ],
     db: DBSession,
+    request: Request,
 ) -> ExchangeSyncResult:
     """Force sync an exchange for balances and positions."""
     await verify_client_access(client_id, permission_ctx, db)
@@ -298,6 +333,20 @@ async def sync_exchange(
     # Sync using exchange service with client's organization_id
     start_time = time.time()
     service = ExchangeService(db)
+    await record_audit_event_immediate(
+        organization_id=exchange.client.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.SYNC,
+        resource_type="exchange",
+        resource_id=exchange.id,
+        description="Exchange sync started",
+        metadata={
+            "client_id": client_id,
+            "exchange": exchange.exchange,
+            "label": exchange.label,
+        },
+        request=request,
+    )
 
     try:
         sync_result = await service.sync_exchange(
@@ -305,6 +354,23 @@ async def sync_exchange(
             organization_id=exchange.client.organization_id,
         )
         sync_time_ms = int((time.time() - start_time) * 1000)
+        await record_audit_event(
+            db,
+            organization_id=exchange.client.organization_id,
+            user_id=permission_ctx.user.id,
+            action=AuditAction.SYNC,
+            resource_type="exchange",
+            resource_id=exchange.id,
+            description="Exchange sync completed",
+            metadata={
+                "client_id": client_id,
+                "exchange": exchange.exchange,
+                "positions_synced": sync_result["positions_synced"],
+                "total_value_usd": sync_result["total_value_usd"],
+                "sync_time_ms": sync_time_ms,
+            },
+            request=request,
+        )
 
         return ExchangeSyncResult(
             exchange_id=exchange_id,
@@ -314,11 +380,41 @@ async def sync_exchange(
         )
 
     except ExchangeAdapterError as e:
+        await record_audit_event_immediate(
+            organization_id=exchange.client.organization_id,
+            user_id=permission_ctx.user.id,
+            action=AuditAction.SYNC,
+            resource_type="exchange",
+            resource_id=exchange.id,
+            description="Exchange sync failed",
+            metadata={
+                "client_id": client_id,
+                "exchange": exchange.exchange,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            request=request,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(e),
         )
     except ValueError as e:
+        await record_audit_event_immediate(
+            organization_id=exchange.client.organization_id,
+            user_id=permission_ctx.user.id,
+            action=AuditAction.SYNC,
+            resource_type="exchange",
+            resource_id=exchange.id,
+            description="Exchange sync failed",
+            metadata={
+                "client_id": client_id,
+                "exchange": exchange.exchange,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            request=request,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),

@@ -5,7 +5,7 @@ from secrets import token_urlsafe
 from typing import Annotated, List
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -17,6 +17,7 @@ from app.api.deps import (
     require_permission,
 )
 from app.core.security import get_password_hash
+from app.models.audit_log import AuditAction
 from app.models.client import Client
 from app.models.membership import (
     Invitation,
@@ -39,6 +40,7 @@ from app.schemas.team import (
     TeamRoleResponse,
     TeamUserSummary,
 )
+from app.services.audit_service import record_audit_event
 
 router = APIRouter()
 
@@ -234,6 +236,7 @@ async def create_team_invitation(
         Depends(require_permission("members:invite", route_key="team", force=True)),
     ],
     db: DBSession,
+    request: Request,
 ) -> TeamInvitationResponse:
     """Create a pending team invitation."""
     role = await _get_assignable_role(data.role_id, permission_ctx.organization_id, db)
@@ -275,6 +278,22 @@ async def create_team_invitation(
         ) from exc
 
     invitation.role = role
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.CREATE,
+        resource_type="invitation",
+        resource_id=invitation.id,
+        description="Team invitation created",
+        metadata={
+            "email": invitation.email,
+            "role_id": invitation.role_id,
+            "role_name": role.name,
+            "expires_at": invitation.expires_at,
+        },
+        request=request,
+    )
     return _team_invitation_response(invitation)
 
 
@@ -286,6 +305,7 @@ async def accept_team_invitation(
     token: str,
     data: TeamInvitationAccept,
     db: DBSession,
+    request: Request,
 ) -> TeamInvitationAcceptResponse:
     """Accept an invitation. This endpoint is intentionally public."""
     result = await db.execute(
@@ -375,6 +395,22 @@ async def accept_team_invitation(
     user.token_version = int(user.token_version or 0) + 1
     await db.flush()
     invalidate_authz_cache(user_id=user.id, organization_id=invitation.organization_id)
+    await record_audit_event(
+        db,
+        organization_id=invitation.organization_id,
+        user_id=user.id,
+        action=AuditAction.UPDATE,
+        resource_type="invitation",
+        resource_id=invitation.id,
+        description="Team invitation accepted",
+        metadata={
+            "email": email,
+            "membership_id": membership.id,
+            "role_id": invitation.role_id,
+            "created_user": created_user,
+        },
+        request=request,
+    )
 
     return TeamInvitationAcceptResponse(
         user_id=user.id,
@@ -394,6 +430,7 @@ async def update_team_member(
         Depends(require_permission("members:edit", route_key="team", force=True)),
     ],
     db: DBSession,
+    request: Request,
 ) -> TeamMemberResponse:
     """Update member role or lifecycle status."""
     membership = await _get_membership_for_admin(
@@ -430,6 +467,22 @@ async def update_team_member(
             user_id=membership.user_id,
             organization_id=membership.organization_id,
         )
+        await record_audit_event(
+            db,
+            organization_id=membership.organization_id,
+            user_id=permission_ctx.user.id,
+            action=AuditAction.UPDATE,
+            resource_type="membership",
+            resource_id=membership.id,
+            description="Team member role or status updated",
+            metadata={
+                "target_user_id": membership.user_id,
+                "role_id": membership.role_id,
+                "status": membership.status,
+                "token_version": membership.user.token_version,
+            },
+            request=request,
+        )
     return _team_member_response(membership)
 
 
@@ -441,6 +494,7 @@ async def revoke_team_member(
         Depends(require_permission("members:revoke", route_key="team", force=True)),
     ],
     db: DBSession,
+    request: Request,
 ) -> SuccessResponse:
     """Revoke a member from the active account by suspending membership."""
     membership = await _get_membership_for_admin(
@@ -461,6 +515,20 @@ async def revoke_team_member(
         user_id=membership.user_id,
         organization_id=membership.organization_id,
     )
+    await record_audit_event(
+        db,
+        organization_id=membership.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.DELETE,
+        resource_type="membership",
+        resource_id=membership.id,
+        description="Team member revoked",
+        metadata={
+            "target_user_id": membership.user_id,
+            "token_version": membership.user.token_version,
+        },
+        request=request,
+    )
     return SuccessResponse(message="Member revoked successfully")
 
 
@@ -473,6 +541,7 @@ async def update_team_member_scope(
         Depends(require_permission("members:set_scope", route_key="team", force=True)),
     ],
     db: DBSession,
+    request: Request,
 ) -> TeamMemberResponse:
     """Update member client scope."""
     membership = await _get_membership_for_admin(
@@ -507,4 +576,23 @@ async def update_team_member_scope(
         user_id=membership.user_id,
         organization_id=membership.organization_id,
     )
+    if previous_mode != data.client_access_mode or previous_client_ids != next_effective_client_ids:
+        await record_audit_event(
+            db,
+            organization_id=membership.organization_id,
+            user_id=permission_ctx.user.id,
+            action=AuditAction.UPDATE,
+            resource_type="membership_scope",
+            resource_id=membership.id,
+            description="Team member client scope updated",
+            metadata={
+                "target_user_id": membership.user_id,
+                "previous_mode": previous_mode,
+                "previous_client_ids": previous_client_ids,
+                "client_access_mode": membership.client_access_mode,
+                "client_ids": next_effective_client_ids,
+                "token_version": membership.user.token_version,
+            },
+            request=request,
+        )
     return _team_member_response(membership)

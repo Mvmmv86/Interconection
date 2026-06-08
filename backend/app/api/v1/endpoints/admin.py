@@ -3,10 +3,11 @@
 from typing import Annotated, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_, select, update
 
 from app.api.deps import DBSession, SuperUser, invalidate_authz_cache, require_superuser
+from app.models.audit_log import AuditAction
 from app.models.client import Client
 from app.models.membership import Membership
 from app.models.organization import Organization
@@ -17,6 +18,7 @@ from app.schemas.admin import (
     AdminUserResponse,
     AdminUserUpdate,
 )
+from app.services.audit_service import record_audit_event
 
 router = APIRouter(dependencies=[Depends(require_superuser)])
 
@@ -78,6 +80,7 @@ async def update_admin_organization(
     data: AdminOrganizationUpdate,
     _superuser: SuperUser,
     db: DBSession,
+    request: Request,
 ) -> AdminOrganizationResponse:
     """Update platform-owned organization flags such as plan/status."""
     result = await db.execute(
@@ -113,6 +116,22 @@ async def update_admin_organization(
 
     await db.flush()
     await db.refresh(organization)
+    if update_data:
+        await record_audit_event(
+            db,
+            organization_id=organization.id,
+            user_id=_superuser.id,
+            action=AuditAction.UPDATE,
+            resource_type="organization",
+            resource_id=organization.id,
+            description="Platform admin updated organization",
+            metadata={
+                "updated_fields": update_data,
+                "previous_is_active": previous_active,
+                "current_is_active": organization.is_active,
+            },
+            request=request,
+        )
 
     user_count = await db.scalar(
         select(func.count(User.id)).where(User.organization_id == organization.id)
@@ -159,6 +178,7 @@ async def update_admin_user(
     data: AdminUserUpdate,
     superuser: Annotated[User, Depends(require_superuser)],
     db: DBSession,
+    request: Request,
 ) -> AdminUserResponse:
     """Update user platform flags and revoke sessions by bumping token version."""
     result = await db.execute(select(User).where(User.id == user_id).with_for_update())
@@ -186,5 +206,20 @@ async def update_admin_user(
         invalidate_authz_cache(user_id=user.id)
 
     await db.flush()
+    if update_data:
+        await record_audit_event(
+            db,
+            organization_id=user.organization_id or superuser.organization_id,
+            user_id=superuser.id,
+            action=AuditAction.UPDATE,
+            resource_type="user",
+            resource_id=user.id,
+            description="Platform admin updated user",
+            metadata={
+                "updated_fields": update_data,
+                "token_version": user.token_version,
+            },
+            request=request,
+        )
     await db.refresh(user)
     return AdminUserResponse.model_validate(user)
