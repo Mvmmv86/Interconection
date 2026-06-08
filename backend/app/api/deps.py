@@ -20,6 +20,8 @@ from app.models.membership import (
     MembershipPermissionEffect,
     MembershipStatus,
     RolePermission,
+    Team,
+    TeamStatus,
 )
 from app.models.organization import Organization
 from app.models.user import User
@@ -353,9 +355,27 @@ def require_membership(route_key: str | None = None, *, force: bool = False):
                 detail="No active membership found for tenant",
             )
 
+        teams_result = await db.execute(
+            select(Team)
+            .options(
+                selectinload(Team.role),
+                selectinload(Team.clients),
+            )
+            .join(Team.memberships)
+            .where(
+                and_(
+                    Team.organization_id == organization_id,
+                    Team.status == TeamStatus.ACTIVE,
+                    Membership.id == membership.id,
+                )
+            )
+        )
+        teams = teams_result.scalars().unique().all()
+        role_ids = [membership.role_id, *[team.role_id for team in teams if team.role_id]]
+
         role_permissions_result = await db.execute(
             select(RolePermission.permission_key).where(
-                RolePermission.role_id == membership.role_id
+                RolePermission.role_id.in_(role_ids)
             )
         )
         role_permissions = [row[0] for row in role_permissions_result.all()]
@@ -366,11 +386,27 @@ def require_membership(route_key: str | None = None, *, force: bool = False):
         }
 
         permissions = _collect_membership_permissions(role_permissions, overrides)
-        scope_client_ids = (
-            {client.id for client in membership.clients}
-            if membership.client_access_mode == MembershipClientAccessMode.SPECIFIC
-            else set()
+        direct_all_applies = (
+            membership.client_access_mode == MembershipClientAccessMode.ALL
+            and (
+                not teams
+                or (membership.role is not None and membership.role.name in {"owner", "admin"})
+            )
         )
+        team_all_applies = any(
+            team.client_access_mode == MembershipClientAccessMode.ALL for team in teams
+        )
+        effective_client_access_mode = (
+            MembershipClientAccessMode.ALL
+            if direct_all_applies or team_all_applies
+            else MembershipClientAccessMode.SPECIFIC
+        )
+        scope_client_ids = set()
+        if membership.client_access_mode == MembershipClientAccessMode.SPECIFIC:
+            scope_client_ids.update(client.id for client in membership.clients)
+        for team in teams:
+            if team.client_access_mode == MembershipClientAccessMode.SPECIFIC:
+                scope_client_ids.update(client.id for client in team.clients)
 
         context = MembershipAuthContext(
             user=current_user,
@@ -378,7 +414,7 @@ def require_membership(route_key: str | None = None, *, force: bool = False):
             membership=membership,
             role_name=membership.role.name if membership.role is not None else None,
             permissions=permissions,
-            client_access_mode=membership.client_access_mode,
+            client_access_mode=effective_client_access_mode,
             scope_client_ids=scope_client_ids,
         )
         _cache_membership_context(context)

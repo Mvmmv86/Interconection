@@ -265,6 +265,8 @@ interface TeamInvitation {
   email: string;
   role_id: string;
   role_name: string;
+  team_id: string | null;
+  team_name: string | null;
   token: string;
   status: 'pending' | 'accepted' | 'revoked' | 'expired';
   expires_at: string;
@@ -282,6 +284,24 @@ interface TeamInvitationAcceptResponse {
   status: string;
   created_user: boolean;
   requires_login: boolean;
+}
+
+interface AccountTeam {
+  id: string;
+  organization_id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  color: string;
+  status: 'active' | 'archived';
+  role_id: string | null;
+  role_name: string | null;
+  client_access_mode: 'all' | 'specific';
+  client_ids: string[];
+  member_count: number;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface AdminOrganization {
@@ -308,6 +328,47 @@ interface AdminUser {
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
+}
+
+interface AdminOverview {
+  organization_count: number;
+  active_organization_count: number;
+  user_count: number;
+  active_user_count: number;
+  client_count: number;
+  audit_event_count: number;
+  bot_count: number;
+  strategy_count: number;
+  plan_count: number;
+}
+
+interface AdminClient {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  name: string;
+  email: string | null;
+  color: string;
+  wallet_count: number;
+  exchange_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AdminAuditLog {
+  id: string;
+  organization_id: string;
+  organization_name: string | null;
+  user_id: string | null;
+  user_email: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  description: string | null;
+  metadata: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  timestamp: string;
 }
 
 class ApiClient {
@@ -545,6 +606,7 @@ class ApiClient {
   async createTeamInvitation(data: {
     email: string;
     role_id: string;
+    team_id?: string | null;
     notes?: string;
     expires_in_days?: number;
   }): Promise<ApiResponse<TeamInvitation>> {
@@ -593,9 +655,79 @@ class ApiClient {
     });
   }
 
+  async getAccountTeams(): Promise<ApiResponse<AccountTeam[]>> {
+    return this.request<AccountTeam[]>('/api/v1/team/teams');
+  }
+
+  async createAccountTeam(data: {
+    name: string;
+    description?: string;
+    color?: string;
+    role_id?: string | null;
+    client_access_mode?: 'all' | 'specific';
+    client_ids?: string[];
+  }): Promise<ApiResponse<AccountTeam>> {
+    return this.request<AccountTeam>('/api/v1/team/teams', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAccountTeam(
+    teamId: string,
+    data: {
+      name?: string;
+      description?: string | null;
+      color?: string;
+      status?: 'active' | 'archived';
+      role_id?: string | null;
+      client_access_mode?: 'all' | 'specific';
+      client_ids?: string[];
+    }
+  ): Promise<ApiResponse<AccountTeam>> {
+    return this.request<AccountTeam>(`/api/v1/team/teams/${teamId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async archiveAccountTeam(teamId: string): Promise<ApiResponse<{ message: string }>> {
+    return this.request<{ message: string }>(`/api/v1/team/teams/${teamId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getAccountTeamMembers(teamId: string): Promise<ApiResponse<TeamMember[]>> {
+    return this.request<TeamMember[]>(`/api/v1/team/teams/${teamId}/members`);
+  }
+
+  async addAccountTeamMember(
+    teamId: string,
+    membershipId: string
+  ): Promise<ApiResponse<AccountTeam>> {
+    return this.request<AccountTeam>(`/api/v1/team/teams/${teamId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ membership_id: membershipId }),
+    });
+  }
+
+  async removeAccountTeamMember(
+    teamId: string,
+    membershipId: string
+  ): Promise<ApiResponse<{ message: string }>> {
+    return this.request<{ message: string }>(
+      `/api/v1/team/teams/${teamId}/members/${membershipId}`,
+      { method: 'DELETE' }
+    );
+  }
+
   // ========================
   // Platform admin methods
   // ========================
+
+  async getAdminOverview(): Promise<ApiResponse<AdminOverview>> {
+    return this.request<AdminOverview>('/api/v1/admin/overview');
+  }
 
   async getAdminOrganizations(): Promise<ApiResponse<AdminOrganization[]>> {
     return this.request<AdminOrganization[]>('/api/v1/admin/organizations');
@@ -624,6 +756,16 @@ class ApiClient {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
+  }
+
+  async getAdminClients(organizationId?: string): Promise<ApiResponse<AdminClient[]>> {
+    const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+    return this.request<AdminClient[]>(`/api/v1/admin/clients${qs}`);
+  }
+
+  async getAdminAuditLogs(organizationId?: string): Promise<ApiResponse<AdminAuditLog[]>> {
+    const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+    return this.request<AdminAuditLog[]>(`/api/v1/admin/audit-logs${qs}`);
   }
 
   // ========================
@@ -847,10 +989,14 @@ export type {
   WalletScanResult,
   ManualAssetCreateData,
   AccountMembership,
+  AccountTeam,
   TeamRole,
   TeamMember,
   TeamInvitation,
   TeamInvitationAcceptResponse,
   AdminOrganization,
   AdminUser,
+  AdminOverview,
+  AdminClient,
+  AdminAuditLog,
 };

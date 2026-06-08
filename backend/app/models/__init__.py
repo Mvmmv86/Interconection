@@ -37,6 +37,9 @@ from app.models.membership import (
     MembershipPermissionOverride,
     MembershipClient,
     Invitation,
+    Team,
+    TeamMember,
+    TeamClient,
 )
 
 __all__ = [
@@ -92,4 +95,7 @@ __all__ = [
     "MembershipPermissionOverride",
     "MembershipClient",
     "Invitation",
+    "Team",
+    "TeamMember",
+    "TeamClient",
 ]

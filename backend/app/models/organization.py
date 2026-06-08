@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from app.models.user import User
     from app.models.client import Client
     from app.models.alert import Alert
-    from app.models.membership import Role, Membership, Invitation
+    from app.models.membership import Role, Membership, Invitation, Team
     from app.models.portfolio_snapshot import PortfolioSnapshot
     from app.models.audit_log import AuditLog
 
@@ -61,6 +61,11 @@ class Organization(Base, UUIDMixin, TimestampMixin):
     )
     invitations: Mapped[List["Invitation"]] = relationship(
         "Invitation",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+    teams: Mapped[List["Team"]] = relationship(
+        "Team",
         back_populates="organization",
         cascade="all, delete-orphan",
     )

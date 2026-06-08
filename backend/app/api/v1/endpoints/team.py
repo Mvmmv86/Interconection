@@ -1,6 +1,7 @@
 """Team administration endpoints."""
 
 from datetime import datetime, timedelta, timezone
+import re
 from secrets import token_urlsafe
 from typing import Annotated, List
 from uuid import UUID, uuid4
@@ -26,6 +27,9 @@ from app.models.membership import (
     MembershipClientAccessMode,
     MembershipStatus,
     Role,
+    Team,
+    TeamMember,
+    TeamStatus,
 )
 from app.models.user import User, UserRole
 from app.schemas.common import SuccessResponse
@@ -34,6 +38,10 @@ from app.schemas.team import (
     TeamInvitationAcceptResponse,
     TeamInvitationCreate,
     TeamInvitationResponse,
+    AccountTeamCreate,
+    AccountTeamMemberCreate,
+    AccountTeamResponse,
+    AccountTeamUpdate,
     TeamMemberResponse,
     TeamMemberScopeUpdate,
     TeamMemberUpdate,
@@ -51,6 +59,12 @@ def _now() -> datetime:
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower())
+    slug = slug.strip("-")
+    return slug or "team"
 
 
 def _legacy_role_from_membership_role(role_name: str) -> UserRole:
@@ -87,6 +101,8 @@ def _team_invitation_response(invitation: Invitation) -> TeamInvitationResponse:
         email=invitation.email,
         role_id=invitation.role_id,
         role_name=invitation.role.name if invitation.role else "",
+        team_id=invitation.team_id,
+        team_name=invitation.team.name if invitation.team else None,
         token=invitation.token,
         status=invitation.status,
         expires_at=invitation.expires_at,
@@ -95,6 +111,26 @@ def _team_invitation_response(invitation: Invitation) -> TeamInvitationResponse:
         notes=invitation.notes,
         created_at=invitation.created_at,
         updated_at=invitation.updated_at,
+    )
+
+
+def _account_team_response(team: Team, member_count: int | None = None) -> AccountTeamResponse:
+    return AccountTeamResponse(
+        id=team.id,
+        organization_id=team.organization_id,
+        name=team.name,
+        slug=team.slug,
+        description=team.description,
+        color=team.color,
+        status=team.status,
+        role_id=team.role_id,
+        role_name=team.role.name if team.role else None,
+        client_access_mode=team.client_access_mode,
+        client_ids=[client.id for client in team.clients],
+        member_count=len(team.memberships) if member_count is None else member_count,
+        created_by_user_id=team.created_by_user_id,
+        created_at=team.created_at,
+        updated_at=team.updated_at,
     )
 
 
@@ -118,6 +154,33 @@ async def _get_assignable_role(
             detail="Role not found",
         )
     return role
+
+
+async def _get_team_for_admin(
+    team_id: UUID,
+    organization_id: UUID,
+    db: DBSession,
+) -> Team:
+    result = await db.execute(
+        select(Team)
+        .options(
+            selectinload(Team.role),
+            selectinload(Team.clients),
+            selectinload(Team.memberships),
+        )
+        .where(
+            Team.id == team_id,
+            Team.organization_id == organization_id,
+        )
+        .with_for_update()
+    )
+    team = result.scalar_one_or_none()
+    if team is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Team not found",
+        )
+    return team
 
 
 async def _get_membership_for_admin(
@@ -169,6 +232,337 @@ async def _load_scope_clients(
             detail="One or more clients are outside this account",
         )
     return clients
+
+
+@router.get("/teams", response_model=List[AccountTeamResponse])
+async def list_account_teams(
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("teams:view", route_key="team", force=True)),
+    ],
+    db: DBSession,
+) -> List[AccountTeamResponse]:
+    """List named teams inside the active account."""
+    result = await db.execute(
+        select(Team)
+        .options(
+            selectinload(Team.role),
+            selectinload(Team.clients),
+            selectinload(Team.memberships),
+        )
+        .where(Team.organization_id == permission_ctx.organization_id)
+        .order_by(Team.created_at.asc())
+    )
+    return [_account_team_response(team) for team in result.scalars().unique().all()]
+
+
+@router.post("/teams", response_model=AccountTeamResponse, status_code=status.HTTP_201_CREATED)
+async def create_account_team(
+    data: AccountTeamCreate,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("teams:create", route_key="team", force=True)),
+    ],
+    db: DBSession,
+    request: Request,
+) -> AccountTeamResponse:
+    """Create a named team and its grouped access policy."""
+    if data.client_access_mode == MembershipClientAccessMode.SPECIFIC and not data.client_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="client_ids are required for specific scope",
+        )
+
+    role = (
+        await _get_assignable_role(data.role_id, permission_ctx.organization_id, db)
+        if data.role_id
+        else None
+    )
+    clients = await _load_scope_clients(data.client_ids, permission_ctx.organization_id, db)
+    base_slug = _slugify(data.name)
+    slug = base_slug
+    suffix = 2
+    while await db.scalar(
+        select(func.count(Team.id)).where(
+            Team.organization_id == permission_ctx.organization_id,
+            Team.slug == slug,
+        )
+    ):
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
+
+    team = Team(
+        id=uuid4(),
+        organization_id=permission_ctx.organization_id,
+        name=data.name.strip(),
+        slug=slug,
+        description=data.description,
+        color=data.color,
+        status=TeamStatus.ACTIVE,
+        role_id=role.id if role else None,
+        client_access_mode=data.client_access_mode,
+        created_by_user_id=permission_ctx.user.id,
+    )
+    team.clients = clients if data.client_access_mode == MembershipClientAccessMode.SPECIFIC else []
+    db.add(team)
+    await db.flush()
+    invalidate_authz_cache(organization_id=permission_ctx.organization_id)
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.CREATE,
+        resource_type="team",
+        resource_id=team.id,
+        description="Account team created",
+        metadata={
+            "name": team.name,
+            "role_id": team.role_id,
+            "client_access_mode": team.client_access_mode,
+            "client_ids": [client.id for client in team.clients],
+        },
+        request=request,
+    )
+    team.role = role
+    return _account_team_response(team, member_count=0)
+
+
+@router.patch("/teams/{team_id}", response_model=AccountTeamResponse)
+async def update_account_team(
+    team_id: UUID,
+    data: AccountTeamUpdate,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("teams:edit", route_key="team", force=True)),
+    ],
+    db: DBSession,
+    request: Request,
+) -> AccountTeamResponse:
+    """Update a named team and invalidate grouped authorization."""
+    team = await _get_team_for_admin(team_id, permission_ctx.organization_id, db)
+    update_data = data.model_dump(exclude_unset=True)
+
+    if data.client_access_mode == MembershipClientAccessMode.SPECIFIC and not data.client_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="client_ids are required for specific scope",
+        )
+
+    if data.name is not None and data.name.strip() != team.name:
+        base_slug = _slugify(data.name)
+        slug = base_slug
+        suffix = 2
+        while await db.scalar(
+            select(func.count(Team.id)).where(
+                Team.organization_id == permission_ctx.organization_id,
+                Team.slug == slug,
+                Team.id != team.id,
+            )
+        ):
+            slug = f"{base_slug}-{suffix}"
+            suffix += 1
+        team.name = data.name.strip()
+        team.slug = slug
+    if data.description is not None:
+        team.description = data.description
+    if data.color is not None:
+        team.color = data.color
+    if data.status is not None:
+        team.status = data.status
+    if data.role_id is not None:
+        role = await _get_assignable_role(data.role_id, permission_ctx.organization_id, db)
+        team.role_id = role.id
+        team.role = role
+    if data.client_access_mode is not None:
+        team.client_access_mode = data.client_access_mode
+    if data.client_ids is not None:
+        clients = await _load_scope_clients(data.client_ids, permission_ctx.organization_id, db)
+        team.clients = clients if team.client_access_mode == MembershipClientAccessMode.SPECIFIC else []
+    elif team.client_access_mode == MembershipClientAccessMode.ALL:
+        team.clients = []
+
+    await db.flush()
+    invalidate_authz_cache(organization_id=permission_ctx.organization_id)
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.UPDATE,
+        resource_type="team",
+        resource_id=team.id,
+        description="Account team updated",
+        metadata={"updated_fields": update_data},
+        request=request,
+    )
+    return _account_team_response(team)
+
+
+@router.delete("/teams/{team_id}", response_model=SuccessResponse)
+async def archive_account_team(
+    team_id: UUID,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("teams:delete", route_key="team", force=True)),
+    ],
+    db: DBSession,
+    request: Request,
+) -> SuccessResponse:
+    """Archive a team without deleting historical audit context."""
+    team = await _get_team_for_admin(team_id, permission_ctx.organization_id, db)
+    team.status = TeamStatus.ARCHIVED
+    await db.flush()
+    invalidate_authz_cache(organization_id=permission_ctx.organization_id)
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.DELETE,
+        resource_type="team",
+        resource_id=team.id,
+        description="Account team archived",
+        metadata={"name": team.name},
+        request=request,
+    )
+    return SuccessResponse(message="Team archived successfully")
+
+
+@router.get("/teams/{team_id}/members", response_model=List[TeamMemberResponse])
+async def list_account_team_members(
+    team_id: UUID,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("teams:view", route_key="team", force=True)),
+    ],
+    db: DBSession,
+) -> List[TeamMemberResponse]:
+    """List members assigned to a named team."""
+    team = await _get_team_for_admin(team_id, permission_ctx.organization_id, db)
+    membership_ids = [membership.id for membership in team.memberships]
+    if not membership_ids:
+        return []
+    result = await db.execute(
+        select(Membership)
+        .options(
+            selectinload(Membership.user),
+            selectinload(Membership.role),
+            selectinload(Membership.clients),
+        )
+        .where(Membership.id.in_(membership_ids))
+        .order_by(Membership.created_at.asc())
+    )
+    return [_team_member_response(membership) for membership in result.scalars().unique().all()]
+
+
+@router.post("/teams/{team_id}/members", response_model=AccountTeamResponse)
+async def add_account_team_member(
+    team_id: UUID,
+    data: AccountTeamMemberCreate,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("teams:members", route_key="team", force=True)),
+    ],
+    db: DBSession,
+    request: Request,
+) -> AccountTeamResponse:
+    """Add a membership to a named team idempotently."""
+    team = await _get_team_for_admin(team_id, permission_ctx.organization_id, db)
+    membership = await _get_membership_for_admin(
+        data.membership_id,
+        permission_ctx.organization_id,
+        db,
+    )
+    exists = await db.scalar(
+        select(func.count(TeamMember.team_id)).where(
+            TeamMember.team_id == team.id,
+            TeamMember.membership_id == membership.id,
+        )
+    )
+    if not exists:
+        db.add(
+            TeamMember(
+                team_id=team.id,
+                membership_id=membership.id,
+                added_by_user_id=permission_ctx.user.id,
+            )
+        )
+        membership.user.token_version = int(membership.user.token_version or 0) + 1
+        await db.flush()
+        invalidate_authz_cache(
+            user_id=membership.user_id,
+            organization_id=permission_ctx.organization_id,
+        )
+        await record_audit_event(
+            db,
+            organization_id=permission_ctx.organization_id,
+            user_id=permission_ctx.user.id,
+            action=AuditAction.UPDATE,
+            resource_type="team_member",
+            resource_id=team.id,
+            description="Member added to account team",
+            metadata={
+                "team_id": team.id,
+                "membership_id": membership.id,
+                "target_user_id": membership.user_id,
+                "token_version": membership.user.token_version,
+            },
+            request=request,
+        )
+    member_count = await db.scalar(
+        select(func.count(TeamMember.membership_id)).where(TeamMember.team_id == team.id)
+    )
+    return _account_team_response(team, member_count=int(member_count or 0))
+
+
+@router.delete("/teams/{team_id}/members/{membership_id}", response_model=SuccessResponse)
+async def remove_account_team_member(
+    team_id: UUID,
+    membership_id: UUID,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("teams:members", route_key="team", force=True)),
+    ],
+    db: DBSession,
+    request: Request,
+) -> SuccessResponse:
+    """Remove a membership from a named team."""
+    team = await _get_team_for_admin(team_id, permission_ctx.organization_id, db)
+    membership = await _get_membership_for_admin(
+        membership_id,
+        permission_ctx.organization_id,
+        db,
+    )
+    result = await db.execute(
+        select(TeamMember).where(
+            TeamMember.team_id == team.id,
+            TeamMember.membership_id == membership.id,
+        )
+    )
+    team_member = result.scalar_one_or_none()
+    if team_member is not None:
+        await db.delete(team_member)
+        membership.user.token_version = int(membership.user.token_version or 0) + 1
+        await db.flush()
+        invalidate_authz_cache(
+            user_id=membership.user_id,
+            organization_id=permission_ctx.organization_id,
+        )
+        await record_audit_event(
+            db,
+            organization_id=permission_ctx.organization_id,
+            user_id=permission_ctx.user.id,
+            action=AuditAction.UPDATE,
+            resource_type="team_member",
+            resource_id=team.id,
+            description="Member removed from account team",
+            metadata={
+                "team_id": team.id,
+                "membership_id": membership.id,
+                "target_user_id": membership.user_id,
+                "token_version": membership.user.token_version,
+            },
+            request=request,
+        )
+    return SuccessResponse(message="Member removed from team")
 
 
 @router.get("/roles", response_model=List[TeamRoleResponse])
@@ -240,6 +634,11 @@ async def create_team_invitation(
 ) -> TeamInvitationResponse:
     """Create a pending team invitation."""
     role = await _get_assignable_role(data.role_id, permission_ctx.organization_id, db)
+    team = (
+        await _get_team_for_admin(data.team_id, permission_ctx.organization_id, db)
+        if data.team_id
+        else None
+    )
     email = _normalize_email(data.email)
 
     pending_result = await db.execute(
@@ -260,6 +659,7 @@ async def create_team_invitation(
         organization_id=permission_ctx.organization_id,
         email=email,
         role_id=role.id,
+        team_id=team.id if team else None,
         token=token_urlsafe(32),
         status=InvitationStatus.PENDING,
         expires_at=_now() + timedelta(days=data.expires_in_days),
@@ -290,10 +690,13 @@ async def create_team_invitation(
             "email": invitation.email,
             "role_id": invitation.role_id,
             "role_name": role.name,
+            "team_id": invitation.team_id,
+            "team_name": team.name if team else None,
             "expires_at": invitation.expires_at,
         },
         request=request,
     )
+    invitation.team = team
     return _team_invitation_response(invitation)
 
 
@@ -310,7 +713,7 @@ async def accept_team_invitation(
     """Accept an invitation. This endpoint is intentionally public."""
     result = await db.execute(
         select(Invitation)
-        .options(selectinload(Invitation.role))
+        .options(selectinload(Invitation.role), selectinload(Invitation.team))
         .where(Invitation.token == token)
         .with_for_update()
     )
@@ -390,6 +793,22 @@ async def accept_team_invitation(
         membership.accepted_at = now
         membership.invited_by_user_id = invitation.invited_by_user_id
 
+    if invitation.team_id is not None:
+        team_member_exists = await db.scalar(
+            select(func.count(TeamMember.team_id)).where(
+                TeamMember.team_id == invitation.team_id,
+                TeamMember.membership_id == membership.id,
+            )
+        )
+        if not team_member_exists:
+            db.add(
+                TeamMember(
+                    team_id=invitation.team_id,
+                    membership_id=membership.id,
+                    added_by_user_id=invitation.invited_by_user_id,
+                )
+            )
+
     invitation.status = InvitationStatus.ACCEPTED
     invitation.accepted_at = now
     user.token_version = int(user.token_version or 0) + 1
@@ -407,6 +826,7 @@ async def accept_team_invitation(
             "email": email,
             "membership_id": membership.id,
             "role_id": invitation.role_id,
+            "team_id": invitation.team_id,
             "created_user": created_user,
         },
         request=request,

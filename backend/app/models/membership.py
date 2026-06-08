@@ -182,6 +182,11 @@ class Membership(Base, UUIDMixin, TimestampMixin):
         secondary="membership_clients",
         back_populates="memberships",
     )
+    teams: Mapped[List["Team"]] = relationship(
+        "Team",
+        secondary="team_members",
+        back_populates="memberships",
+    )
 
     __table_args__ = (
         UniqueConstraint("user_id", "organization_id", name="uq_memberships_user_org"),
@@ -235,6 +240,118 @@ class MembershipClient(Base):
     )
 
 
+class TeamStatus(str, enum.Enum):
+    """Tenant team lifecycle states."""
+
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class Team(Base, UUIDMixin, TimestampMixin):
+    """Named team inside an organization for grouped RBAC and client scope."""
+
+    __tablename__ = "teams"
+
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    slug: Mapped[str] = mapped_column(String(140), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    color: Mapped[str] = mapped_column(String(7), default="#3b82f6", nullable=False)
+    status: Mapped[TeamStatus] = mapped_column(
+        SAEnum(TeamStatus),
+        default=TeamStatus.ACTIVE,
+        nullable=False,
+    )
+    role_id: Mapped[Optional[UUID]] = mapped_column(
+        ForeignKey("roles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    client_access_mode: Mapped[MembershipClientAccessMode] = mapped_column(
+        SAEnum(MembershipClientAccessMode),
+        default=MembershipClientAccessMode.ALL,
+        nullable=False,
+    )
+    created_by_user_id: Mapped[Optional[UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    organization: Mapped["Organization"] = relationship(
+        "Organization",
+        back_populates="teams",
+    )
+    role: Mapped[Optional["Role"]] = relationship("Role")
+    memberships: Mapped[List["Membership"]] = relationship(
+        "Membership",
+        secondary="team_members",
+        back_populates="teams",
+    )
+    clients: Mapped[List["Client"]] = relationship(
+        "Client",
+        secondary="team_clients",
+        back_populates="teams",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "slug", name="uq_teams_org_slug"),
+        Index("ix_teams_organization_status", "organization_id", "status"),
+    )
+
+
+class TeamMember(Base):
+    """Memberships assigned to a named team."""
+
+    __tablename__ = "team_members"
+
+    team_id: Mapped[UUID] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+    membership_id: Mapped[UUID] = mapped_column(
+        ForeignKey("memberships.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+    added_by_user_id: Mapped[Optional[UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_team_members_membership_id", "membership_id"),
+    )
+
+
+class TeamClient(Base):
+    """Client scope assigned to a named team."""
+
+    __tablename__ = "team_clients"
+
+    team_id: Mapped[UUID] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+    client_id: Mapped[UUID] = mapped_column(
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+
+    __table_args__ = (
+        Index("ix_team_clients_client_id", "client_id"),
+    )
+
+
 class Invitation(Base, UUIDMixin, TimestampMixin):
     """Pending invitations used by team administration flow."""
 
@@ -248,6 +365,10 @@ class Invitation(Base, UUIDMixin, TimestampMixin):
     role_id: Mapped[UUID] = mapped_column(
         ForeignKey("roles.id", ondelete="RESTRICT"),
         nullable=False,
+    )
+    team_id: Mapped[Optional[UUID]] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"),
+        nullable=True,
     )
     token: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     status: Mapped[InvitationStatus] = mapped_column(
@@ -274,6 +395,7 @@ class Invitation(Base, UUIDMixin, TimestampMixin):
         back_populates="invitations",
     )
     role: Mapped["Role"] = relationship("Role")
+    team: Mapped[Optional["Team"]] = relationship("Team")
     invited_by: Mapped[Optional["User"]] = relationship(
         "User",
         foreign_keys=[invited_by_user_id],

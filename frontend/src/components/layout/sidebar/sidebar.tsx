@@ -66,7 +66,7 @@ export function Sidebar() {
   const { theme } = useTheme();
   const { user, logout } = useAuth();
   const platformAdminItems: NavItem[] = user?.is_superuser
-    ? [{ label: 'Platform Admin', href: '/admin', icon: Shield }]
+    ? [{ label: 'Admin Console', href: '/admin', icon: Shield }]
     : [];
 
   const NavLink = ({ item }: { item: NavItem }) => {

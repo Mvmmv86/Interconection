@@ -7,12 +7,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_, select, update
 
 from app.api.deps import DBSession, SuperUser, invalidate_authz_cache, require_superuser
-from app.models.audit_log import AuditAction
+from app.models.audit_log import AuditAction, AuditLog
 from app.models.client import Client
+from app.models.exchange import Exchange
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.user import User
+from app.models.wallet import Wallet
 from app.schemas.admin import (
+    AdminAuditLogResponse,
+    AdminClientResponse,
+    AdminOverviewResponse,
     AdminOrganizationResponse,
     AdminOrganizationUpdate,
     AdminUserResponse,
@@ -21,6 +26,32 @@ from app.schemas.admin import (
 from app.services.audit_service import record_audit_event
 
 router = APIRouter(dependencies=[Depends(require_superuser)])
+
+
+@router.get("/overview", response_model=AdminOverviewResponse)
+async def get_admin_overview(
+    _superuser: SuperUser,
+    db: DBSession,
+) -> AdminOverviewResponse:
+    """Return platform-level counters for the admin console."""
+    organization_count = await db.scalar(select(func.count(Organization.id)))
+    active_organization_count = await db.scalar(
+        select(func.count(Organization.id)).where(Organization.is_active.is_(True))
+    )
+    user_count = await db.scalar(select(func.count(User.id)))
+    active_user_count = await db.scalar(
+        select(func.count(User.id)).where(User.is_active.is_(True))
+    )
+    client_count = await db.scalar(select(func.count(Client.id)))
+    audit_event_count = await db.scalar(select(func.count(AuditLog.id)))
+    return AdminOverviewResponse(
+        organization_count=int(organization_count or 0),
+        active_organization_count=int(active_organization_count or 0),
+        user_count=int(user_count or 0),
+        active_user_count=int(active_user_count or 0),
+        client_count=int(client_count or 0),
+        audit_event_count=int(audit_event_count or 0),
+    )
 
 
 @router.get("/organizations", response_model=List[AdminOrganizationResponse])
@@ -170,6 +201,111 @@ async def list_admin_users(
 
     result = await db.execute(query)
     return [AdminUserResponse.model_validate(user) for user in result.scalars().all()]
+
+
+@router.get("/clients", response_model=List[AdminClientResponse])
+async def list_admin_clients(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    search: Optional[str] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+) -> List[AdminClientResponse]:
+    """List all business clients/carteiras across organizations."""
+    wallet_counts = (
+        select(Wallet.client_id, func.count(Wallet.id).label("wallet_count"))
+        .group_by(Wallet.client_id)
+        .subquery()
+    )
+    exchange_counts = (
+        select(Exchange.client_id, func.count(Exchange.id).label("exchange_count"))
+        .group_by(Exchange.client_id)
+        .subquery()
+    )
+    query = (
+        select(
+            Client,
+            Organization.name.label("organization_name"),
+            func.coalesce(wallet_counts.c.wallet_count, 0).label("wallet_count"),
+            func.coalesce(exchange_counts.c.exchange_count, 0).label("exchange_count"),
+        )
+        .join(Organization, Organization.id == Client.organization_id)
+        .outerjoin(wallet_counts, wallet_counts.c.client_id == Client.id)
+        .outerjoin(exchange_counts, exchange_counts.c.client_id == Client.id)
+        .order_by(Client.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    if organization_id is not None:
+        query = query.where(Client.organization_id == organization_id)
+    if search:
+        query = query.where(Client.name.ilike(f"%{search.strip()}%"))
+
+    result = await db.execute(query)
+    return [
+        AdminClientResponse(
+            id=client.id,
+            organization_id=client.organization_id,
+            organization_name=organization_name,
+            name=client.name,
+            email=client.email,
+            color=client.color,
+            wallet_count=int(wallet_count or 0),
+            exchange_count=int(exchange_count or 0),
+            created_at=client.created_at,
+            updated_at=client.updated_at,
+        )
+        for client, organization_name, wallet_count, exchange_count in result.all()
+    ]
+
+
+@router.get("/audit-logs", response_model=List[AdminAuditLogResponse])
+async def list_admin_audit_logs(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    resource_type: Optional[str] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+) -> List[AdminAuditLogResponse]:
+    """List audit events globally for platform operators."""
+    query = (
+        select(
+            AuditLog,
+            Organization.name.label("organization_name"),
+            User.email.label("user_email"),
+        )
+        .outerjoin(Organization, Organization.id == AuditLog.organization_id)
+        .outerjoin(User, User.id == AuditLog.user_id)
+        .order_by(AuditLog.timestamp.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    if organization_id is not None:
+        query = query.where(AuditLog.organization_id == organization_id)
+    if resource_type:
+        query = query.where(AuditLog.resource_type == resource_type.strip())
+
+    result = await db.execute(query)
+    return [
+        AdminAuditLogResponse(
+            id=log.id,
+            organization_id=log.organization_id,
+            organization_name=organization_name,
+            user_id=log.user_id,
+            user_email=user_email,
+            action=log.action.value if hasattr(log.action, "value") else str(log.action),
+            resource_type=log.resource_type,
+            resource_id=log.resource_id,
+            description=log.description,
+            metadata=log.log_metadata,
+            ip_address=log.ip_address,
+            user_agent=log.user_agent,
+            timestamp=log.timestamp,
+        )
+        for log, organization_name, user_email in result.all()
+    ]
 
 
 @router.patch("/users/{user_id}", response_model=AdminUserResponse)

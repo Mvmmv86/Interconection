@@ -10,6 +10,7 @@ from app.models.membership import (
     InvitationStatus,
     MembershipClientAccessMode,
     MembershipStatus,
+    TeamStatus,
 )
 from app.schemas.common import BaseSchema
 
@@ -58,6 +59,7 @@ class TeamInvitationCreate(BaseSchema):
 
     email: EmailStr
     role_id: UUID
+    team_id: Optional[UUID] = None
     notes: Optional[str] = Field(default=None, max_length=2000)
     expires_in_days: int = Field(default=7, ge=1, le=30)
 
@@ -70,6 +72,8 @@ class TeamInvitationResponse(BaseSchema):
     email: EmailStr
     role_id: UUID
     role_name: str
+    team_id: Optional[UUID] = None
+    team_name: Optional[str] = None
     token: str
     status: InvitationStatus
     expires_at: datetime
@@ -110,3 +114,52 @@ class TeamMemberScopeUpdate(BaseSchema):
 
     client_access_mode: MembershipClientAccessMode
     client_ids: List[UUID] = []
+
+
+class AccountTeamCreate(BaseSchema):
+    """Create a named team inside the active account."""
+
+    name: str = Field(min_length=2, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    color: str = Field(default="#3b82f6", pattern=r"^#[0-9A-Fa-f]{6}$")
+    role_id: Optional[UUID] = None
+    client_access_mode: MembershipClientAccessMode = MembershipClientAccessMode.ALL
+    client_ids: List[UUID] = []
+
+
+class AccountTeamUpdate(BaseSchema):
+    """Update mutable fields for a named account team."""
+
+    name: Optional[str] = Field(default=None, min_length=2, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    color: Optional[str] = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    status: Optional[TeamStatus] = None
+    role_id: Optional[UUID] = None
+    client_access_mode: Optional[MembershipClientAccessMode] = None
+    client_ids: Optional[List[UUID]] = None
+
+
+class AccountTeamMemberCreate(BaseSchema):
+    """Add a membership to a named team."""
+
+    membership_id: UUID
+
+
+class AccountTeamResponse(BaseSchema):
+    """Named team with access policy summary."""
+
+    id: UUID
+    organization_id: UUID
+    name: str
+    slug: str
+    description: Optional[str] = None
+    color: str
+    status: TeamStatus
+    role_id: Optional[UUID] = None
+    role_name: Optional[str] = None
+    client_access_mode: MembershipClientAccessMode
+    client_ids: List[UUID] = []
+    member_count: int = 0
+    created_by_user_id: Optional[UUID] = None
+    created_at: datetime
+    updated_at: datetime
