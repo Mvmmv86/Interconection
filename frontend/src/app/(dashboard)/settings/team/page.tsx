@@ -126,7 +126,9 @@ export default function TeamSettingsPage() {
       api.getTeamRoles(),
       api.getTeamMembers(),
       api.getClients(),
-      canViewTeams ? api.getAccountTeams() : Promise.resolve({ success: true, data: [] }),
+      canViewTeams
+        ? api.getAccountTeams()
+        : Promise.resolve({ success: true, data: [] as AccountTeam[], error: undefined }),
     ]);
 
     if (!rolesResult.success || !membersResult.success || !teamsResult.success) {
