@@ -4,19 +4,27 @@ from typing import Annotated, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import distinct, func, or_, select, update
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import DBSession, SuperUser, invalidate_authz_cache, require_superuser
 from app.models.audit_log import AuditAction, AuditLog
 from app.models.client import Client
 from app.models.exchange import Exchange
-from app.models.membership import Membership
+from app.models.membership import (
+    Membership,
+    MembershipClient,
+    MembershipStatus,
+    Team,
+    TeamClient,
+)
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.wallet import Wallet
 from app.schemas.admin import (
     AdminAuditLogResponse,
     AdminClientResponse,
+    AdminUserMembershipResponse,
     AdminOverviewResponse,
     AdminOrganizationResponse,
     AdminOrganizationUpdate,
@@ -26,6 +34,47 @@ from app.schemas.admin import (
 from app.services.audit_service import record_audit_event
 
 router = APIRouter(dependencies=[Depends(require_superuser)])
+
+
+def _admin_user_response(user: User) -> AdminUserResponse:
+    """Build a platform user response with multi-account membership context."""
+    memberships = [
+        AdminUserMembershipResponse(
+            id=membership.id,
+            organization_id=membership.organization_id,
+            organization_name=membership.organization.name if membership.organization else "",
+            role_name=membership.role.name if membership.role else "",
+            status=membership.status.value if hasattr(membership.status, "value") else str(membership.status),
+            client_access_mode=(
+                membership.client_access_mode.value
+                if hasattr(membership.client_access_mode, "value")
+                else str(membership.client_access_mode)
+            ),
+            team_count=len(membership.teams),
+            team_names=[team.name for team in membership.teams],
+        )
+        for membership in sorted(
+            user.memberships,
+            key=lambda item: (
+                item.organization.name if item.organization else "",
+                item.created_at,
+            ),
+        )
+    ]
+    return AdminUserResponse(
+        id=user.id,
+        organization_id=user.organization_id,
+        email=user.email,
+        name=user.name,
+        role=user.role,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        token_version=user.token_version,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        last_login_at=user.last_login_at,
+        memberships=memberships,
+    )
 
 
 @router.get("/overview", response_model=AdminOverviewResponse)
@@ -63,9 +112,13 @@ async def list_admin_organizations(
     limit: int = Query(50, ge=1, le=200),
 ) -> List[AdminOrganizationResponse]:
     """List organizations with aggregate counts for platform governance."""
-    user_counts = (
-        select(User.organization_id, func.count(User.id).label("user_count"))
-        .group_by(User.organization_id)
+    member_counts = (
+        select(
+            Membership.organization_id,
+            func.count(distinct(Membership.user_id)).label("user_count"),
+        )
+        .where(Membership.status == MembershipStatus.ACTIVE)
+        .group_by(Membership.organization_id)
         .subquery()
     )
     client_counts = (
@@ -73,14 +126,21 @@ async def list_admin_organizations(
         .group_by(Client.organization_id)
         .subquery()
     )
+    team_counts = (
+        select(Team.organization_id, func.count(Team.id).label("team_count"))
+        .group_by(Team.organization_id)
+        .subquery()
+    )
     query = (
         select(
             Organization,
-            func.coalesce(user_counts.c.user_count, 0).label("user_count"),
+            func.coalesce(member_counts.c.user_count, 0).label("user_count"),
             func.coalesce(client_counts.c.client_count, 0).label("client_count"),
+            func.coalesce(team_counts.c.team_count, 0).label("team_count"),
         )
-        .outerjoin(user_counts, user_counts.c.organization_id == Organization.id)
+        .outerjoin(member_counts, member_counts.c.organization_id == Organization.id)
         .outerjoin(client_counts, client_counts.c.organization_id == Organization.id)
+        .outerjoin(team_counts, team_counts.c.organization_id == Organization.id)
         .order_by(Organization.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -98,10 +158,11 @@ async def list_admin_organizations(
             is_active=organization.is_active,
             user_count=int(user_count or 0),
             client_count=int(client_count or 0),
+            team_count=int(team_count or 0),
             created_at=organization.created_at,
             updated_at=organization.updated_at,
         )
-        for organization, user_count, client_count in result.all()
+        for organization, user_count, client_count, team_count in result.all()
     ]
 
 
@@ -165,10 +226,16 @@ async def update_admin_organization(
         )
 
     user_count = await db.scalar(
-        select(func.count(User.id)).where(User.organization_id == organization.id)
+        select(func.count(distinct(Membership.user_id))).where(
+            Membership.organization_id == organization.id,
+            Membership.status == MembershipStatus.ACTIVE,
+        )
     )
     client_count = await db.scalar(
         select(func.count(Client.id)).where(Client.organization_id == organization.id)
+    )
+    team_count = await db.scalar(
+        select(func.count(Team.id)).where(Team.organization_id == organization.id)
     )
     return AdminOrganizationResponse(
         id=organization.id,
@@ -178,6 +245,7 @@ async def update_admin_organization(
         is_active=organization.is_active,
         user_count=int(user_count or 0),
         client_count=int(client_count or 0),
+        team_count=int(team_count or 0),
         created_at=organization.created_at,
         updated_at=organization.updated_at,
     )
@@ -193,14 +261,27 @@ async def list_admin_users(
     limit: int = Query(50, ge=1, le=200),
 ) -> List[AdminUserResponse]:
     """List users globally or for a specific organization."""
-    query = select(User).order_by(User.created_at.desc()).offset(skip).limit(limit)
+    query = (
+        select(User)
+        .options(
+            selectinload(User.memberships).selectinload(Membership.organization),
+            selectinload(User.memberships).selectinload(Membership.role),
+            selectinload(User.memberships).selectinload(Membership.teams),
+        )
+        .order_by(User.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
     if organization_id is not None:
-        query = query.where(User.organization_id == organization_id)
+        member_user_ids = select(Membership.user_id).where(
+            Membership.organization_id == organization_id
+        )
+        query = query.where(User.id.in_(member_user_ids))
     if is_active is not None:
         query = query.where(User.is_active == is_active)
 
     result = await db.execute(query)
-    return [AdminUserResponse.model_validate(user) for user in result.scalars().all()]
+    return [_admin_user_response(user) for user in result.scalars().unique().all()]
 
 
 @router.get("/clients", response_model=List[AdminClientResponse])
@@ -214,13 +295,37 @@ async def list_admin_clients(
 ) -> List[AdminClientResponse]:
     """List all business clients/carteiras across organizations."""
     wallet_counts = (
-        select(Wallet.client_id, func.count(Wallet.id).label("wallet_count"))
+        select(
+            Wallet.client_id,
+            func.count(Wallet.id).label("wallet_count"),
+            func.count(Wallet.id).filter(Wallet.is_active.is_(True)).label("active_wallet_count"),
+            func.max(Wallet.last_scan_at).label("last_wallet_scan_at"),
+        )
         .group_by(Wallet.client_id)
         .subquery()
     )
     exchange_counts = (
-        select(Exchange.client_id, func.count(Exchange.id).label("exchange_count"))
+        select(
+            Exchange.client_id,
+            func.count(Exchange.id).label("exchange_count"),
+            func.count(Exchange.id).filter(Exchange.is_active.is_(True)).label("active_exchange_count"),
+            func.count(Exchange.id).filter(Exchange.sync_error.is_not(None)).label("sync_error_count"),
+            func.max(Exchange.last_sync_at).label("last_exchange_sync_at"),
+        )
         .group_by(Exchange.client_id)
+        .subquery()
+    )
+    team_scope_counts = (
+        select(TeamClient.client_id, func.count(TeamClient.team_id).label("team_scope_count"))
+        .group_by(TeamClient.client_id)
+        .subquery()
+    )
+    membership_scope_counts = (
+        select(
+            MembershipClient.client_id,
+            func.count(MembershipClient.membership_id).label("membership_scope_count"),
+        )
+        .group_by(MembershipClient.client_id)
         .subquery()
     )
     query = (
@@ -228,11 +333,20 @@ async def list_admin_clients(
             Client,
             Organization.name.label("organization_name"),
             func.coalesce(wallet_counts.c.wallet_count, 0).label("wallet_count"),
+            func.coalesce(wallet_counts.c.active_wallet_count, 0).label("active_wallet_count"),
+            wallet_counts.c.last_wallet_scan_at.label("last_wallet_scan_at"),
             func.coalesce(exchange_counts.c.exchange_count, 0).label("exchange_count"),
+            func.coalesce(exchange_counts.c.active_exchange_count, 0).label("active_exchange_count"),
+            func.coalesce(exchange_counts.c.sync_error_count, 0).label("sync_error_count"),
+            exchange_counts.c.last_exchange_sync_at.label("last_exchange_sync_at"),
+            func.coalesce(team_scope_counts.c.team_scope_count, 0).label("team_scope_count"),
+            func.coalesce(membership_scope_counts.c.membership_scope_count, 0).label("membership_scope_count"),
         )
         .join(Organization, Organization.id == Client.organization_id)
         .outerjoin(wallet_counts, wallet_counts.c.client_id == Client.id)
         .outerjoin(exchange_counts, exchange_counts.c.client_id == Client.id)
+        .outerjoin(team_scope_counts, team_scope_counts.c.client_id == Client.id)
+        .outerjoin(membership_scope_counts, membership_scope_counts.c.client_id == Client.id)
         .order_by(Client.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -252,11 +366,30 @@ async def list_admin_clients(
             email=client.email,
             color=client.color,
             wallet_count=int(wallet_count or 0),
+            active_wallet_count=int(active_wallet_count or 0),
             exchange_count=int(exchange_count or 0),
+            active_exchange_count=int(active_exchange_count or 0),
+            sync_error_count=int(sync_error_count or 0),
+            team_scope_count=int(team_scope_count or 0),
+            membership_scope_count=int(membership_scope_count or 0),
+            last_wallet_scan_at=last_wallet_scan_at,
+            last_exchange_sync_at=last_exchange_sync_at,
             created_at=client.created_at,
             updated_at=client.updated_at,
         )
-        for client, organization_name, wallet_count, exchange_count in result.all()
+        for (
+            client,
+            organization_name,
+            wallet_count,
+            active_wallet_count,
+            last_wallet_scan_at,
+            exchange_count,
+            active_exchange_count,
+            sync_error_count,
+            last_exchange_sync_at,
+            team_scope_count,
+            membership_scope_count,
+        ) in result.all()
     ]
 
 
@@ -317,7 +450,16 @@ async def update_admin_user(
     request: Request,
 ) -> AdminUserResponse:
     """Update user platform flags and revoke sessions by bumping token version."""
-    result = await db.execute(select(User).where(User.id == user_id).with_for_update())
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.memberships).selectinload(Membership.organization),
+            selectinload(User.memberships).selectinload(Membership.role),
+            selectinload(User.memberships).selectinload(Membership.teams),
+        )
+        .where(User.id == user_id)
+        .with_for_update()
+    )
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(
@@ -358,4 +500,4 @@ async def update_admin_user(
             request=request,
         )
     await db.refresh(user)
-    return AdminUserResponse.model_validate(user)
+    return _admin_user_response(user)

@@ -312,8 +312,20 @@ interface AdminOrganization {
   is_active: boolean;
   user_count: number;
   client_count: number;
+  team_count: number;
   created_at: string;
   updated_at: string;
+}
+
+interface AdminUserMembership {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  role_name: string;
+  status: string;
+  client_access_mode: string;
+  team_count: number;
+  team_names: string[];
 }
 
 interface AdminUser {
@@ -328,6 +340,7 @@ interface AdminUser {
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
+  memberships: AdminUserMembership[];
 }
 
 interface AdminOverview {
@@ -350,7 +363,14 @@ interface AdminClient {
   email: string | null;
   color: string;
   wallet_count: number;
+  active_wallet_count: number;
   exchange_count: number;
+  active_exchange_count: number;
+  sync_error_count: number;
+  team_scope_count: number;
+  membership_scope_count: number;
+  last_wallet_scan_at: string | null;
+  last_exchange_sync_at: string | null;
   created_at: string;
   updated_at: string;
 }

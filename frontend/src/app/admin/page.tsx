@@ -80,6 +80,11 @@ function PlaceholderSection({ title, description }: { title: string; description
   );
 }
 
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return 'Nunca';
+  return new Date(value).toLocaleString('pt-BR');
+}
+
 export default function PlatformAdminPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: isAuthLoading, logout } = useAuth();
@@ -359,9 +364,11 @@ export default function PlatformAdminPage() {
                               </Badge>
                               <Badge variant="blue" size="sm">{organization.plan}</Badge>
                             </div>
-                            <p className="mt-1 text-caption text-text-muted">
-                              {organization.user_count} usuarios - {organization.client_count} clientes/carteiras
-                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2 text-caption text-text-muted">
+                              <span>{organization.user_count} membros ativos</span>
+                              <span>{organization.team_count} equipes</span>
+                              <span>{organization.client_count} clientes/carteiras</span>
+                            </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <Select
@@ -414,6 +421,34 @@ export default function PlatformAdminPage() {
                           {targetUser.is_superuser && <Badge variant="purple" size="sm">Superuser</Badge>}
                         </div>
                         <p className="mt-1 text-caption text-text-muted">{targetUser.email}</p>
+                        <div className="mt-3 space-y-2">
+                          {(targetUser.memberships || []).length > 0 ? (
+                            (targetUser.memberships || []).map((membership) => (
+                              <div
+                                key={membership.id}
+                                className="rounded-lg border border-border-subtle bg-background-primary/70 px-3 py-2"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant="blue" size="sm">{membership.organization_name}</Badge>
+                                  <Badge variant="default" size="sm">{membership.role_name}</Badge>
+                                  <Badge variant={membership.status === 'active' ? 'success' : 'yellow'} size="sm">
+                                    {membership.status}
+                                  </Badge>
+                                  <Badge variant="purple" size="sm">
+                                    {membership.client_access_mode === 'all' ? 'Todas as carteiras' : 'Escopo especifico'}
+                                  </Badge>
+                                </div>
+                                <p className="mt-1 text-caption text-text-tertiary">
+                                  {membership.team_count > 0
+                                    ? `Equipes: ${membership.team_names.join(', ')}`
+                                    : 'Sem equipe vinculada'}
+                                </p>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-caption text-status-warning">Usuario sem membership ativa em conta.</p>
+                          )}
+                        </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Button
@@ -450,17 +485,33 @@ export default function PlatformAdminPage() {
               <CardContent className="space-y-3">
                 {clients.map((client) => (
                   <div key={client.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
-                    <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div className="flex items-center gap-3">
                         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: client.color }} />
                         <div>
                           <p className="text-heading-sm text-text-primary">{client.name}</p>
-                          <p className="text-caption text-text-muted">{client.organization_name}</p>
+                          <p className="text-caption text-text-muted">
+                            Conta: {client.organization_name}
+                            {client.email ? ` - ${client.email}` : ''}
+                          </p>
+                          <div className="mt-3 grid gap-2 text-caption text-text-tertiary sm:grid-cols-2">
+                            <span>Ultimo scan de wallet: {formatDateTime(client.last_wallet_scan_at)}</span>
+                            <span>Ultimo sync de exchange: {formatDateTime(client.last_exchange_sync_at)}</span>
+                            <span>Escopo por equipes: {client.team_scope_count}</span>
+                            <span>Escopo direto por membros: {client.membership_scope_count}</span>
+                          </div>
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <Badge variant="blue" size="sm">{client.wallet_count} wallets</Badge>
-                        <Badge variant="purple" size="sm">{client.exchange_count} exchanges</Badge>
+                        <Badge variant="blue" size="sm">
+                          {client.active_wallet_count}/{client.wallet_count} wallets ativas
+                        </Badge>
+                        <Badge variant="purple" size="sm">
+                          {client.active_exchange_count}/{client.exchange_count} exchanges ativas
+                        </Badge>
+                        {client.sync_error_count > 0 && (
+                          <Badge variant="error" size="sm">{client.sync_error_count} erros de sync</Badge>
+                        )}
                       </div>
                     </div>
                   </div>

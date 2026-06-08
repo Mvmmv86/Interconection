@@ -4,8 +4,6 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import EmailStr
-
 from app.models.organization import PlanType
 from app.models.user import UserRole
 from app.schemas.common import BaseSchema
@@ -21,6 +19,7 @@ class AdminOrganizationResponse(BaseSchema):
     is_active: bool
     user_count: int = 0
     client_count: int = 0
+    team_count: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -46,12 +45,25 @@ class AdminOverviewResponse(BaseSchema):
     plan_count: int = 3
 
 
+class AdminUserMembershipResponse(BaseSchema):
+    """Membership summary for a user in the platform admin."""
+
+    id: UUID
+    organization_id: UUID
+    organization_name: str
+    role_name: str
+    status: str
+    client_access_mode: str
+    team_count: int = 0
+    team_names: list[str] = []
+
+
 class AdminUserResponse(BaseSchema):
     """User row shown in platform administration."""
 
     id: UUID
     organization_id: Optional[UUID] = None
-    email: EmailStr
+    email: str
     name: str
     role: UserRole
     is_active: bool
@@ -60,6 +72,7 @@ class AdminUserResponse(BaseSchema):
     created_at: datetime
     updated_at: datetime
     last_login_at: Optional[datetime] = None
+    memberships: list[AdminUserMembershipResponse] = []
 
 
 class AdminUserUpdate(BaseSchema):
@@ -76,10 +89,17 @@ class AdminClientResponse(BaseSchema):
     organization_id: UUID
     organization_name: str
     name: str
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     color: str
     wallet_count: int = 0
+    active_wallet_count: int = 0
     exchange_count: int = 0
+    active_exchange_count: int = 0
+    sync_error_count: int = 0
+    team_scope_count: int = 0
+    membership_scope_count: int = 0
+    last_wallet_scan_at: Optional[datetime] = None
+    last_exchange_sync_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -91,7 +111,7 @@ class AdminAuditLogResponse(BaseSchema):
     organization_id: UUID
     organization_name: Optional[str] = None
     user_id: Optional[UUID] = None
-    user_email: Optional[EmailStr] = None
+    user_email: Optional[str] = None
     action: str
     resource_type: str
     resource_id: Optional[UUID] = None
