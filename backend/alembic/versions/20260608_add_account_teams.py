@@ -147,6 +147,22 @@ def upgrade() -> None:
                 },
             )
 
+    connection.execute(
+        sa.text(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'connectcoin_app') THEN
+                    GRANT SELECT, INSERT, UPDATE, DELETE ON teams TO connectcoin_app;
+                    GRANT SELECT, INSERT, UPDATE, DELETE ON team_members TO connectcoin_app;
+                    GRANT SELECT, INSERT, UPDATE, DELETE ON team_clients TO connectcoin_app;
+                    GRANT USAGE ON TYPE teamstatus TO connectcoin_app;
+                END IF;
+            END $$;
+            """
+        )
+    )
+
 
 def downgrade() -> None:
     context = op.get_context()
