@@ -45,9 +45,9 @@ type AdminTab =
 
 const tabs: Array<{ id: AdminTab; label: string; icon: React.ElementType }> = [
   { id: 'overview', label: 'Dashboard', icon: Activity },
-  { id: 'accounts', label: 'Contas', icon: Building2 },
+  { id: 'accounts', label: 'Clientes', icon: Building2 },
   { id: 'users', label: 'Usuarios', icon: Users },
-  { id: 'clients', label: 'Clientes', icon: Layers3 },
+  { id: 'clients', label: 'Carteiras', icon: Layers3 },
   { id: 'strategies', label: 'Estrategias', icon: LineChart },
   { id: 'bots', label: 'Bots', icon: Bot },
   { id: 'finance', label: 'Financeiro', icon: CreditCard },
@@ -100,7 +100,7 @@ export default function PlatformAdminPage() {
 
   const organizationOptions = useMemo(
     () => [
-      { value: '', label: 'Todas as contas' },
+      { value: '', label: 'Todos os clientes' },
       ...organizations.map((organization) => ({
         value: organization.id,
         label: organization.name,
@@ -281,7 +281,7 @@ export default function PlatformAdminPage() {
               <p className="text-overline uppercase tracking-[0.22em] text-text-muted">Platform</p>
               <h2 className="mt-1 text-heading-lg text-text-primary">Admin Console</h2>
               <p className="mt-1 text-body-sm text-text-secondary">
-                Contas, usuarios, clientes, auditoria e modulos operacionais da plataforma.
+                Clientes da plataforma, usuarios, carteiras, auditoria e modulos operacionais.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -329,9 +329,9 @@ export default function PlatformAdminPage() {
           {activeTab === 'overview' && (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {[
-                ['Contas', overview.organization_count, `${overview.active_organization_count} ativas`],
+                ['Clientes', overview.organization_count, `${overview.active_organization_count} ativos`],
                 ['Usuarios', overview.user_count, `${overview.active_user_count} ativos`],
-                ['Clientes', overview.client_count, 'carteiras/clientes de negocio'],
+                ['Carteiras', overview.client_count, 'portfolios gerenciados pelos clientes'],
                 ['Auditoria', overview.audit_event_count, 'eventos registrados'],
               ].map(([label, value, caption]) => (
                 <Card key={label} variant="glass" className="p-5">
@@ -346,7 +346,7 @@ export default function PlatformAdminPage() {
           {activeTab === 'accounts' && (
             <Card variant="glass">
               <CardHeader>
-                <CardTitle>Contas da plataforma</CardTitle>
+                <CardTitle>Clientes da plataforma</CardTitle>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
@@ -367,7 +367,7 @@ export default function PlatformAdminPage() {
                             <div className="mt-2 flex flex-wrap gap-2 text-caption text-text-muted">
                               <span>{organization.user_count} membros ativos</span>
                               <span>{organization.team_count} equipes</span>
-                              <span>{organization.client_count} clientes/carteiras</span>
+                              <span>{organization.client_count} carteiras/portfolios</span>
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
@@ -480,7 +480,7 @@ export default function PlatformAdminPage() {
           {activeTab === 'clients' && (
             <Card variant="glass">
               <CardHeader>
-                <CardTitle>Clientes e carteiras</CardTitle>
+                <CardTitle>Carteiras e portfolios</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 {clients.map((client) => (
@@ -491,7 +491,7 @@ export default function PlatformAdminPage() {
                         <div>
                           <p className="text-heading-sm text-text-primary">{client.name}</p>
                           <p className="text-caption text-text-muted">
-                            Conta: {client.organization_name}
+                            Cliente da plataforma: {client.organization_name}
                             {client.email ? ` - ${client.email}` : ''}
                           </p>
                           <div className="mt-3 grid gap-2 text-caption text-text-tertiary sm:grid-cols-2">
