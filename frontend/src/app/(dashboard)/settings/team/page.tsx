@@ -841,7 +841,7 @@ export default function TeamSettingsPage() {
             </CardTitle>
             <p className="mt-1 text-caption text-text-tertiary">
               Configure papel, status e escopo de carteiras por pessoa. Para limitar acesso,
-              escolha "Carteiras especificas" e marque as carteiras permitidas.
+              escolha &quot;Carteiras especificas&quot; e marque as carteiras permitidas.
             </p>
           </div>
         </CardHeader>
