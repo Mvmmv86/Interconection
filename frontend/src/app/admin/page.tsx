@@ -286,7 +286,7 @@ export default function PlatformAdminPage() {
       const matchesQuery = !query
         || indicator.name.toLowerCase().includes(query)
         || indicator.key.toLowerCase().includes(query)
-        || indicator.description.toLowerCase().includes(query)
+        || (indicator.description || '').toLowerCase().includes(query)
         || (indicatorCategoryLabels[indicator.category] || indicator.category).toLowerCase().includes(query);
       return matchesCategory && matchesQuery;
     });
@@ -1383,7 +1383,7 @@ export default function PlatformAdminPage() {
                                   ].join(' ')} />
                                 </span>
                                 <span className="block truncate text-body-sm font-semibold text-text-primary">{indicator.name}</span>
-                                <span className="mt-1 block truncate text-caption text-text-muted">{indicator.description}</span>
+                                <span className="mt-1 block truncate text-caption text-text-muted">{indicator.description || 'Sem descricao cadastrada.'}</span>
                                 <span className="mt-2 flex flex-wrap gap-1">
                                   {outputs.map((output) => (
                                     <span key={output} className="rounded-md bg-background-secondary px-1.5 py-0.5 text-[10px] text-text-secondary">
@@ -1396,7 +1396,7 @@ export default function PlatformAdminPage() {
                                 </span>
                                 <span className="mt-2 hidden rounded-lg border border-border-subtle bg-background-secondary/70 p-2 text-caption text-text-secondary group-hover:block">
                                   <span className="mb-1 block font-semibold text-text-primary">{indicator.key}</span>
-                                  <span className="block">{indicator.description}</span>
+                                  <span className="block">{indicator.description || 'Sem descricao cadastrada.'}</span>
                                   <span className="mt-2 block text-text-muted">
                                     Saidas: {outputs.join(', ') || 'value'} · Parametros: {parameterCount}
                                   </span>
