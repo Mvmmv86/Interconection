@@ -227,13 +227,20 @@ export default function PlatformAdminPage() {
     timeframes: '1h, 4h, 1d',
     exchanges: 'binance, bybit',
     selectedIndicators: [] as string[],
+    indicatorParameters: {} as Record<string, Record<string, string>>,
     entryIndicator: '',
     entryOutput: 'value',
     entryOperator: 'greater_than',
+    entryRightMode: 'value',
+    entryCompareIndicator: '',
+    entryCompareOutput: 'value',
     entryValue: '0',
     exitIndicator: '',
     exitOutput: 'value',
     exitOperator: 'less_than',
+    exitRightMode: 'value',
+    exitCompareIndicator: '',
+    exitCompareOutput: 'value',
     exitValue: '0',
     maxOrderUsd: '100',
     maxPositionUsd: '1000',
@@ -504,10 +511,33 @@ export default function PlatformAdminPage() {
     }
     const entryIndicatorConfig = entryIndicator || selectedStrategyIndicators[0];
     const exitIndicatorConfig = exitIndicator || entryIndicatorConfig;
+    const entryCompareIndicatorConfig = botIndicators.find((indicator) => indicator.key === botStrategyForm.entryCompareIndicator);
+    const exitCompareIndicatorConfig = botIndicators.find((indicator) => indicator.key === botStrategyForm.exitCompareIndicator);
     if (!entryIndicatorConfig || !exitIndicatorConfig) {
       setError('Configure indicadores validos para entrada e saida');
       return;
     }
+    if (botStrategyForm.entryRightMode === 'indicator' && !entryCompareIndicatorConfig) {
+      setError('Configure o indicador de comparacao da entrada');
+      return;
+    }
+    if (botStrategyForm.exitRightMode === 'indicator' && !exitCompareIndicatorConfig) {
+      setError('Configure o indicador de comparacao da saida');
+      return;
+    }
+    const resolveIndicatorParameters = (indicator: BotIndicator) => {
+      const defaults = getDefaultIndicatorParameters(indicator);
+      const overrides = botStrategyForm.indicatorParameters[indicator.key] || {};
+      return Object.entries({ ...defaults, ...overrides }).reduce<Record<string, unknown>>((acc, [key, value]) => {
+        if (typeof value === 'string') {
+          const parsed = Number.parseFloat(value.replace(',', '.'));
+          acc[key] = Number.isFinite(parsed) && value.trim() !== '' ? parsed : value;
+          return acc;
+        }
+        acc[key] = value;
+        return acc;
+      }, {});
+    };
     const result = await api.createAdminBotStrategy({
       name,
       slug,
@@ -526,7 +556,7 @@ export default function PlatformAdminPage() {
           key: indicator.key,
           name: indicator.name,
           category: indicator.category,
-          parameters: getDefaultIndicatorParameters(indicator),
+          parameters: resolveIndicatorParameters(indicator),
           outputs: getIndicatorOutputs(indicator),
         })),
       },
@@ -540,7 +570,14 @@ export default function PlatformAdminPage() {
               indicator: entryIndicatorConfig.key,
               output: botStrategyForm.entryOutput || getIndicatorOutputs(entryIndicatorConfig)[0],
               operator: botStrategyForm.entryOperator,
-              value: parseNumber(botStrategyForm.entryValue, 0),
+              right_type: botStrategyForm.entryRightMode,
+              value: botStrategyForm.entryRightMode === 'value' ? parseNumber(botStrategyForm.entryValue, 0) : null,
+              compare_to: botStrategyForm.entryRightMode === 'indicator' && entryCompareIndicatorConfig
+                ? {
+                  indicator: entryCompareIndicatorConfig.key,
+                  output: botStrategyForm.entryCompareOutput || getIndicatorOutputs(entryCompareIndicatorConfig)[0],
+                }
+                : null,
             },
           ],
         },
@@ -551,7 +588,14 @@ export default function PlatformAdminPage() {
               indicator: exitIndicatorConfig.key,
               output: botStrategyForm.exitOutput || getIndicatorOutputs(exitIndicatorConfig)[0],
               operator: botStrategyForm.exitOperator,
-              value: parseNumber(botStrategyForm.exitValue, 0),
+              right_type: botStrategyForm.exitRightMode,
+              value: botStrategyForm.exitRightMode === 'value' ? parseNumber(botStrategyForm.exitValue, 0) : null,
+              compare_to: botStrategyForm.exitRightMode === 'indicator' && exitCompareIndicatorConfig
+                ? {
+                  indicator: exitCompareIndicatorConfig.key,
+                  output: botStrategyForm.exitCompareOutput || getIndicatorOutputs(exitCompareIndicatorConfig)[0],
+                }
+                : null,
             },
           ],
         },
@@ -582,13 +626,20 @@ export default function PlatformAdminPage() {
       timeframes: '1h, 4h, 1d',
       exchanges: 'binance, bybit',
       selectedIndicators: [],
+      indicatorParameters: {},
       entryIndicator: '',
       entryOutput: 'value',
       entryOperator: 'greater_than',
+      entryRightMode: 'value',
+      entryCompareIndicator: '',
+      entryCompareOutput: 'value',
       entryValue: '0',
       exitIndicator: '',
       exitOutput: 'value',
       exitOperator: 'less_than',
+      exitRightMode: 'value',
+      exitCompareIndicator: '',
+      exitCompareOutput: 'value',
       exitValue: '0',
       maxOrderUsd: '100',
       maxPositionUsd: '1000',
@@ -1424,6 +1475,9 @@ export default function PlatformAdminPage() {
                                 onClick={() => setBotStrategyForm((current) => ({
                                   ...current,
                                   selectedIndicators: current.selectedIndicators.filter((key) => key !== indicator.key),
+                                  indicatorParameters: Object.fromEntries(
+                                    Object.entries(current.indicatorParameters).filter(([key]) => key !== indicator.key)
+                                  ),
                                 }))}
                                 className="rounded-full border border-accent-purple/20 bg-accent-purple/10 px-2.5 py-1 text-caption font-medium text-accent-purple transition hover:border-accent-purple hover:bg-accent-purple/15"
                                 title="Remover indicador"
@@ -1448,6 +1502,14 @@ export default function PlatformAdminPage() {
                                   selectedIndicators: checked
                                     ? current.selectedIndicators.filter((key) => key !== indicator.key)
                                     : Array.from(new Set([...current.selectedIndicators, indicator.key])),
+                                  indicatorParameters: checked
+                                    ? Object.fromEntries(Object.entries(current.indicatorParameters).filter(([key]) => key !== indicator.key))
+                                    : {
+                                      ...current.indicatorParameters,
+                                      [indicator.key]: Object.fromEntries(
+                                        Object.entries(getDefaultIndicatorParameters(indicator)).map(([key, value]) => [key, String(value)])
+                                      ),
+                                    },
                                 }))}
                                 className={[
                                   'group relative rounded-xl border p-3 text-left transition duration-150 hover:-translate-y-0.5 hover:shadow-md',
@@ -1494,6 +1556,76 @@ export default function PlatformAdminPage() {
                             Nenhum indicador encontrado para esse filtro.
                           </div>
                         )}
+
+                        {selectedStrategyIndicators.length > 0 && (
+                          <div className="mt-4 rounded-xl border border-border-subtle bg-background-primary/70 p-4">
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-body-sm font-semibold text-text-primary">Indicadores configurados</p>
+                                <p className="text-caption text-text-muted">Ajuste os parametros que serao salvos na estrategia.</p>
+                              </div>
+                              <Badge variant="blue" size="sm">{selectedStrategyIndicators.length} ativos</Badge>
+                            </div>
+                            <div className="grid gap-3 lg:grid-cols-2">
+                              {selectedStrategyIndicators.map((indicator) => {
+                                const parameterEntries = Object.entries(indicator.parameter_schema || {});
+                                return (
+                                  <div key={indicator.key} className="rounded-lg border border-border-subtle bg-background-secondary/60 p-3">
+                                    <div className="mb-3 flex items-start justify-between gap-3">
+                                      <div>
+                                        <p className="text-body-sm font-semibold text-text-primary">{indicator.name}</p>
+                                        <p className="text-caption text-text-muted">{indicator.key}</p>
+                                      </div>
+                                      <span className="rounded-full bg-accent-purple/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-accent-purple">
+                                        {indicatorCategoryLabels[indicator.category] || indicator.category}
+                                      </span>
+                                    </div>
+                                    {parameterEntries.length > 0 ? (
+                                      <div className="grid gap-2 sm:grid-cols-2">
+                                        {parameterEntries.map(([paramKey, schema]) => {
+                                          const schemaObject = schema && typeof schema === 'object' ? schema as Record<string, unknown> : {};
+                                          const value = botStrategyForm.indicatorParameters[indicator.key]?.[paramKey]
+                                            ?? String(schemaObject.default ?? '');
+                                          return (
+                                            <div key={paramKey}>
+                                              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-text-muted">
+                                                {paramKey}
+                                              </label>
+                                              <input
+                                                value={value}
+                                                onChange={(event) => setBotStrategyForm((current) => ({
+                                                  ...current,
+                                                  indicatorParameters: {
+                                                    ...current.indicatorParameters,
+                                                    [indicator.key]: {
+                                                      ...(current.indicatorParameters[indicator.key] || {}),
+                                                      [paramKey]: event.target.value,
+                                                    },
+                                                  },
+                                                }))}
+                                                placeholder={String(schemaObject.default ?? '')}
+                                                className="h-9 w-full rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+                                              />
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <p className="text-caption text-text-muted">Sem parametros configuraveis.</p>
+                                    )}
+                                    <div className="mt-3 flex flex-wrap gap-1">
+                                      {getIndicatorOutputs(indicator).map((output) => (
+                                        <span key={output} className="rounded-md bg-background-primary px-1.5 py-0.5 text-[10px] text-text-secondary">
+                                          {output}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </section>
 
                       <section className={[
@@ -1501,100 +1633,158 @@ export default function PlatformAdminPage() {
                         strategyBuilderTab !== 'rules' ? 'hidden' : '',
                       ].join(' ')}>
                         <p className="text-heading-sm text-text-primary">4. Regras e condicoes</p>
-                        <p className="mb-3 text-caption text-text-muted">Monte a primeira condicao de entrada e saida. Na proxima evolucao vamos permitir grupos AND/OR multiplos.</p>
-                        <div className="grid gap-4 lg:grid-cols-2">
-                          <div className="rounded-xl border border-border-subtle bg-background-primary/70 p-3">
-                            <p className="mb-3 text-body-sm font-semibold text-text-primary">Entrada</p>
-                            <div className="grid gap-3 md:grid-cols-2">
-                              <Select
-                                value={botStrategyForm.entryIndicator}
-                                options={[{ value: '', label: 'Indicador de entrada' }, ...selectedIndicatorOptions]}
-                                onChange={(event) => {
-                                  const indicator = botIndicators.find((item) => item.key === event.target.value);
-                                  setBotStrategyForm((current) => ({
-                                    ...current,
-                                    entryIndicator: event.target.value,
-                                    entryOutput: getIndicatorOutputs(indicator)[0] || 'value',
-                                  }));
-                                }}
-                                className="h-10 py-0 text-body-sm"
-                              />
-                              <Select
-                                value={botStrategyForm.entryOutput}
-                                options={getIndicatorOutputs(entryIndicator).map((output) => ({ value: output, label: output }))}
-                                onChange={(event) => setBotStrategyForm((current) => ({
-                                  ...current,
-                                  entryOutput: event.target.value,
-                                }))}
-                                className="h-10 py-0 text-body-sm"
-                              />
-                              <Select
-                                value={botStrategyForm.entryOperator}
-                                options={strategyOperatorOptions}
-                                onChange={(event) => setBotStrategyForm((current) => ({
-                                  ...current,
-                                  entryOperator: event.target.value,
-                                }))}
-                                className="h-10 py-0 text-body-sm"
-                              />
-                              <input
-                                value={botStrategyForm.entryValue}
-                                onChange={(event) => setBotStrategyForm((current) => ({
-                                  ...current,
-                                  entryValue: event.target.value,
-                                }))}
-                                placeholder="Valor"
-                                className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                              />
-                            </div>
+                        <p className="mb-3 text-caption text-text-muted">
+                          As condicoes usam apenas os indicadores selecionados na aba anterior. Ex: RSI.value maior que 70, EMA.value cruza acima de SMA.value.
+                        </p>
+                        {selectedStrategyIndicators.length === 0 ? (
+                          <div className="rounded-xl border border-status-warning/30 bg-status-warning/10 p-4 text-body-sm text-text-secondary">
+                            Adicione pelo menos um indicador antes de montar as regras de entrada e saida.
                           </div>
-
-                          <div className="rounded-xl border border-border-subtle bg-background-primary/70 p-3">
-                            <p className="mb-3 text-body-sm font-semibold text-text-primary">Saida</p>
-                            <div className="grid gap-3 md:grid-cols-2">
-                              <Select
-                                value={botStrategyForm.exitIndicator}
-                                options={[{ value: '', label: 'Indicador de saida' }, ...selectedIndicatorOptions]}
-                                onChange={(event) => {
-                                  const indicator = botIndicators.find((item) => item.key === event.target.value);
-                                  setBotStrategyForm((current) => ({
-                                    ...current,
-                                    exitIndicator: event.target.value,
-                                    exitOutput: getIndicatorOutputs(indicator)[0] || 'value',
-                                  }));
-                                }}
-                                className="h-10 py-0 text-body-sm"
-                              />
-                              <Select
-                                value={botStrategyForm.exitOutput}
-                                options={getIndicatorOutputs(exitIndicator).map((output) => ({ value: output, label: output }))}
-                                onChange={(event) => setBotStrategyForm((current) => ({
-                                  ...current,
-                                  exitOutput: event.target.value,
-                                }))}
-                                className="h-10 py-0 text-body-sm"
-                              />
-                              <Select
-                                value={botStrategyForm.exitOperator}
-                                options={strategyOperatorOptions}
-                                onChange={(event) => setBotStrategyForm((current) => ({
-                                  ...current,
-                                  exitOperator: event.target.value,
-                                }))}
-                                className="h-10 py-0 text-body-sm"
-                              />
-                              <input
-                                value={botStrategyForm.exitValue}
-                                onChange={(event) => setBotStrategyForm((current) => ({
-                                  ...current,
-                                  exitValue: event.target.value,
-                                }))}
-                                placeholder="Valor"
-                                className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                              />
-                            </div>
+                        ) : (
+                          <div className="grid gap-4 lg:grid-cols-2">
+                            {[
+                              {
+                                title: 'Entrada',
+                                caption: 'Quando essa condicao for verdadeira, o motor gera sinal de compra/entrada.',
+                                side: 'entry',
+                                indicator: botStrategyForm.entryIndicator,
+                                output: botStrategyForm.entryOutput,
+                                operator: botStrategyForm.entryOperator,
+                                rightMode: botStrategyForm.entryRightMode,
+                                compareIndicator: botStrategyForm.entryCompareIndicator,
+                                compareOutput: botStrategyForm.entryCompareOutput,
+                                value: botStrategyForm.entryValue,
+                              },
+                              {
+                                title: 'Saida',
+                                caption: 'Quando essa condicao for verdadeira, o motor gera sinal de venda/saida.',
+                                side: 'exit',
+                                indicator: botStrategyForm.exitIndicator,
+                                output: botStrategyForm.exitOutput,
+                                operator: botStrategyForm.exitOperator,
+                                rightMode: botStrategyForm.exitRightMode,
+                                compareIndicator: botStrategyForm.exitCompareIndicator,
+                                compareOutput: botStrategyForm.exitCompareOutput,
+                                value: botStrategyForm.exitValue,
+                              },
+                            ].map((rule) => {
+                              const leftIndicator = botIndicators.find((item) => item.key === rule.indicator);
+                              const rightIndicator = botIndicators.find((item) => item.key === rule.compareIndicator);
+                              const prefix = rule.side === 'entry' ? 'entry' : 'exit';
+                              return (
+                                <div key={rule.side} className="rounded-xl border border-border-subtle bg-background-primary/80 p-4">
+                                  <div className="mb-3">
+                                    <p className="text-body-sm font-semibold text-text-primary">{rule.title}</p>
+                                    <p className="text-caption text-text-muted">{rule.caption}</p>
+                                  </div>
+                                  <div className="space-y-3">
+                                    <div className="grid gap-2 md:grid-cols-[1.1fr_0.8fr]">
+                                      <div>
+                                        <InfoLabel label="Indicador" info="Escolha um dos indicadores adicionados na estrategia." />
+                                        <Select
+                                          value={rule.indicator}
+                                          options={[{ value: '', label: `Indicador de ${rule.title.toLowerCase()}` }, ...selectedIndicatorOptions]}
+                                          onChange={(event) => {
+                                            const indicator = botIndicators.find((item) => item.key === event.target.value);
+                                            setBotStrategyForm((current) => ({
+                                              ...current,
+                                              [`${prefix}Indicator`]: event.target.value,
+                                              [`${prefix}Output`]: getIndicatorOutputs(indicator)[0] || 'value',
+                                            }));
+                                          }}
+                                          className="h-10 py-0 text-body-sm"
+                                        />
+                                      </div>
+                                      <div>
+                                        <InfoLabel label="Saida do indicador" info="Campo calculado pelo indicador escolhido. Ex: value, upper, lower, signal, histogram." />
+                                        <Select
+                                          value={rule.output}
+                                          options={getIndicatorOutputs(leftIndicator).map((output) => ({ value: output, label: output }))}
+                                          onChange={(event) => setBotStrategyForm((current) => ({
+                                            ...current,
+                                            [`${prefix}Output`]: event.target.value,
+                                          }))}
+                                          className="h-10 py-0 text-body-sm"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="grid gap-2 md:grid-cols-[0.8fr_0.7fr_1fr]">
+                                      <div>
+                                        <InfoLabel label="Operador" info="Como comparar o lado esquerdo com o lado direito." />
+                                        <Select
+                                          value={rule.operator}
+                                          options={strategyOperatorOptions}
+                                          onChange={(event) => setBotStrategyForm((current) => ({
+                                            ...current,
+                                            [`${prefix}Operator`]: event.target.value,
+                                          }))}
+                                          className="h-10 py-0 text-body-sm"
+                                        />
+                                      </div>
+                                      <div>
+                                        <InfoLabel label="Comparar com" info="Use valor fixo ou compare com outro indicador selecionado." />
+                                        <Select
+                                          value={rule.rightMode}
+                                          options={[
+                                            { value: 'value', label: 'Valor fixo' },
+                                            { value: 'indicator', label: 'Outro indicador' },
+                                          ]}
+                                          onChange={(event) => setBotStrategyForm((current) => ({
+                                            ...current,
+                                            [`${prefix}RightMode`]: event.target.value,
+                                          }))}
+                                          className="h-10 py-0 text-body-sm"
+                                        />
+                                      </div>
+                                      {rule.rightMode === 'indicator' ? (
+                                        <div className="grid gap-2 sm:grid-cols-2">
+                                          <Select
+                                            value={rule.compareIndicator}
+                                            options={[{ value: '', label: 'Indicador comparado' }, ...selectedIndicatorOptions]}
+                                            onChange={(event) => {
+                                              const indicator = botIndicators.find((item) => item.key === event.target.value);
+                                              setBotStrategyForm((current) => ({
+                                                ...current,
+                                                [`${prefix}CompareIndicator`]: event.target.value,
+                                                [`${prefix}CompareOutput`]: getIndicatorOutputs(indicator)[0] || 'value',
+                                              }));
+                                            }}
+                                            className="h-10 py-0 text-body-sm"
+                                          />
+                                          <Select
+                                            value={rule.compareOutput}
+                                            options={getIndicatorOutputs(rightIndicator).map((output) => ({ value: output, label: output }))}
+                                            onChange={(event) => setBotStrategyForm((current) => ({
+                                              ...current,
+                                              [`${prefix}CompareOutput`]: event.target.value,
+                                            }))}
+                                            className="h-10 py-0 text-body-sm"
+                                          />
+                                        </div>
+                                      ) : (
+                                        <input
+                                          value={rule.value}
+                                          onChange={(event) => setBotStrategyForm((current) => ({
+                                            ...current,
+                                            [`${prefix}Value`]: event.target.value,
+                                          }))}
+                                          placeholder="Ex: 70"
+                                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                                        />
+                                      )}
+                                    </div>
+                                    <div className="rounded-lg border border-border-subtle bg-background-secondary/70 px-3 py-2 text-caption text-text-secondary">
+                                      SE {leftIndicator?.name || 'indicador'} . {rule.output || 'value'} {strategyOperatorOptions.find((item) => item.value === rule.operator)?.label || rule.operator}{' '}
+                                      {rule.rightMode === 'indicator'
+                                        ? `${rightIndicator?.name || 'outro indicador'} . ${rule.compareOutput || 'value'}`
+                                        : rule.value || '0'}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        </div>
+                        )}
                       </section>
 
                       <section className={[
