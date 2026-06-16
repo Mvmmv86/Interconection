@@ -250,6 +250,8 @@ export default function PlatformAdminPage() {
     symbol: 'BTC',
     initialCapital: '10000',
   });
+  const [indicatorSearch, setIndicatorSearch] = useState('');
+  const [indicatorCategoryFilter, setIndicatorCategoryFilter] = useState('all');
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -271,6 +273,24 @@ export default function PlatformAdminPage() {
       return acc;
     }, {});
   }, [botIndicators]);
+
+  const indicatorCategories = useMemo(
+    () => Object.keys(indicatorsByCategory).sort((a, b) => a.localeCompare(b)),
+    [indicatorsByCategory]
+  );
+
+  const filteredIndicators = useMemo(() => {
+    const query = indicatorSearch.trim().toLowerCase();
+    return botIndicators.filter((indicator) => {
+      const matchesCategory = indicatorCategoryFilter === 'all' || indicator.category === indicatorCategoryFilter;
+      const matchesQuery = !query
+        || indicator.name.toLowerCase().includes(query)
+        || indicator.key.toLowerCase().includes(query)
+        || indicator.description.toLowerCase().includes(query)
+        || (indicatorCategoryLabels[indicator.category] || indicator.category).toLowerCase().includes(query);
+      return matchesCategory && matchesQuery;
+    });
+  }, [botIndicators, indicatorCategoryFilter, indicatorSearch]);
 
   const selectedStrategyIndicators = useMemo(
     () => botIndicators.filter((indicator) => botStrategyForm.selectedIndicators.includes(indicator.key)),
@@ -1279,42 +1299,118 @@ export default function PlatformAdminPage() {
                         </div>
                       </section>
 
-                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
-                        <p className="text-heading-sm text-text-primary">3. Indicadores usados</p>
-                        <p className="mb-3 text-caption text-text-muted">Escolha as pecas tecnicas que a estrategia vai usar. Os parametros default vem do catalogo.</p>
-                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                          {Object.entries(indicatorsByCategory).map(([category, indicators]) => (
-                            <div key={category} className="rounded-xl border border-border-subtle bg-background-primary/70 p-3">
-                              <p className="mb-2 text-caption font-semibold uppercase tracking-[0.14em] text-text-muted">
-                                {indicatorCategoryLabels[category] || category}
-                              </p>
-                              <div className="space-y-2">
-                                {indicators.map((indicator) => {
-                                  const checked = botStrategyForm.selectedIndicators.includes(indicator.key);
-                                  return (
-                                    <label key={indicator.id} className="flex cursor-pointer items-start gap-2 rounded-lg p-2 hover:bg-background-secondary">
-                                      <input
-                                        type="checkbox"
-                                        checked={checked}
-                                        onChange={(event) => setBotStrategyForm((current) => ({
-                                          ...current,
-                                          selectedIndicators: event.target.checked
-                                            ? Array.from(new Set([...current.selectedIndicators, indicator.key]))
-                                            : current.selectedIndicators.filter((key) => key !== indicator.key),
-                                        }))}
-                                        className="mt-1"
-                                      />
-                                      <span>
-                                        <span className="block text-body-sm font-medium text-text-primary">{indicator.name}</span>
-                                        <span className="block text-caption text-text-muted">{indicator.description}</span>
-                                      </span>
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ))}
+                      <section className="rounded-2xl border border-accent-blue/15 bg-gradient-to-br from-background-secondary/80 via-background-primary to-background-secondary/40 p-4 shadow-sm">
+                        <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                          <div>
+                            <p className="text-heading-sm text-text-primary">3. Indicadores usados</p>
+                            <p className="text-caption text-text-muted">
+                              Busque, filtre e clique nos sinais tecnicos. Passe o mouse para ver parametros e saidas.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              value={indicatorSearch}
+                              onChange={(event) => setIndicatorSearch(event.target.value)}
+                              placeholder="Buscar RSI, EMA, volume..."
+                              className="h-9 w-64 rounded-lg border border-border-subtle bg-background-primary/90 px-3 text-caption text-text-primary outline-none transition focus:border-accent-blue"
+                            />
+                            <Select
+                              value={indicatorCategoryFilter}
+                              options={[
+                                { value: 'all', label: 'Todas categorias' },
+                                ...indicatorCategories.map((category) => ({
+                                  value: category,
+                                  label: indicatorCategoryLabels[category] || category,
+                                })),
+                              ]}
+                              onChange={(event) => setIndicatorCategoryFilter(event.target.value)}
+                              className="h-9 w-48 py-0 text-caption"
+                            />
+                            <span className="rounded-full border border-accent-blue/20 bg-accent-blue/5 px-3 py-1 text-caption font-medium text-accent-blue">
+                              {botStrategyForm.selectedIndicators.length} selecionados
+                            </span>
+                          </div>
                         </div>
+
+                        {selectedStrategyIndicators.length > 0 && (
+                          <div className="mb-3 flex flex-wrap gap-1.5">
+                            {selectedStrategyIndicators.map((indicator) => (
+                              <button
+                                key={indicator.key}
+                                type="button"
+                                onClick={() => setBotStrategyForm((current) => ({
+                                  ...current,
+                                  selectedIndicators: current.selectedIndicators.filter((key) => key !== indicator.key),
+                                }))}
+                                className="rounded-full border border-accent-purple/20 bg-accent-purple/10 px-2.5 py-1 text-caption font-medium text-accent-purple transition hover:border-accent-purple hover:bg-accent-purple/15"
+                                title="Remover indicador"
+                              >
+                                {indicator.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="grid max-h-80 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                          {filteredIndicators.map((indicator) => {
+                            const checked = botStrategyForm.selectedIndicators.includes(indicator.key);
+                            const outputs = getIndicatorOutputs(indicator).slice(0, 4);
+                            const parameterCount = Object.keys(indicator.parameter_schema || {}).length;
+                            return (
+                              <button
+                                key={indicator.id}
+                                type="button"
+                                onClick={() => setBotStrategyForm((current) => ({
+                                  ...current,
+                                  selectedIndicators: checked
+                                    ? current.selectedIndicators.filter((key) => key !== indicator.key)
+                                    : Array.from(new Set([...current.selectedIndicators, indicator.key])),
+                                }))}
+                                className={[
+                                  'group relative rounded-xl border p-3 text-left transition duration-150 hover:-translate-y-0.5 hover:shadow-md',
+                                  checked
+                                    ? 'border-accent-blue bg-accent-blue/10 shadow-sm'
+                                    : 'border-border-subtle bg-background-primary/80 hover:border-accent-blue/40 hover:bg-background-primary',
+                                ].join(' ')}
+                              >
+                                <span className="mb-2 flex items-center justify-between gap-2">
+                                  <span className="rounded-full bg-background-secondary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+                                    {indicatorCategoryLabels[indicator.category] || indicator.category}
+                                  </span>
+                                  <span className={[
+                                    'h-2.5 w-2.5 rounded-full border',
+                                    checked ? 'border-accent-blue bg-accent-blue' : 'border-border-strong bg-background-secondary',
+                                  ].join(' ')} />
+                                </span>
+                                <span className="block truncate text-body-sm font-semibold text-text-primary">{indicator.name}</span>
+                                <span className="mt-1 block truncate text-caption text-text-muted">{indicator.description}</span>
+                                <span className="mt-2 flex flex-wrap gap-1">
+                                  {outputs.map((output) => (
+                                    <span key={output} className="rounded-md bg-background-secondary px-1.5 py-0.5 text-[10px] text-text-secondary">
+                                      {output}
+                                    </span>
+                                  ))}
+                                  <span className="rounded-md bg-background-secondary px-1.5 py-0.5 text-[10px] text-text-secondary">
+                                    {parameterCount} params
+                                  </span>
+                                </span>
+                                <span className="mt-2 hidden rounded-lg border border-border-subtle bg-background-secondary/70 p-2 text-caption text-text-secondary group-hover:block">
+                                  <span className="mb-1 block font-semibold text-text-primary">{indicator.key}</span>
+                                  <span className="block">{indicator.description}</span>
+                                  <span className="mt-2 block text-text-muted">
+                                    Saidas: {outputs.join(', ') || 'value'} · Parametros: {parameterCount}
+                                  </span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {filteredIndicators.length === 0 && (
+                          <div className="rounded-xl border border-dashed border-border-subtle bg-background-primary/60 p-6 text-center text-caption text-text-muted">
+                            Nenhum indicador encontrado para esse filtro.
+                          </div>
+                        )}
                       </section>
 
                       <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
