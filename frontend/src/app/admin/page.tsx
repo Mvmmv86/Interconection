@@ -13,8 +13,10 @@ import {
   Layers3,
   LineChart,
   LogOut,
+  Moon,
   Shield,
   Sparkles,
+  Sun,
   Users,
 } from 'lucide-react';
 import {
@@ -37,6 +39,7 @@ import {
   type BotTemplate,
 } from '@/lib/api/client';
 import { useAuth } from '@/contexts/auth-context';
+import { useTheme } from '@/contexts/theme-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -186,6 +189,8 @@ function formatMoney(cents: number | null | undefined, currency = 'BRL') {
 export default function PlatformAdminPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: isAuthLoading, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [overview, setOverview] = useState<AdminOverview>(emptyOverview);
   const [organizations, setOrganizations] = useState<AdminOrganization[]>([]);
@@ -852,8 +857,22 @@ export default function PlatformAdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background-primary">
-      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-72 border-r border-border-subtle bg-background-secondary/90 p-5 backdrop-blur-xl lg:block">
+    <div
+      className={cn(
+        'min-h-screen transition-colors duration-300',
+        isDark
+          ? 'bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.10),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(139,92,246,0.08),transparent_30%),var(--bg-primary)]'
+          : 'bg-background-primary'
+      )}
+    >
+      <aside
+        className={cn(
+          'fixed left-0 top-0 z-40 hidden h-screen w-72 border-r p-5 backdrop-blur-xl lg:block',
+          isDark
+            ? 'border-white/[0.06] bg-black/35'
+            : 'border-border-subtle bg-background-secondary/90'
+        )}
+      >
         <div className="mb-8">
           <p className="text-overline uppercase tracking-[0.24em] text-accent-blue">Connectcoin</p>
           <h1 className="mt-2 text-heading-md text-text-primary">Platform Admin</h1>
@@ -906,7 +925,14 @@ export default function PlatformAdminPage() {
       </aside>
 
       <main className="lg:pl-72">
-        <header className="sticky top-0 z-30 border-b border-border-subtle bg-background-primary/85 px-5 py-4 backdrop-blur-xl">
+        <header
+          className={cn(
+            'sticky top-0 z-30 border-b px-5 py-4 backdrop-blur-xl transition-colors duration-300',
+            isDark
+              ? 'border-white/[0.06] bg-black/35'
+              : 'border-border-subtle bg-background-primary/85'
+          )}
+        >
           <div className="mx-auto flex max-w-7xl flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-overline uppercase tracking-[0.22em] text-text-muted">Platform</p>
@@ -922,6 +948,19 @@ export default function PlatformAdminPage() {
                 onChange={(event) => setSelectedOrganizationId(event.target.value)}
                 className="h-10 min-w-[240px] py-0 text-body-sm"
               />
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className={cn(
+                  'inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors',
+                  isDark
+                    ? 'border-white/[0.08] bg-white/[0.04] text-accent-yellow hover:bg-white/[0.08]'
+                    : 'border-border-subtle bg-background-secondary text-text-secondary hover:border-accent-blue/40 hover:text-text-primary'
+                )}
+                title={isDark ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
+              >
+                {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
               <Badge variant="purple">{user.name}</Badge>
             </div>
           </div>
