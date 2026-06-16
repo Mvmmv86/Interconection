@@ -25,6 +25,7 @@ from app.schemas.client_portfolio import (
     ClientPortfolioListItem,
 )
 from app.services.client_service import ClientService
+from app.services.plan_limits import enforce_plan_limit
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("clients"))])
 
@@ -75,6 +76,7 @@ async def create_client(
     db: DBSession,
 ) -> ClientResponse:
     """Create a new client."""
+    await enforce_plan_limit(db, permission_ctx.organization_id, "portfolios")
     client = Client(
         id=uuid4(),
         organization_id=permission_ctx.organization_id,

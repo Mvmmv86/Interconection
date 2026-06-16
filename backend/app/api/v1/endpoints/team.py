@@ -49,6 +49,7 @@ from app.schemas.team import (
     TeamUserSummary,
 )
 from app.services.audit_service import record_audit_event
+from app.services.plan_limits import enforce_plan_limit
 
 router = APIRouter()
 
@@ -267,6 +268,8 @@ async def create_account_team(
     request: Request,
 ) -> AccountTeamResponse:
     """Create a named team and its grouped access policy."""
+    await enforce_plan_limit(db, permission_ctx.organization_id, "teams")
+
     if data.client_access_mode == MembershipClientAccessMode.SPECIFIC and not data.client_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -653,6 +656,8 @@ async def create_team_invitation(
             status_code=status.HTTP_409_CONFLICT,
             detail="A pending invitation already exists for this email",
         )
+
+    await enforce_plan_limit(db, permission_ctx.organization_id, "members")
 
     invitation = Invitation(
         id=uuid4(),

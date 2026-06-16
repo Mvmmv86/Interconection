@@ -22,6 +22,8 @@ import {
   type AdminClient,
   type AdminOrganization,
   type AdminOverview,
+  type AdminPlanDefinition,
+  type AdminPlanUsage,
   type AdminUser,
 } from '@/lib/api/client';
 import { useAuth } from '@/contexts/auth-context';
@@ -68,6 +70,16 @@ const emptyOverview: AdminOverview = {
   plan_count: 3,
 };
 
+const planMetricLabels: Record<string, string> = {
+  members: 'Membros',
+  teams: 'Equipes',
+  portfolios: 'Carteiras',
+  wallets: 'Wallets',
+  exchanges: 'Exchanges',
+  bots: 'Bots',
+  strategies: 'Estrategias',
+};
+
 function PlaceholderSection({ title, description }: { title: string; description: string }) {
   return (
     <Card variant="glass" className="border-accent-blue/10">
@@ -85,6 +97,10 @@ function formatDateTime(value: string | null | undefined) {
   return new Date(value).toLocaleString('pt-BR');
 }
 
+function formatLimit(value: number | null | undefined) {
+  return value === null || value === undefined ? 'Ilimitado' : String(value);
+}
+
 export default function PlatformAdminPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: isAuthLoading, logout } = useAuth();
@@ -94,6 +110,8 @@ export default function PlatformAdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [clients, setClients] = useState<AdminClient[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
+  const [planDefinitions, setPlanDefinitions] = useState<AdminPlanDefinition[]>([]);
+  const [planUsages, setPlanUsages] = useState<AdminPlanUsage[]>([]);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -122,12 +140,16 @@ export default function PlatformAdminPage() {
       usersResult,
       clientsResult,
       auditResult,
+      plansResult,
+      planUsageResult,
     ] = await Promise.all([
       api.getAdminOverview(),
       api.getAdminOrganizations(),
       api.getAdminUsers(organizationId),
       api.getAdminClients(organizationId),
       api.getAdminAuditLogs(organizationId),
+      api.getAdminPlans(),
+      api.getAdminPlanUsage(organizationId),
     ]);
 
     if (
@@ -136,14 +158,18 @@ export default function PlatformAdminPage() {
       || !usersResult.success
       || !clientsResult.success
       || !auditResult.success
+      || !plansResult.success
+      || !planUsageResult.success
     ) {
       setError(
         overviewResult.error
         || orgsResult.error
-        || usersResult.error
-        || clientsResult.error
-        || auditResult.error
-        || 'Nao foi possivel carregar o admin'
+      || usersResult.error
+      || clientsResult.error
+      || auditResult.error
+      || plansResult.error
+      || planUsageResult.error
+      || 'Nao foi possivel carregar o admin'
       );
       setIsLoading(false);
       return;
@@ -154,6 +180,8 @@ export default function PlatformAdminPage() {
     setUsers(usersResult.data || []);
     setClients(clientsResult.data || []);
     setAuditLogs(auditResult.data || []);
+    setPlanDefinitions(plansResult.data || []);
+    setPlanUsages(planUsageResult.data || []);
     setIsLoading(false);
   }, [user?.is_superuser]);
 
@@ -566,10 +594,79 @@ export default function PlatformAdminPage() {
             />
           )}
           {activeTab === 'plans' && (
-            <PlaceholderSection
-              title="Planos"
-              description="Aqui vamos evoluir o enum free/pro/enterprise para planos configuraveis com features e limites."
-            />
+            <div className="space-y-6">
+              <div className="grid gap-4 lg:grid-cols-3">
+                {planDefinitions.map((plan) => (
+                  <Card key={plan.plan} variant="glass" className="p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <Badge variant="blue" size="sm">{plan.plan}</Badge>
+                        <h2 className="mt-3 text-heading-md text-text-primary">{plan.label}</h2>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-2">
+                      {Object.entries(planMetricLabels).map(([key, label]) => (
+                        <div key={key} className="flex items-center justify-between text-caption">
+                          <span className="text-text-tertiary">{label}</span>
+                          <span className="font-medium text-text-primary">{formatLimit(plan.limits[key])}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-5 space-y-2">
+                      {plan.features.map((feature) => (
+                        <p key={feature} className="text-caption text-text-secondary">- {feature}</p>
+                      ))}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+
+              <Card variant="glass">
+                <CardHeader>
+                  <CardTitle>Uso dos clientes por plano</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {planUsages.map((usage) => (
+                    <div key={usage.organization_id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-heading-sm text-text-primary">{usage.organization_name}</p>
+                            <Badge variant="purple" size="sm">{usage.plan}</Badge>
+                          </div>
+                          <p className="mt-1 text-caption text-text-muted">
+                            Limites contam membros ativos + convites pendentes para evitar overbooking.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                        {Object.entries(planMetricLabels).map(([key, label]) => {
+                          const limit = usage.limits[key];
+                          const current = usage.usage[key] || 0;
+                          const overLimit = usage.over_limit[key];
+                          return (
+                            <div
+                              key={key}
+                              className={cn(
+                                'rounded-lg border px-3 py-2',
+                                overLimit
+                                  ? 'border-status-error/30 bg-status-error/10'
+                                  : 'border-border-subtle bg-background-primary/70'
+                              )}
+                            >
+                              <p className="text-caption text-text-tertiary">{label}</p>
+                              <p className="mt-1 text-body-sm font-semibold text-text-primary">
+                                {current} / {formatLimit(limit)}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
           )}
           {activeTab === 'system' && (
             <PlaceholderSection

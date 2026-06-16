@@ -45,6 +45,27 @@ class AdminOverviewResponse(BaseSchema):
     plan_count: int = 3
 
 
+class AdminPlanDefinitionResponse(BaseSchema):
+    """Static plan definition shown in platform administration."""
+
+    plan: PlanType
+    label: str
+    limits: dict[str, int | None]
+    features: list[str] = []
+
+
+class AdminPlanUsageResponse(BaseSchema):
+    """Current usage versus plan limits for one platform customer."""
+
+    organization_id: UUID
+    organization_name: str
+    plan: PlanType
+    usage: dict[str, int]
+    limits: dict[str, int | None]
+    remaining: dict[str, int | None]
+    over_limit: dict[str, bool]
+
+
 class AdminUserMembershipResponse(BaseSchema):
     """Membership summary for a user in the platform admin."""
 

@@ -34,6 +34,7 @@ from app.schemas.exchange import (
 from app.schemas.common import SuccessResponse
 from app.services.audit_service import record_audit_event, record_audit_event_immediate
 from app.services.exchange_service import ExchangeService
+from app.services.plan_limits import enforce_plan_limit
 from app.integrations.exchanges import ExchangeAdapterError
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("exchange"))])
@@ -174,6 +175,8 @@ async def create_exchange(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Exchange '{data.exchange}' is not supported",
         )
+
+    await enforce_plan_limit(db, permission_ctx.organization_id, "exchanges")
 
     exchange = Exchange(
         id=uuid4(),

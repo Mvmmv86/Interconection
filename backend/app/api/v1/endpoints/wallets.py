@@ -22,6 +22,7 @@ from app.schemas.wallet import (
     WalletScanResult,
 )
 from app.schemas.common import SuccessResponse
+from app.services.plan_limits import enforce_plan_limit
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("wallets"))])
 
@@ -102,6 +103,8 @@ async def create_wallet(
             status_code=status.HTTP_409_CONFLICT,
             detail="Wallet already exists for this client",
         )
+
+    await enforce_plan_limit(db, permission_ctx.organization_id, "wallets")
 
     wallet = Wallet(
         id=uuid4(),

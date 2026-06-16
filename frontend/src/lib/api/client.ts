@@ -355,6 +355,23 @@ interface AdminOverview {
   plan_count: number;
 }
 
+interface AdminPlanDefinition {
+  plan: 'free' | 'pro' | 'enterprise';
+  label: string;
+  limits: Record<string, number | null>;
+  features: string[];
+}
+
+interface AdminPlanUsage {
+  organization_id: string;
+  organization_name: string;
+  plan: 'free' | 'pro' | 'enterprise';
+  usage: Record<string, number>;
+  limits: Record<string, number | null>;
+  remaining: Record<string, number | null>;
+  over_limit: Record<string, boolean>;
+}
+
 interface AdminClient {
   id: string;
   organization_id: string;
@@ -753,6 +770,15 @@ class ApiClient {
     return this.request<AdminOrganization[]>('/api/v1/admin/organizations');
   }
 
+  async getAdminPlans(): Promise<ApiResponse<AdminPlanDefinition[]>> {
+    return this.request<AdminPlanDefinition[]>('/api/v1/admin/plans');
+  }
+
+  async getAdminPlanUsage(organizationId?: string): Promise<ApiResponse<AdminPlanUsage[]>> {
+    const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+    return this.request<AdminPlanUsage[]>(`/api/v1/admin/plan-usage${qs}`);
+  }
+
   async updateAdminOrganization(
     organizationId: string,
     data: { plan?: 'free' | 'pro' | 'enterprise'; is_active?: boolean }
@@ -1017,6 +1043,8 @@ export type {
   AdminOrganization,
   AdminUser,
   AdminOverview,
+  AdminPlanDefinition,
+  AdminPlanUsage,
   AdminClient,
   AdminAuditLog,
 };

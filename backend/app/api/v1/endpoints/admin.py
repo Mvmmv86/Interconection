@@ -24,6 +24,8 @@ from app.models.wallet import Wallet
 from app.schemas.admin import (
     AdminAuditLogResponse,
     AdminClientResponse,
+    AdminPlanDefinitionResponse,
+    AdminPlanUsageResponse,
     AdminUserMembershipResponse,
     AdminOverviewResponse,
     AdminOrganizationResponse,
@@ -32,6 +34,13 @@ from app.schemas.admin import (
     AdminUserUpdate,
 )
 from app.services.audit_service import record_audit_event
+from app.services.plan_limits import (
+    calculate_over_limit,
+    calculate_remaining,
+    get_plan_definition,
+    get_plan_usage_many,
+    list_plan_definitions,
+)
 
 router = APIRouter(dependencies=[Depends(require_superuser)])
 
@@ -100,7 +109,60 @@ async def get_admin_overview(
         active_user_count=int(active_user_count or 0),
         client_count=int(client_count or 0),
         audit_event_count=int(audit_event_count or 0),
+        plan_count=len(list_plan_definitions()),
     )
+
+
+@router.get("/plans", response_model=List[AdminPlanDefinitionResponse])
+async def list_admin_plans(
+    _superuser: SuperUser,
+) -> List[AdminPlanDefinitionResponse]:
+    """List commercial plan definitions and their platform limits."""
+    return [
+        AdminPlanDefinitionResponse(
+            plan=definition.plan,
+            label=definition.label,
+            limits={key: value for key, value in definition.limits.items()},
+            features=list(definition.features),
+        )
+        for definition in list_plan_definitions()
+    ]
+
+
+@router.get("/plan-usage", response_model=List[AdminPlanUsageResponse])
+async def list_admin_plan_usage(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+) -> List[AdminPlanUsageResponse]:
+    """Return plan usage for all customers or a selected customer."""
+    query = select(Organization).order_by(Organization.created_at.desc())
+    if organization_id is not None:
+        query = query.where(Organization.id == organization_id)
+    result = await db.execute(query)
+    organizations = result.scalars().all()
+    usage_by_org = await get_plan_usage_many(
+        db,
+        [organization.id for organization in organizations],
+    )
+
+    response: list[AdminPlanUsageResponse] = []
+    for organization in organizations:
+        definition = get_plan_definition(organization.plan)
+        usage = usage_by_org[organization.id]
+        limits = {key: value for key, value in definition.limits.items()}
+        response.append(
+            AdminPlanUsageResponse(
+                organization_id=organization.id,
+                organization_name=organization.name,
+                plan=organization.plan,
+                usage=usage,
+                limits=limits,
+                remaining=calculate_remaining(definition.limits, usage),
+                over_limit=calculate_over_limit(definition.limits, usage),
+            )
+        )
+    return response
 
 
 @router.get("/organizations", response_model=List[AdminOrganizationResponse])
