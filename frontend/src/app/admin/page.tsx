@@ -252,6 +252,8 @@ export default function PlatformAdminPage() {
   });
   const [indicatorSearch, setIndicatorSearch] = useState('');
   const [indicatorCategoryFilter, setIndicatorCategoryFilter] = useState('all');
+  const [isStrategyBuilderOpen, setIsStrategyBuilderOpen] = useState(false);
+  const [strategyBuilderTab, setStrategyBuilderTab] = useState('basic');
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1159,14 +1161,89 @@ export default function PlatformAdminPage() {
                 </CardContent>
               </Card>
 
-              <div className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
-                <Card variant="glass">
+              <Card variant="glass" className="border-accent-blue/15 bg-gradient-to-br from-background-secondary/80 to-background-primary">
+                <CardContent className="flex flex-col gap-4 py-5 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-heading-sm text-text-primary">Strategy Builder</p>
+                      <Badge variant="blue" size="sm">{botIndicators.length} indicadores</Badge>
+                      <Badge variant="purple" size="sm">{botStrategies.length} estrategias</Badge>
+                    </div>
+                    <p className="mt-1 max-w-3xl text-body-sm text-text-secondary">
+                      Crie a estrategia em um editor visual: identidade, mercado, indicadores, condicoes, risco e backtest em um fluxo compacto.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setStrategyBuilderTab('basic');
+                      setIsStrategyBuilderOpen(true);
+                    }}
+                    className="min-w-[180px]"
+                  >
+                    Criar estrategia
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {isStrategyBuilderOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+                  <button
+                    type="button"
+                    aria-label="Fechar editor"
+                    className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+                    onClick={() => setIsStrategyBuilderOpen(false)}
+                  />
+                  <div className="relative max-h-[92vh] w-[min(1180px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-border-subtle bg-background-primary shadow-2xl">
+                    <div className="border-b border-border-subtle bg-background-secondary/80 px-5 py-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-heading-sm text-text-primary">Editor Visual de Estrategia</p>
+                          <p className="mt-1 text-caption text-text-muted">Configure motor, indicadores, regras e backtest sem sair do fluxo.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsStrategyBuilderOpen(false)}
+                          className="rounded-lg border border-border-subtle px-3 py-1.5 text-body-sm text-text-secondary transition hover:border-accent-blue hover:text-text-primary"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {[
+                          ['basic', 'Configuracao basica'],
+                          ['indicators', 'Indicadores'],
+                          ['rules', 'Condicoes e risco'],
+                          ['backtest', 'Backtest'],
+                        ].map(([key, label]) => (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setStrategyBuilderTab(key)}
+                            className={[
+                              'rounded-lg border px-3 py-2 text-caption font-semibold transition',
+                              strategyBuilderTab === key
+                                ? 'border-accent-blue bg-accent-blue text-white shadow-sm'
+                                : 'border-border-subtle bg-background-primary text-text-secondary hover:border-accent-blue/40 hover:text-text-primary',
+                            ].join(' ')}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="max-h-[calc(92vh-132px)] overflow-y-auto p-5">
+                      <div className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
+                <Card variant="glass" className={strategyBuilderTab === 'backtest' ? 'hidden' : ''}>
                   <CardHeader>
                     <CardTitle>Criar estrategia</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <form className="grid gap-5" onSubmit={createBotStrategy}>
-                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
+                      <section className={[
+                        'rounded-2xl border border-border-subtle bg-background-secondary/50 p-4',
+                        strategyBuilderTab !== 'basic' ? 'hidden' : '',
+                      ].join(' ')}>
                         <div className="mb-3 flex items-center justify-between gap-3">
                           <div>
                             <p className="text-heading-sm text-text-primary">1. Identidade</p>
@@ -1256,7 +1333,10 @@ export default function PlatformAdminPage() {
                         </div>
                       </section>
 
-                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
+                      <section className={[
+                        'rounded-2xl border border-border-subtle bg-background-secondary/50 p-4',
+                        strategyBuilderTab !== 'basic' ? 'hidden' : '',
+                      ].join(' ')}>
                         <p className="text-heading-sm text-text-primary">2. Mercado e ativos</p>
                         <p className="mb-3 text-caption text-text-muted">Define onde a estrategia pode rodar e quais ativos ela aceita.</p>
                         <div className="grid gap-3 md:grid-cols-3">
@@ -1299,7 +1379,10 @@ export default function PlatformAdminPage() {
                         </div>
                       </section>
 
-                      <section className="rounded-2xl border border-accent-blue/15 bg-gradient-to-br from-background-secondary/80 via-background-primary to-background-secondary/40 p-4 shadow-sm">
+                      <section className={[
+                        'rounded-2xl border border-accent-blue/15 bg-gradient-to-br from-background-secondary/80 via-background-primary to-background-secondary/40 p-4 shadow-sm',
+                        strategyBuilderTab !== 'indicators' ? 'hidden' : '',
+                      ].join(' ')}>
                         <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
                           <div>
                             <p className="text-heading-sm text-text-primary">3. Indicadores usados</p>
@@ -1413,7 +1496,10 @@ export default function PlatformAdminPage() {
                         )}
                       </section>
 
-                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
+                      <section className={[
+                        'rounded-2xl border border-border-subtle bg-background-secondary/50 p-4',
+                        strategyBuilderTab !== 'rules' ? 'hidden' : '',
+                      ].join(' ')}>
                         <p className="text-heading-sm text-text-primary">4. Regras e condicoes</p>
                         <p className="mb-3 text-caption text-text-muted">Monte a primeira condicao de entrada e saida. Na proxima evolucao vamos permitir grupos AND/OR multiplos.</p>
                         <div className="grid gap-4 lg:grid-cols-2">
@@ -1511,7 +1597,10 @@ export default function PlatformAdminPage() {
                         </div>
                       </section>
 
-                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
+                      <section className={[
+                        'rounded-2xl border border-border-subtle bg-background-secondary/50 p-4',
+                        strategyBuilderTab !== 'rules' ? 'hidden' : '',
+                      ].join(' ')}>
                         <p className="text-heading-sm text-text-primary">5. Risco operacional</p>
                         <p className="mb-3 text-caption text-text-muted">Esses limites sao aplicados pelo motor antes de gerar sinal.</p>
                         <div className="grid gap-3 md:grid-cols-3">
@@ -1540,7 +1629,7 @@ export default function PlatformAdminPage() {
                         </div>
                       </section>
 
-                      <div>
+                      <div className={strategyBuilderTab !== 'rules' ? 'hidden' : ''}>
                         <InfoLabel label="Descricao operacional" info="Explique a tese da estrategia, quando ela deve operar e quais riscos o admin precisa lembrar." />
                         <textarea
                           value={botStrategyForm.description}
@@ -1552,12 +1641,17 @@ export default function PlatformAdminPage() {
                           className="min-h-24 w-full rounded-lg border border-border-subtle bg-background-primary px-3 py-2 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                         />
                       </div>
-                      <Button type="submit">Criar estrategia</Button>
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle pt-4">
+                        <p className="text-caption text-text-muted">
+                          {botStrategyForm.selectedIndicators.length} indicadores - Entrada: {botStrategyForm.entryIndicator || 'nao definida'} - Saida: {botStrategyForm.exitIndicator || 'nao definida'}
+                        </p>
+                        <Button type="submit">Salvar estrategia</Button>
+                      </div>
                     </form>
                   </CardContent>
                 </Card>
 
-                <Card variant="glass">
+                <Card variant="glass" className={strategyBuilderTab !== 'backtest' ? 'hidden' : ''}>
                   <CardHeader>
                     <CardTitle>Rodar backtest</CardTitle>
                   </CardHeader>
@@ -1619,7 +1713,11 @@ export default function PlatformAdminPage() {
                     </div>
                   </CardContent>
                 </Card>
-              </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <Card variant="glass">
                 <CardHeader>
