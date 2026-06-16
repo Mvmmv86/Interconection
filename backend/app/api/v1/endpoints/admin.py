@@ -1,14 +1,27 @@
 """Platform super-admin endpoints."""
 
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import distinct, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import DBSession, SuperUser, invalidate_authz_cache, require_superuser
 from app.models.audit_log import AuditAction, AuditLog
+from app.models.billing import (
+    BillingInvoice,
+    BillingInvoiceStatus,
+    BillingPayment,
+    BillingPaymentStatus,
+    BillingProvider,
+    BillingSubscription,
+    BillingSubscriptionStatus,
+)
+from app.models.bot import BotInstance, BotStrategy
 from app.models.client import Client
 from app.models.exchange import Exchange
 from app.models.membership import (
@@ -23,7 +36,16 @@ from app.models.user import User
 from app.models.wallet import Wallet
 from app.schemas.admin import (
     AdminAuditLogResponse,
+    AdminBillingInvoiceResponse,
+    AdminBillingInvoiceCreate,
+    AdminBillingInvoiceUpdate,
+    AdminBillingPaymentResponse,
+    AdminBillingPaymentCreate,
+    AdminBillingPaymentUpdate,
+    AdminBillingSubscriptionResponse,
+    AdminBillingSubscriptionUpdate,
     AdminClientResponse,
+    AdminFinanceSummaryResponse,
     AdminPlanDefinitionResponse,
     AdminPlanUsageResponse,
     AdminUserMembershipResponse,
@@ -43,6 +65,216 @@ from app.services.plan_limits import (
 )
 
 router = APIRouter(dependencies=[Depends(require_superuser)])
+logger = logging.getLogger(__name__)
+
+
+def _enum_value(value: object) -> str:
+    """Return API-friendly enum values."""
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def _metadata_value(value: object) -> object:
+    """Return JSON-safe metadata values for audit logs."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if hasattr(value, "value"):
+        return value.value
+    return value
+
+
+def _subscription_response(
+    subscription: BillingSubscription,
+    organization_name: str,
+) -> AdminBillingSubscriptionResponse:
+    return AdminBillingSubscriptionResponse(
+        id=subscription.id,
+        organization_id=subscription.organization_id,
+        organization_name=organization_name,
+        plan=subscription.plan,
+        status=_enum_value(subscription.status),
+        provider=_enum_value(subscription.provider),
+        billing_email=subscription.billing_email,
+        currency=subscription.currency,
+        monthly_amount_cents=subscription.monthly_amount_cents,
+        current_period_start=subscription.current_period_start,
+        current_period_end=subscription.current_period_end,
+        trial_ends_at=subscription.trial_ends_at,
+        cancel_at_period_end=subscription.cancel_at_period_end,
+        provider_customer_id=subscription.provider_customer_id,
+        provider_subscription_id=subscription.provider_subscription_id,
+        notes=subscription.notes,
+        created_at=subscription.created_at,
+        updated_at=subscription.updated_at,
+    )
+
+
+def _invoice_response(
+    invoice: BillingInvoice,
+    organization_name: str,
+) -> AdminBillingInvoiceResponse:
+    return AdminBillingInvoiceResponse(
+        id=invoice.id,
+        organization_id=invoice.organization_id,
+        organization_name=organization_name,
+        subscription_id=invoice.subscription_id,
+        status=_enum_value(invoice.status),
+        provider=_enum_value(invoice.provider),
+        number=invoice.number,
+        currency=invoice.currency,
+        amount_due_cents=invoice.amount_due_cents,
+        amount_paid_cents=invoice.amount_paid_cents,
+        issued_at=invoice.issued_at,
+        due_date=invoice.due_date,
+        paid_at=invoice.paid_at,
+        period_start=invoice.period_start,
+        period_end=invoice.period_end,
+        provider_invoice_id=invoice.provider_invoice_id,
+        hosted_invoice_url=invoice.hosted_invoice_url,
+        notes=invoice.notes,
+        created_at=invoice.created_at,
+        updated_at=invoice.updated_at,
+    )
+
+
+def _payment_response(
+    payment: BillingPayment,
+    organization_name: str,
+) -> AdminBillingPaymentResponse:
+    return AdminBillingPaymentResponse(
+        id=payment.id,
+        organization_id=payment.organization_id,
+        organization_name=organization_name,
+        invoice_id=payment.invoice_id,
+        provider=_enum_value(payment.provider),
+        status=_enum_value(payment.status),
+        amount_cents=payment.amount_cents,
+        currency=payment.currency,
+        paid_at=payment.paid_at,
+        provider_payment_id=payment.provider_payment_id,
+        external_reference=payment.external_reference,
+        notes=payment.notes,
+        created_at=payment.created_at,
+        updated_at=payment.updated_at,
+    )
+
+
+def _enforce_brl(currency: str | None) -> str:
+    """Finance MVP is BRL-only until multi-currency accounting is implemented."""
+    normalized = (currency or "BRL").upper()[:3]
+    if normalized != "BRL":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only BRL is supported in the finance MVP",
+        )
+    return normalized
+
+
+def _validate_non_negative(value: int | None, field_name: str) -> None:
+    if value is not None and value < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_name} must be non-negative",
+        )
+
+
+async def _reconcile_invoice_payment_totals(db, invoice_id: UUID) -> None:
+    """Recalculate invoice paid amount from succeeded payments."""
+    invoice_result = await db.execute(
+        select(BillingInvoice).where(BillingInvoice.id == invoice_id).with_for_update()
+    )
+    invoice = invoice_result.scalar_one_or_none()
+    if invoice is None:
+        return
+    paid_total = await db.scalar(
+        select(func.coalesce(func.sum(BillingPayment.amount_cents), 0)).where(
+            BillingPayment.invoice_id == invoice_id,
+            BillingPayment.status == BillingPaymentStatus.SUCCEEDED,
+        )
+    )
+    last_paid_at = await db.scalar(
+        select(func.max(BillingPayment.paid_at)).where(
+            BillingPayment.invoice_id == invoice_id,
+            BillingPayment.status == BillingPaymentStatus.SUCCEEDED,
+        )
+    )
+    raw_paid_total = int(paid_total or 0)
+    if raw_paid_total > invoice.amount_due_cents:
+        logger.warning(
+            "Billing payment total %s exceeds due %s for invoice %s; truncating cached paid amount",
+            raw_paid_total,
+            invoice.amount_due_cents,
+            invoice.id,
+        )
+    invoice.amount_paid_cents = min(raw_paid_total, invoice.amount_due_cents)
+    if invoice.amount_due_cents > 0 and invoice.amount_paid_cents >= invoice.amount_due_cents:
+        invoice.status = BillingInvoiceStatus.PAID
+        invoice.paid_at = last_paid_at or invoice.paid_at or datetime.now(timezone.utc)
+    elif invoice.status == BillingInvoiceStatus.PAID:
+        invoice.status = BillingInvoiceStatus.OPEN
+        invoice.paid_at = None
+
+
+async def _ensure_invoice_payment_total_within_due(
+    db,
+    invoice: BillingInvoice,
+    amount_cents: int,
+    exclude_payment_id: UUID | None = None,
+) -> None:
+    """Prevent successful manual payments from exceeding the invoice balance."""
+    query = select(func.coalesce(func.sum(BillingPayment.amount_cents), 0)).where(
+        BillingPayment.invoice_id == invoice.id,
+        BillingPayment.status == BillingPaymentStatus.SUCCEEDED,
+    )
+    if exclude_payment_id is not None:
+        query = query.where(BillingPayment.id != exclude_payment_id)
+    paid_total = int((await db.scalar(query)) or 0)
+    if paid_total + amount_cents > invoice.amount_due_cents:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payment exceeds invoice open balance",
+        )
+
+
+def _parse_subscription_status(value: str) -> BillingSubscriptionStatus:
+    try:
+        return BillingSubscriptionStatus(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid subscription status",
+        ) from exc
+
+
+def _parse_invoice_status(value: str) -> BillingInvoiceStatus:
+    try:
+        return BillingInvoiceStatus(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid invoice status",
+        ) from exc
+
+
+def _parse_payment_status(value: str) -> BillingPaymentStatus:
+    try:
+        return BillingPaymentStatus(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid payment status",
+        ) from exc
+
+
+def _parse_billing_provider(value: str) -> BillingProvider:
+    try:
+        return BillingProvider(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid billing provider",
+        ) from exc
 
 
 def _admin_user_response(user: User) -> AdminUserResponse:
@@ -102,6 +334,8 @@ async def get_admin_overview(
     )
     client_count = await db.scalar(select(func.count(Client.id)))
     audit_event_count = await db.scalar(select(func.count(AuditLog.id)))
+    bot_count = await db.scalar(select(func.count(BotInstance.id)))
+    strategy_count = await db.scalar(select(func.count(BotStrategy.id)))
     return AdminOverviewResponse(
         organization_count=int(organization_count or 0),
         active_organization_count=int(active_organization_count or 0),
@@ -109,6 +343,8 @@ async def get_admin_overview(
         active_user_count=int(active_user_count or 0),
         client_count=int(client_count or 0),
         audit_event_count=int(audit_event_count or 0),
+        bot_count=int(bot_count or 0),
+        strategy_count=int(strategy_count or 0),
         plan_count=len(list_plan_definitions()),
     )
 
@@ -163,6 +399,582 @@ async def list_admin_plan_usage(
             )
         )
     return response
+
+
+@router.get("/finance/summary", response_model=AdminFinanceSummaryResponse)
+async def get_admin_finance_summary(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+) -> AdminFinanceSummaryResponse:
+    """Return platform finance counters for the admin console."""
+    now = datetime.now(timezone.utc)
+    last_30_days = now - timedelta(days=30)
+
+    subscription_filter = []
+    invoice_filter = []
+    payment_filter = []
+    if organization_id is not None:
+        subscription_filter.append(BillingSubscription.organization_id == organization_id)
+        invoice_filter.append(BillingInvoice.organization_id == organization_id)
+        payment_filter.append(BillingPayment.organization_id == organization_id)
+
+    subscription_count = await db.scalar(
+        select(func.count(BillingSubscription.id)).where(*subscription_filter)
+    )
+    active_subscription_count = await db.scalar(
+        select(func.count(BillingSubscription.id)).where(
+            *subscription_filter,
+            BillingSubscription.status.in_(
+                [BillingSubscriptionStatus.ACTIVE, BillingSubscriptionStatus.TRIALING]
+            ),
+        )
+    )
+    past_due_subscription_count = await db.scalar(
+        select(func.count(BillingSubscription.id)).where(
+            *subscription_filter,
+            BillingSubscription.status.in_(
+                [BillingSubscriptionStatus.PAST_DUE, BillingSubscriptionStatus.UNPAID]
+            ),
+        )
+    )
+    open_invoice_count = await db.scalar(
+        select(func.count(BillingInvoice.id)).where(
+            *invoice_filter,
+            BillingInvoice.status.in_(
+                [
+                    BillingInvoiceStatus.OPEN,
+                    BillingInvoiceStatus.OVERDUE,
+                    BillingInvoiceStatus.UNCOLLECTIBLE,
+                ]
+            ),
+        )
+    )
+    overdue_invoice_count = await db.scalar(
+        select(func.count(BillingInvoice.id)).where(
+            *invoice_filter,
+            or_(
+                BillingInvoice.status == BillingInvoiceStatus.OVERDUE,
+                (
+                    (BillingInvoice.status == BillingInvoiceStatus.OPEN)
+                    & (BillingInvoice.due_date.is_not(None))
+                    & (BillingInvoice.due_date < now)
+                ),
+            ),
+        )
+    )
+    mrr_cents = await db.scalar(
+        select(func.coalesce(func.sum(BillingSubscription.monthly_amount_cents), 0)).where(
+            *subscription_filter,
+            BillingSubscription.status.in_(
+                [BillingSubscriptionStatus.ACTIVE, BillingSubscriptionStatus.TRIALING]
+            ),
+        )
+    )
+    open_amount_cents = await db.scalar(
+        select(
+            func.coalesce(
+                func.sum(BillingInvoice.amount_due_cents - BillingInvoice.amount_paid_cents),
+                0,
+            )
+        ).where(
+            *invoice_filter,
+            BillingInvoice.status.in_(
+                [
+                    BillingInvoiceStatus.OPEN,
+                    BillingInvoiceStatus.OVERDUE,
+                    BillingInvoiceStatus.UNCOLLECTIBLE,
+                ]
+            ),
+        )
+    )
+    overdue_amount_cents = await db.scalar(
+        select(
+            func.coalesce(
+                func.sum(BillingInvoice.amount_due_cents - BillingInvoice.amount_paid_cents),
+                0,
+            )
+        ).where(
+            *invoice_filter,
+            or_(
+                BillingInvoice.status == BillingInvoiceStatus.OVERDUE,
+                (
+                    (BillingInvoice.status == BillingInvoiceStatus.OPEN)
+                    & (BillingInvoice.due_date.is_not(None))
+                    & (BillingInvoice.due_date < now)
+                ),
+            ),
+        )
+    )
+    paid_amount_30d_cents = await db.scalar(
+        select(func.coalesce(func.sum(BillingPayment.amount_cents), 0)).where(
+            *payment_filter,
+            BillingPayment.status == BillingPaymentStatus.SUCCEEDED,
+            BillingPayment.paid_at.is_not(None),
+            BillingPayment.paid_at >= last_30_days,
+        )
+    )
+
+    return AdminFinanceSummaryResponse(
+        subscription_count=int(subscription_count or 0),
+        active_subscription_count=int(active_subscription_count or 0),
+        past_due_subscription_count=int(past_due_subscription_count or 0),
+        open_invoice_count=int(open_invoice_count or 0),
+        overdue_invoice_count=int(overdue_invoice_count or 0),
+        mrr_cents=int(mrr_cents or 0),
+        open_amount_cents=int(open_amount_cents or 0),
+        overdue_amount_cents=int(overdue_amount_cents or 0),
+        paid_amount_30d_cents=int(paid_amount_30d_cents or 0),
+    )
+
+
+@router.get("/finance/subscriptions", response_model=List[AdminBillingSubscriptionResponse])
+async def list_admin_billing_subscriptions(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+) -> List[AdminBillingSubscriptionResponse]:
+    """List customer subscriptions for platform finance."""
+    query = (
+        select(BillingSubscription, Organization.name.label("organization_name"))
+        .join(Organization, Organization.id == BillingSubscription.organization_id)
+        .order_by(BillingSubscription.updated_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    if organization_id is not None:
+        query = query.where(BillingSubscription.organization_id == organization_id)
+    if status_filter:
+        query = query.where(BillingSubscription.status == _parse_subscription_status(status_filter))
+
+    result = await db.execute(query)
+    return [
+        _subscription_response(subscription, organization_name)
+        for subscription, organization_name in result.all()
+    ]
+
+
+@router.patch(
+    "/finance/subscriptions/{organization_id}",
+    response_model=AdminBillingSubscriptionResponse,
+)
+async def update_admin_billing_subscription(
+    organization_id: UUID,
+    data: AdminBillingSubscriptionUpdate,
+    superuser: Annotated[User, Depends(require_superuser)],
+    db: DBSession,
+    request: Request,
+) -> AdminBillingSubscriptionResponse:
+    """Upsert and update the customer subscription controlled by platform finance."""
+    organization_result = await db.execute(
+        select(Organization).where(Organization.id == organization_id).with_for_update()
+    )
+    organization = organization_result.scalar_one_or_none()
+    if organization is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+
+    subscription_result = await db.execute(
+        select(BillingSubscription)
+        .where(BillingSubscription.organization_id == organization_id)
+        .with_for_update()
+    )
+    subscription = subscription_result.scalar_one_or_none()
+    if subscription is None:
+        subscription = BillingSubscription(
+            organization_id=organization.id,
+            plan=organization.plan,
+            status=BillingSubscriptionStatus.ACTIVE,
+            provider=BillingProvider.MANUAL,
+            currency="BRL",
+            monthly_amount_cents=0,
+            cancel_at_period_end=False,
+        )
+        db.add(subscription)
+        await db.flush()
+
+    update_data = data.model_dump(exclude_unset=True)
+    if "status" in update_data and update_data["status"] is not None:
+        update_data["status"] = _parse_subscription_status(_enum_value(update_data["status"]))
+    if "provider" in update_data and update_data["provider"] is not None:
+        update_data["provider"] = _parse_billing_provider(_enum_value(update_data["provider"]))
+    if "currency" in update_data and update_data["currency"] is not None:
+        update_data["currency"] = _enforce_brl(update_data["currency"])
+    _validate_non_negative(update_data.get("monthly_amount_cents"), "monthly_amount_cents")
+
+    for field, value in update_data.items():
+        setattr(subscription, field, value)
+
+    if "plan" in update_data and update_data["plan"] is not None:
+        organization.plan = update_data["plan"]
+
+    await db.flush()
+    await db.refresh(subscription)
+    await record_audit_event(
+        db,
+        organization_id=organization.id,
+        user_id=superuser.id,
+        action=AuditAction.UPDATE,
+        resource_type="billing_subscription",
+        resource_id=subscription.id,
+        description="Platform admin updated billing subscription",
+        metadata={"updated_fields": {key: _metadata_value(value) for key, value in update_data.items()}},
+        request=request,
+    )
+    return _subscription_response(subscription, organization.name)
+
+
+@router.get("/finance/invoices", response_model=List[AdminBillingInvoiceResponse])
+async def list_admin_billing_invoices(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+) -> List[AdminBillingInvoiceResponse]:
+    """List invoices for platform finance."""
+    query = (
+        select(BillingInvoice, Organization.name.label("organization_name"))
+        .join(Organization, Organization.id == BillingInvoice.organization_id)
+        .order_by(BillingInvoice.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    if organization_id is not None:
+        query = query.where(BillingInvoice.organization_id == organization_id)
+    if status_filter:
+        query = query.where(BillingInvoice.status == _parse_invoice_status(status_filter))
+
+    result = await db.execute(query)
+    return [_invoice_response(invoice, organization_name) for invoice, organization_name in result.all()]
+
+
+@router.post(
+    "/finance/invoices",
+    response_model=AdminBillingInvoiceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_billing_invoice(
+    data: AdminBillingInvoiceCreate,
+    superuser: Annotated[User, Depends(require_superuser)],
+    db: DBSession,
+    request: Request,
+) -> AdminBillingInvoiceResponse:
+    """Create a manual BRL invoice for a platform customer."""
+    _validate_non_negative(data.amount_due_cents, "amount_due_cents")
+    organization_result = await db.execute(
+        select(Organization).where(Organization.id == data.organization_id)
+    )
+    organization = organization_result.scalar_one_or_none()
+    if organization is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+
+    subscription = await db.scalar(
+        select(BillingSubscription.id).where(
+            BillingSubscription.organization_id == organization.id
+        )
+    )
+    invoice = BillingInvoice(
+        id=uuid4(),
+        organization_id=organization.id,
+        subscription_id=subscription,
+        status=BillingInvoiceStatus.OPEN,
+        provider=BillingProvider.MANUAL,
+        number=data.number,
+        currency="BRL",
+        amount_due_cents=data.amount_due_cents,
+        amount_paid_cents=0,
+        issued_at=data.issued_at or datetime.now(timezone.utc),
+        due_date=data.due_date,
+        period_start=data.period_start,
+        period_end=data.period_end,
+        notes=data.notes,
+    )
+    db.add(invoice)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Invoice number already exists",
+        ) from exc
+    await record_audit_event(
+        db,
+        organization_id=organization.id,
+        user_id=superuser.id,
+        action=AuditAction.CREATE,
+        resource_type="billing_invoice",
+        resource_id=invoice.id,
+        description="Platform admin created manual invoice",
+        metadata={
+            "amount_due_cents": invoice.amount_due_cents,
+            "due_date": _metadata_value(invoice.due_date) if invoice.due_date else None,
+            "number": invoice.number,
+        },
+        request=request,
+    )
+    return _invoice_response(invoice, organization.name)
+
+
+@router.patch("/finance/invoices/{invoice_id}", response_model=AdminBillingInvoiceResponse)
+async def update_admin_billing_invoice(
+    invoice_id: UUID,
+    data: AdminBillingInvoiceUpdate,
+    superuser: Annotated[User, Depends(require_superuser)],
+    db: DBSession,
+    request: Request,
+) -> AdminBillingInvoiceResponse:
+    """Update manual invoice status or metadata.
+
+    Payments are immutable accounting history for this MVP. Voiding an invoice
+    does not auto-refund existing payments; refunds must be registered by a
+    future dedicated refund flow.
+    """
+    result = await db.execute(
+        select(BillingInvoice, Organization.name.label("organization_name"))
+        .join(Organization, Organization.id == BillingInvoice.organization_id)
+        .where(BillingInvoice.id == invoice_id)
+        .with_for_update()
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found",
+        )
+    invoice, organization_name = row
+    update_data = data.model_dump(exclude_unset=True)
+    if "status" in update_data and update_data["status"] is not None:
+        update_data["status"] = _parse_invoice_status(_enum_value(update_data["status"]))
+    _validate_non_negative(update_data.get("amount_due_cents"), "amount_due_cents")
+    for field, value in update_data.items():
+        setattr(invoice, field, value)
+    if invoice.amount_paid_cents > invoice.amount_due_cents:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="amount_paid_cents cannot exceed amount_due_cents",
+        )
+    if (
+        invoice.status != BillingInvoiceStatus.VOID
+        and invoice.amount_paid_cents >= invoice.amount_due_cents
+        and invoice.amount_due_cents > 0
+    ):
+        invoice.status = BillingInvoiceStatus.PAID
+        invoice.paid_at = invoice.paid_at or datetime.now(timezone.utc)
+
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Invoice number already exists",
+        ) from exc
+    await record_audit_event(
+        db,
+        organization_id=invoice.organization_id,
+        user_id=superuser.id,
+        action=AuditAction.UPDATE,
+        resource_type="billing_invoice",
+        resource_id=invoice.id,
+        description="Platform admin updated invoice",
+        metadata={"updated_fields": {key: _metadata_value(value) for key, value in update_data.items()}},
+        request=request,
+    )
+    return _invoice_response(invoice, organization_name)
+
+
+@router.get("/finance/payments", response_model=List[AdminBillingPaymentResponse])
+async def list_admin_billing_payments(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+) -> List[AdminBillingPaymentResponse]:
+    """List payments for platform finance."""
+    query = (
+        select(BillingPayment, Organization.name.label("organization_name"))
+        .join(Organization, Organization.id == BillingPayment.organization_id)
+        .order_by(BillingPayment.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    if organization_id is not None:
+        query = query.where(BillingPayment.organization_id == organization_id)
+
+    result = await db.execute(query)
+    return [_payment_response(payment, organization_name) for payment, organization_name in result.all()]
+
+
+@router.post(
+    "/finance/payments",
+    response_model=AdminBillingPaymentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_billing_payment(
+    data: AdminBillingPaymentCreate,
+    superuser: Annotated[User, Depends(require_superuser)],
+    db: DBSession,
+    request: Request,
+) -> AdminBillingPaymentResponse:
+    """Register a manual BRL payment and reconcile the invoice when provided."""
+    _validate_non_negative(data.amount_cents, "amount_cents")
+    if data.invoice_id is None and data.organization_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invoice_id or organization_id is required",
+        )
+
+    invoice = None
+    organization_id = data.organization_id
+    organization_name = ""
+    if data.invoice_id is not None:
+        invoice_result = await db.execute(
+            select(BillingInvoice, Organization.name.label("organization_name"))
+            .join(Organization, Organization.id == BillingInvoice.organization_id)
+            .where(BillingInvoice.id == data.invoice_id)
+            .with_for_update()
+        )
+        row = invoice_result.one_or_none()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Invoice not found",
+            )
+        invoice, organization_name = row
+        if invoice.status == BillingInvoiceStatus.VOID:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot register payment for void invoice",
+            )
+        if invoice.status == BillingInvoiceStatus.PAID or invoice.amount_paid_cents >= invoice.amount_due_cents:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invoice is already paid",
+            )
+        await _ensure_invoice_payment_total_within_due(db, invoice, data.amount_cents)
+        organization_id = invoice.organization_id
+    else:
+        organization_result = await db.execute(
+            select(Organization).where(Organization.id == organization_id)
+        )
+        organization = organization_result.scalar_one_or_none()
+        if organization is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Organization not found",
+            )
+        organization_name = organization.name
+
+    payment = BillingPayment(
+        id=uuid4(),
+        organization_id=organization_id,
+        invoice_id=data.invoice_id,
+        provider=BillingProvider.MANUAL,
+        status=BillingPaymentStatus.SUCCEEDED,
+        amount_cents=data.amount_cents,
+        currency="BRL",
+        paid_at=data.paid_at or datetime.now(timezone.utc),
+        provider_payment_id=data.provider_payment_id,
+        external_reference=data.external_reference,
+        notes=data.notes,
+    )
+    db.add(payment)
+    await db.flush()
+    if invoice is not None:
+        await _reconcile_invoice_payment_totals(db, invoice.id)
+    await record_audit_event(
+        db,
+        organization_id=organization_id,
+        user_id=superuser.id,
+        action=AuditAction.CREATE,
+        resource_type="billing_payment",
+        resource_id=payment.id,
+        description="Platform admin registered manual payment",
+        metadata={
+            "invoice_id": _metadata_value(data.invoice_id) if data.invoice_id else None,
+            "amount_cents": payment.amount_cents,
+            "paid_at": _metadata_value(payment.paid_at) if payment.paid_at else None,
+        },
+        request=request,
+    )
+    return _payment_response(payment, organization_name)
+
+
+@router.patch("/finance/payments/{payment_id}", response_model=AdminBillingPaymentResponse)
+async def update_admin_billing_payment(
+    payment_id: UUID,
+    data: AdminBillingPaymentUpdate,
+    superuser: Annotated[User, Depends(require_superuser)],
+    db: DBSession,
+    request: Request,
+) -> AdminBillingPaymentResponse:
+    """Update manual payment metadata/status."""
+    result = await db.execute(
+        select(BillingPayment, Organization.name.label("organization_name"))
+        .join(Organization, Organization.id == BillingPayment.organization_id)
+        .where(BillingPayment.id == payment_id)
+        .with_for_update()
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found",
+        )
+    payment, organization_name = row
+    update_data = data.model_dump(exclude_unset=True)
+    if "status" in update_data and update_data["status"] is not None:
+        update_data["status"] = _parse_payment_status(_enum_value(update_data["status"]))
+    _validate_non_negative(update_data.get("amount_cents"), "amount_cents")
+    if payment.invoice_id is not None:
+        invoice = await db.scalar(
+            select(BillingInvoice)
+            .where(BillingInvoice.id == payment.invoice_id)
+            .with_for_update()
+        )
+        next_status = update_data.get("status", payment.status)
+        next_amount_cents = update_data.get("amount_cents", payment.amount_cents)
+        if invoice is not None and next_status == BillingPaymentStatus.SUCCEEDED:
+            if invoice.status == BillingInvoiceStatus.VOID:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot register payment for void invoice",
+                )
+            await _ensure_invoice_payment_total_within_due(
+                db,
+                invoice,
+                next_amount_cents,
+                exclude_payment_id=payment.id,
+            )
+    for field, value in update_data.items():
+        setattr(payment, field, value)
+    await db.flush()
+    if payment.invoice_id is not None:
+        await _reconcile_invoice_payment_totals(db, payment.invoice_id)
+    await record_audit_event(
+        db,
+        organization_id=payment.organization_id,
+        user_id=superuser.id,
+        action=AuditAction.UPDATE,
+        resource_type="billing_payment",
+        resource_id=payment.id,
+        description="Platform admin updated payment",
+        metadata={"updated_fields": {key: _metadata_value(value) for key, value in update_data.items()}},
+        request=request,
+    )
+    return _payment_response(payment, organization_name)
 
 
 @router.get("/organizations", response_model=List[AdminOrganizationResponse])

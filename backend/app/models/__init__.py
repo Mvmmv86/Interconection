@@ -11,6 +11,33 @@ from app.models.transaction import Transaction
 from app.models.alert import Alert
 from app.models.portfolio_snapshot import PortfolioSnapshot
 from app.models.audit_log import AuditLog
+from app.models.billing import (
+    BillingInvoice,
+    BillingInvoiceStatus,
+    BillingPayment,
+    BillingPaymentStatus,
+    BillingProvider,
+    BillingSubscription,
+    BillingSubscriptionStatus,
+)
+from app.models.bot import (
+    BotBacktest,
+    BotBacktestStatus,
+    BotInstance,
+    BotInstanceMode,
+    BotInstanceStatus,
+    BotRun,
+    BotRunStatus,
+    BotSignal,
+    BotSignalAction,
+    BotSignalStatus,
+    BotStrategy,
+    BotStrategyStatus,
+    BotTemplate,
+    BotTemplateParameter,
+    BotTemplateStatus,
+    BotTemplateType,
+)
 from app.models.manual_asset import ManualAsset
 from app.models.pool_position import PoolPosition
 from app.models.pool_position_baseline import PoolPositionBaseline, BaselineSource
@@ -55,6 +82,29 @@ __all__ = [
     "Alert",
     "PortfolioSnapshot",
     "AuditLog",
+    "BillingProvider",
+    "BillingSubscriptionStatus",
+    "BillingInvoiceStatus",
+    "BillingPaymentStatus",
+    "BillingSubscription",
+    "BillingInvoice",
+    "BillingPayment",
+    "BotTemplateStatus",
+    "BotTemplateType",
+    "BotStrategyStatus",
+    "BotRunStatus",
+    "BotSignalAction",
+    "BotSignalStatus",
+    "BotBacktestStatus",
+    "BotStrategy",
+    "BotInstanceMode",
+    "BotInstanceStatus",
+    "BotTemplate",
+    "BotTemplateParameter",
+    "BotInstance",
+    "BotRun",
+    "BotSignal",
+    "BotBacktest",
     # DeFi Positions
     "ManualAsset",
     "PoolPosition",

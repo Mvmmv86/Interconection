@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from app.models.staking_position import StakingPosition
     from app.models.pool_position import PoolPosition
     from app.models.membership import Membership, Team
+    from app.models.bot import BotInstance
 
 
 class Client(Base, UUIDMixin, TimestampMixin):
@@ -76,6 +77,11 @@ class Client(Base, UUIDMixin, TimestampMixin):
     )
     pool_positions: Mapped[List["PoolPosition"]] = relationship(
         "PoolPosition",
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
+    bot_instances: Mapped[List["BotInstance"]] = relationship(
+        "BotInstance",
         back_populates="client",
         cascade="all, delete-orphan",
     )

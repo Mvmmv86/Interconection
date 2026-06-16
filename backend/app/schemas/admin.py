@@ -5,6 +5,12 @@ from typing import Any, Optional
 from uuid import UUID
 
 from app.models.organization import PlanType
+from app.models.billing import (
+    BillingInvoiceStatus,
+    BillingPaymentStatus,
+    BillingProvider,
+    BillingSubscriptionStatus,
+)
 from app.models.user import UserRole
 from app.schemas.common import BaseSchema
 
@@ -141,3 +147,155 @@ class AdminAuditLogResponse(BaseSchema):
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
     timestamp: datetime
+
+
+class AdminFinanceSummaryResponse(BaseSchema):
+    """Platform finance summary for super-admins."""
+
+    subscription_count: int = 0
+    active_subscription_count: int = 0
+    past_due_subscription_count: int = 0
+    open_invoice_count: int = 0
+    overdue_invoice_count: int = 0
+    mrr_cents: int = 0
+    open_amount_cents: int = 0
+    overdue_amount_cents: int = 0
+    paid_amount_30d_cents: int = 0
+    currency: str = "BRL"
+
+
+class AdminBillingSubscriptionResponse(BaseSchema):
+    """Billing subscription row for platform finance."""
+
+    id: UUID
+    organization_id: UUID
+    organization_name: str
+    plan: PlanType
+    status: str
+    provider: str
+    billing_email: Optional[str] = None
+    currency: str
+    monthly_amount_cents: int
+    current_period_start: Optional[datetime] = None
+    current_period_end: Optional[datetime] = None
+    trial_ends_at: Optional[datetime] = None
+    cancel_at_period_end: bool
+    provider_customer_id: Optional[str] = None
+    provider_subscription_id: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminBillingSubscriptionUpdate(BaseSchema):
+    """Mutable billing subscription fields for platform finance."""
+
+    plan: Optional[PlanType] = None
+    status: Optional[BillingSubscriptionStatus] = None
+    provider: Optional[BillingProvider] = None
+    billing_email: Optional[str] = None
+    currency: Optional[str] = None
+    monthly_amount_cents: Optional[int] = None
+    current_period_start: Optional[datetime] = None
+    current_period_end: Optional[datetime] = None
+    trial_ends_at: Optional[datetime] = None
+    cancel_at_period_end: Optional[bool] = None
+    provider_customer_id: Optional[str] = None
+    provider_subscription_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AdminBillingInvoiceCreate(BaseSchema):
+    """Create a manual invoice for a platform customer."""
+
+    organization_id: UUID
+    amount_due_cents: int
+    due_date: Optional[datetime] = None
+    issued_at: Optional[datetime] = None
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    number: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AdminBillingInvoiceUpdate(BaseSchema):
+    """Mutable invoice fields for platform finance."""
+
+    status: Optional[BillingInvoiceStatus] = None
+    number: Optional[str] = None
+    amount_due_cents: Optional[int] = None
+    issued_at: Optional[datetime] = None
+    due_date: Optional[datetime] = None
+    paid_at: Optional[datetime] = None
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    provider_invoice_id: Optional[str] = None
+    hosted_invoice_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AdminBillingInvoiceResponse(BaseSchema):
+    """Billing invoice row for platform finance."""
+
+    id: UUID
+    organization_id: UUID
+    organization_name: str
+    subscription_id: Optional[UUID] = None
+    status: str
+    provider: str
+    number: Optional[str] = None
+    currency: str
+    amount_due_cents: int
+    amount_paid_cents: int
+    issued_at: Optional[datetime] = None
+    due_date: Optional[datetime] = None
+    paid_at: Optional[datetime] = None
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    provider_invoice_id: Optional[str] = None
+    hosted_invoice_url: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminBillingPaymentCreate(BaseSchema):
+    """Register a manual payment for an invoice or organization."""
+
+    organization_id: Optional[UUID] = None
+    invoice_id: Optional[UUID] = None
+    amount_cents: int
+    paid_at: Optional[datetime] = None
+    provider_payment_id: Optional[str] = None
+    external_reference: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AdminBillingPaymentUpdate(BaseSchema):
+    """Mutable payment fields for platform finance."""
+
+    status: Optional[BillingPaymentStatus] = None
+    amount_cents: Optional[int] = None
+    paid_at: Optional[datetime] = None
+    provider_payment_id: Optional[str] = None
+    external_reference: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AdminBillingPaymentResponse(BaseSchema):
+    """Billing payment row for platform finance."""
+
+    id: UUID
+    organization_id: UUID
+    organization_name: str
+    invoice_id: Optional[UUID] = None
+    provider: str
+    status: str
+    amount_cents: int
+    currency: str
+    paid_at: Optional[datetime] = None
+    provider_payment_id: Optional[str] = None
+    external_reference: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime

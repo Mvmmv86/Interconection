@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.bot import BotInstance, BotInstanceStatus
 from app.models.client import Client
 from app.models.exchange import Exchange
 from app.models.membership import (
@@ -163,6 +164,12 @@ async def get_plan_usage(
         .join(Client, Client.id == Exchange.client_id)
         .where(Client.organization_id == organization_id)
     )
+    bots = await db.scalar(
+        select(func.count(BotInstance.id)).where(
+            BotInstance.organization_id == organization_id,
+            BotInstance.status != BotInstanceStatus.DISABLED,
+        )
+    )
 
     return {
         "members": int(active_members or 0) + int(pending_invites or 0),
@@ -170,7 +177,7 @@ async def get_plan_usage(
         "portfolios": int(portfolios or 0),
         "wallets": int(wallets or 0),
         "exchanges": int(exchanges or 0),
-        "bots": 0,
+        "bots": int(bots or 0),
         "strategies": 0,
     }
 
@@ -251,6 +258,17 @@ async def get_plan_usage_many(
     )
     for organization_id, count in exchanges_result.all():
         usage_by_org[organization_id]["exchanges"] = int(count or 0)
+
+    bots_result = await db.execute(
+        select(BotInstance.organization_id, func.count(BotInstance.id))
+        .where(
+            BotInstance.organization_id.in_(organization_ids),
+            BotInstance.status != BotInstanceStatus.DISABLED,
+        )
+        .group_by(BotInstance.organization_id)
+    )
+    for organization_id, count in bots_result.all():
+        usage_by_org[organization_id]["bots"] = int(count or 0)
 
     return usage_by_org
 

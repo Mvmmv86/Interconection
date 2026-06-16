@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from app.models.membership import Role, Membership, Invitation, Team
     from app.models.portfolio_snapshot import PortfolioSnapshot
     from app.models.audit_log import AuditLog
+    from app.models.billing import BillingInvoice, BillingPayment, BillingSubscription
+    from app.models.bot import BotInstance
 
 
 class PlanType(str, enum.Enum):
@@ -86,6 +88,27 @@ class Organization(Base, UUIDMixin, TimestampMixin):
     )
     audit_logs: Mapped[List["AuditLog"]] = relationship(
         "AuditLog",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+    billing_subscription: Mapped[Optional["BillingSubscription"]] = relationship(
+        "BillingSubscription",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    billing_invoices: Mapped[List["BillingInvoice"]] = relationship(
+        "BillingInvoice",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+    billing_payments: Mapped[List["BillingPayment"]] = relationship(
+        "BillingPayment",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+    bot_instances: Mapped[List["BotInstance"]] = relationship(
+        "BotInstance",
         back_populates="organization",
         cascade="all, delete-orphan",
     )

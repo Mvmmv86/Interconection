@@ -109,7 +109,8 @@ async def record_audit_event_immediate(
     """Record an audit event in its own transaction.
 
     Use this for failure paths where the request transaction is expected to
-    rollback, but the security/audit event still needs to be durable.
+    rollback, but the security/audit event still needs to be durable. This
+    helper opens a separate session and commits before returning.
     """
     if organization_id is None:
         return

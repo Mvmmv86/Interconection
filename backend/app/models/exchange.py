@@ -1,7 +1,7 @@
 """Exchange model."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
@@ -11,6 +11,7 @@ from app.db.base import Base, UUIDMixin
 
 if TYPE_CHECKING:
     from app.models.client import Client
+    from app.models.bot import BotInstance
 
 
 class Exchange(Base, UUIDMixin):
@@ -40,6 +41,10 @@ class Exchange(Base, UUIDMixin):
     client: Mapped["Client"] = relationship(
         "Client",
         back_populates="exchanges",
+    )
+    bot_instances: Mapped[List["BotInstance"]] = relationship(
+        "BotInstance",
+        back_populates="exchange",
     )
 
     def __repr__(self) -> str:

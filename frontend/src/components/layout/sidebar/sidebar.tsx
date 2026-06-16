@@ -12,6 +12,7 @@ import {
   PieChart,
   BarChart3,
   Bell,
+  Bot,
   Settings,
   ChevronLeft,
   Menu,
@@ -52,6 +53,7 @@ const analyticsNavItems: NavItem[] = [
   { label: 'Analytics', href: '/analytics', icon: BarChart3 },
   { label: 'Alerts', href: '/alerts', icon: Bell },
   { label: 'AI', href: '/ai', icon: Sparkles },
+  { label: 'Bots', href: '/bots', icon: Bot },
 ];
 
 const bottomNavItems: NavItem[] = [

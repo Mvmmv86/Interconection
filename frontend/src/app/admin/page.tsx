@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Activity,
@@ -19,12 +19,20 @@ import {
 import {
   api,
   type AdminAuditLog,
+  type AdminBillingInvoice,
+  type AdminBillingPayment,
+  type AdminBillingSubscription,
   type AdminClient,
+  type AdminFinanceSummary,
   type AdminOrganization,
   type AdminOverview,
   type AdminPlanDefinition,
   type AdminPlanUsage,
   type AdminUser,
+  type BotInstance,
+  type BotBacktest,
+  type BotStrategy,
+  type BotTemplate,
 } from '@/lib/api/client';
 import { useAuth } from '@/contexts/auth-context';
 import { Badge } from '@/components/ui/badge';
@@ -70,6 +78,19 @@ const emptyOverview: AdminOverview = {
   plan_count: 3,
 };
 
+const emptyFinanceSummary: AdminFinanceSummary = {
+  subscription_count: 0,
+  active_subscription_count: 0,
+  past_due_subscription_count: 0,
+  open_invoice_count: 0,
+  overdue_invoice_count: 0,
+  mrr_cents: 0,
+  open_amount_cents: 0,
+  overdue_amount_cents: 0,
+  paid_amount_30d_cents: 0,
+  currency: 'BRL',
+};
+
 const planMetricLabels: Record<string, string> = {
   members: 'Membros',
   teams: 'Equipes',
@@ -101,6 +122,13 @@ function formatLimit(value: number | null | undefined) {
   return value === null || value === undefined ? 'Ilimitado' : String(value);
 }
 
+function formatMoney(cents: number | null | undefined, currency = 'BRL') {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency,
+  }).format((cents || 0) / 100);
+}
+
 export default function PlatformAdminPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: isAuthLoading, logout } = useAuth();
@@ -112,6 +140,45 @@ export default function PlatformAdminPage() {
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [planDefinitions, setPlanDefinitions] = useState<AdminPlanDefinition[]>([]);
   const [planUsages, setPlanUsages] = useState<AdminPlanUsage[]>([]);
+  const [financeSummary, setFinanceSummary] = useState<AdminFinanceSummary>(emptyFinanceSummary);
+  const [billingSubscriptions, setBillingSubscriptions] = useState<AdminBillingSubscription[]>([]);
+  const [billingInvoices, setBillingInvoices] = useState<AdminBillingInvoice[]>([]);
+  const [billingPayments, setBillingPayments] = useState<AdminBillingPayment[]>([]);
+  const [botStrategies, setBotStrategies] = useState<BotStrategy[]>([]);
+  const [botBacktests, setBotBacktests] = useState<BotBacktest[]>([]);
+  const [botTemplates, setBotTemplates] = useState<BotTemplate[]>([]);
+  const [botInstances, setBotInstances] = useState<BotInstance[]>([]);
+  const [invoiceForm, setInvoiceForm] = useState({ organizationId: '', amount: '', dueDate: '', notes: '' });
+  const [paymentForm, setPaymentForm] = useState({ invoiceId: '', amount: '', notes: '' });
+  const [botTemplateForm, setBotTemplateForm] = useState({
+    name: '',
+    slug: '',
+    type: 'dca',
+    status: 'draft',
+    requiredPlan: 'pro',
+    description: '',
+    supportedExchanges: '',
+    supportedAssets: '',
+    riskNotes: '',
+    strategyId: '',
+  });
+  const [botStrategyForm, setBotStrategyForm] = useState({
+    name: '',
+    slug: '',
+    type: 'dca',
+    status: 'draft',
+    description: '',
+    shortWindow: '5',
+    longWindow: '20',
+    maxOrderUsd: '100',
+    maxPositionUsd: '1000',
+    allowedSymbols: '',
+  });
+  const [backtestForm, setBacktestForm] = useState({
+    strategyId: '',
+    symbol: 'BTC',
+    initialCapital: '10000',
+  });
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -142,6 +209,14 @@ export default function PlatformAdminPage() {
       auditResult,
       plansResult,
       planUsageResult,
+      financeSummaryResult,
+      billingSubscriptionsResult,
+      billingInvoicesResult,
+      billingPaymentsResult,
+      botStrategiesResult,
+      botBacktestsResult,
+      botTemplatesResult,
+      botInstancesResult,
     ] = await Promise.all([
       api.getAdminOverview(),
       api.getAdminOrganizations(),
@@ -150,6 +225,14 @@ export default function PlatformAdminPage() {
       api.getAdminAuditLogs(organizationId),
       api.getAdminPlans(),
       api.getAdminPlanUsage(organizationId),
+      api.getAdminFinanceSummary(organizationId),
+      api.getAdminBillingSubscriptions(organizationId),
+      api.getAdminBillingInvoices(organizationId),
+      api.getAdminBillingPayments(organizationId),
+      api.getAdminBotStrategies(),
+      api.getAdminBotBacktests(),
+      api.getAdminBotTemplates(),
+      api.getAdminBotInstances(organizationId),
     ]);
 
     if (
@@ -160,16 +243,32 @@ export default function PlatformAdminPage() {
       || !auditResult.success
       || !plansResult.success
       || !planUsageResult.success
+      || !financeSummaryResult.success
+      || !billingSubscriptionsResult.success
+      || !billingInvoicesResult.success
+      || !billingPaymentsResult.success
+      || !botStrategiesResult.success
+      || !botBacktestsResult.success
+      || !botTemplatesResult.success
+      || !botInstancesResult.success
     ) {
       setError(
         overviewResult.error
         || orgsResult.error
-      || usersResult.error
-      || clientsResult.error
-      || auditResult.error
-      || plansResult.error
-      || planUsageResult.error
-      || 'Nao foi possivel carregar o admin'
+        || usersResult.error
+        || clientsResult.error
+        || auditResult.error
+        || plansResult.error
+        || planUsageResult.error
+        || financeSummaryResult.error
+        || billingSubscriptionsResult.error
+        || billingInvoicesResult.error
+        || billingPaymentsResult.error
+        || botStrategiesResult.error
+        || botBacktestsResult.error
+        || botTemplatesResult.error
+        || botInstancesResult.error
+        || 'Nao foi possivel carregar o admin'
       );
       setIsLoading(false);
       return;
@@ -182,6 +281,14 @@ export default function PlatformAdminPage() {
     setAuditLogs(auditResult.data || []);
     setPlanDefinitions(plansResult.data || []);
     setPlanUsages(planUsageResult.data || []);
+    setFinanceSummary(financeSummaryResult.data || emptyFinanceSummary);
+    setBillingSubscriptions(billingSubscriptionsResult.data || []);
+    setBillingInvoices(billingInvoicesResult.data || []);
+    setBillingPayments(billingPaymentsResult.data || []);
+    setBotStrategies(botStrategiesResult.data || []);
+    setBotBacktests(botBacktestsResult.data || []);
+    setBotTemplates(botTemplatesResult.data || []);
+    setBotInstances(botInstancesResult.data || []);
     setIsLoading(false);
   }, [user?.is_superuser]);
 
@@ -217,6 +324,265 @@ export default function PlatformAdminPage() {
       return;
     }
     setUsers((current) => current.map((item) => item.id === targetUser.id ? result.data! : item));
+  };
+
+  const reloadCurrentAdminData = async () => {
+    await loadAdminData(selectedOrganizationId || undefined);
+  };
+
+  const amountToCents = (value: string) => {
+    const normalized = value.replace(/\./g, '').replace(',', '.');
+    const amount = Number.parseFloat(normalized);
+    if (!Number.isFinite(amount) || amount < 0) return null;
+    return Math.round(amount * 100);
+  };
+
+  const splitCsv = (value: string) => value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const slugify = (value: string) => value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  const updateBillingSubscription = async (
+    subscription: AdminBillingSubscription,
+    data: Partial<{
+      plan: 'free' | 'pro' | 'enterprise';
+      status: string;
+      billing_email: string | null;
+      monthly_amount_cents: number;
+      cancel_at_period_end: boolean;
+    }>
+  ) => {
+    const result = await api.updateAdminBillingSubscription(subscription.organization_id, data);
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel atualizar a assinatura');
+      return;
+    }
+    await reloadCurrentAdminData();
+  };
+
+  const createBotStrategy = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = botStrategyForm.name.trim();
+    const slug = slugify(botStrategyForm.slug || name);
+    if (!name || !slug) {
+      setError('Informe nome e slug validos para criar a estrategia');
+      return;
+    }
+    const result = await api.createAdminBotStrategy({
+      name,
+      slug,
+      type: botStrategyForm.type,
+      status: botStrategyForm.status,
+      description: botStrategyForm.description || null,
+      indicator_config: {
+        short_window: Number.parseInt(botStrategyForm.shortWindow, 10) || 5,
+        long_window: Number.parseInt(botStrategyForm.longWindow, 10) || 20,
+      },
+      rule_config: {
+        engine: 'moving_average_v1',
+      },
+      risk_defaults: {
+        max_order_usd: amountToCents(botStrategyForm.maxOrderUsd) !== null
+          ? Number.parseFloat(botStrategyForm.maxOrderUsd.replace(',', '.'))
+          : 100,
+        max_position_usd: amountToCents(botStrategyForm.maxPositionUsd) !== null
+          ? Number.parseFloat(botStrategyForm.maxPositionUsd.replace(',', '.'))
+          : 1000,
+        allowed_symbols: splitCsv(botStrategyForm.allowedSymbols).map((asset) => asset.toUpperCase()),
+      },
+    });
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel criar a estrategia');
+      return;
+    }
+    setBotStrategyForm({
+      name: '',
+      slug: '',
+      type: 'dca',
+      status: 'draft',
+      description: '',
+      shortWindow: '5',
+      longWindow: '20',
+      maxOrderUsd: '100',
+      maxPositionUsd: '1000',
+      allowedSymbols: '',
+    });
+    await reloadCurrentAdminData();
+  };
+
+  const updateBotStrategy = async (
+    strategy: BotStrategy,
+    data: Partial<{ status: string }>
+  ) => {
+    const result = await api.updateAdminBotStrategy(strategy.id, data);
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel atualizar a estrategia');
+      return;
+    }
+    await reloadCurrentAdminData();
+  };
+
+  const runBotBacktest = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!backtestForm.strategyId || !backtestForm.symbol.trim()) {
+      setError('Selecione uma estrategia e um simbolo para rodar o backtest');
+      return;
+    }
+    const initialCapital = Number.parseFloat(backtestForm.initialCapital.replace(',', '.'));
+    const result = await api.runAdminBotBacktest(backtestForm.strategyId, {
+      symbol: backtestForm.symbol.toUpperCase(),
+      timeframe: '1d',
+      initial_capital_usd: Number.isFinite(initialCapital) ? initialCapital : 10000,
+    });
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel rodar o backtest');
+      return;
+    }
+    await reloadCurrentAdminData();
+  };
+
+  const createBillingInvoice = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const amountCents = amountToCents(invoiceForm.amount);
+    const organizationId = invoiceForm.organizationId || selectedOrganizationId;
+    if (!organizationId || amountCents === null || amountCents <= 0) {
+      setError('Informe cliente e valor valido para criar a cobranca');
+      return;
+    }
+    const result = await api.createAdminBillingInvoice({
+      organization_id: organizationId,
+      amount_due_cents: amountCents,
+      due_date: invoiceForm.dueDate ? new Date(invoiceForm.dueDate).toISOString() : null,
+      notes: invoiceForm.notes || null,
+    });
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel criar a cobranca');
+      return;
+    }
+    setInvoiceForm({ organizationId: '', amount: '', dueDate: '', notes: '' });
+    await reloadCurrentAdminData();
+  };
+
+  const registerBillingPayment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const amountCents = amountToCents(paymentForm.amount);
+    if (!paymentForm.invoiceId || amountCents === null || amountCents <= 0) {
+      setError('Informe uma cobranca e um valor valido para registrar pagamento');
+      return;
+    }
+    const result = await api.createAdminBillingPayment({
+      invoice_id: paymentForm.invoiceId,
+      amount_cents: amountCents,
+      notes: paymentForm.notes || null,
+    });
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel registrar o pagamento');
+      return;
+    }
+    setPaymentForm({ invoiceId: '', amount: '', notes: '' });
+    await reloadCurrentAdminData();
+  };
+
+  const markInvoicePaid = async (invoice: AdminBillingInvoice) => {
+    const remainingCents = Math.max(invoice.amount_due_cents - invoice.amount_paid_cents, 0);
+    if (remainingCents <= 0) return;
+    const result = await api.createAdminBillingPayment({
+      invoice_id: invoice.id,
+      amount_cents: remainingCents,
+      notes: 'Baixa manual pelo admin',
+    });
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel baixar a cobranca');
+      return;
+    }
+    await reloadCurrentAdminData();
+  };
+
+  const voidBillingInvoice = async (invoice: AdminBillingInvoice) => {
+    const result = await api.updateAdminBillingInvoice(invoice.id, { status: 'void' });
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel cancelar a cobranca');
+      return;
+    }
+    await reloadCurrentAdminData();
+  };
+
+  const createBotTemplate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = botTemplateForm.name.trim();
+    const slug = slugify(botTemplateForm.slug || name);
+    if (!name || !slug) {
+      setError('Informe nome e slug validos para criar o bot produto');
+      return;
+    }
+    const result = await api.createAdminBotTemplate({
+      name,
+      slug,
+      type: botTemplateForm.type,
+      status: botTemplateForm.status,
+      required_plan: botTemplateForm.requiredPlan as 'free' | 'pro' | 'enterprise',
+      description: botTemplateForm.description || null,
+      requires_trade_permission: false,
+      supported_exchanges: splitCsv(botTemplateForm.supportedExchanges),
+      supported_assets: splitCsv(botTemplateForm.supportedAssets).map((asset) => asset.toUpperCase()),
+      default_parameters: {},
+      risk_notes: botTemplateForm.riskNotes || null,
+      strategy_id: botTemplateForm.strategyId || null,
+      parameters: [],
+    });
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel criar o bot produto');
+      return;
+    }
+    setBotTemplateForm({
+      name: '',
+      slug: '',
+      type: 'dca',
+      status: 'draft',
+      requiredPlan: 'pro',
+      description: '',
+      supportedExchanges: '',
+      supportedAssets: '',
+      riskNotes: '',
+      strategyId: '',
+    });
+    await reloadCurrentAdminData();
+  };
+
+  const updateBotTemplate = async (
+    template: BotTemplate,
+    data: Partial<{
+      status: string;
+      required_plan: 'free' | 'pro' | 'enterprise';
+      requires_trade_permission: boolean;
+      strategy_id: string | null;
+    }>
+  ) => {
+    const result = await api.updateAdminBotTemplate(template.id, data);
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel atualizar o bot produto');
+      return;
+    }
+    await reloadCurrentAdminData();
+  };
+
+  const updateBotInstance = async (
+    instance: BotInstance,
+    statusValue: 'active' | 'paused' | 'disabled'
+  ) => {
+    const result = await api.updateAdminBotInstance(instance.id, { status: statusValue });
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel atualizar o bot do cliente');
+      return;
+    }
+    await reloadCurrentAdminData();
   };
 
   if (isAuthLoading) {
@@ -576,22 +942,802 @@ export default function PlatformAdminPage() {
           )}
 
           {activeTab === 'strategies' && (
-            <PlaceholderSection
-              title="Estrategias"
-              description="Espaco reservado para catalogar estrategias, indicadores e backtests quando o modulo de bots entrar."
-            />
+            <div className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-3">
+                {[
+                  ['Estrategias', botStrategies.length, 'Motores cadastrados'],
+                  ['Publicadas', botStrategies.filter((strategy) => strategy.status === 'published').length, 'Disponiveis para bots'],
+                  ['Backtests', botBacktests.length, 'Simulacoes executadas'],
+                ].map(([label, value, caption]) => (
+                  <Card key={label} variant="glass" className="p-5">
+                    <p className="text-caption text-text-muted">{label}</p>
+                    <p className="mt-2 text-heading-md text-text-primary">{value}</p>
+                    <p className="mt-1 text-caption text-text-tertiary">{caption}</p>
+                  </Card>
+                ))}
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <Card variant="glass">
+                  <CardHeader>
+                    <CardTitle>Criar estrategia</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <form className="grid gap-3" onSubmit={createBotStrategy}>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <input
+                          value={botStrategyForm.name}
+                          onChange={(event) => setBotStrategyForm((current) => ({
+                            ...current,
+                            name: event.target.value,
+                            slug: current.slug || slugify(event.target.value),
+                          }))}
+                          placeholder="Nome. Ex: DCA MA Conservador"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                        <input
+                          value={botStrategyForm.slug}
+                          onChange={(event) => setBotStrategyForm((current) => ({
+                            ...current,
+                            slug: slugify(event.target.value),
+                          }))}
+                          placeholder="slug-da-estrategia"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <Select
+                          value={botStrategyForm.type}
+                          options={[
+                            { value: 'dca', label: 'DCA' },
+                            { value: 'grid', label: 'Grid' },
+                            { value: 'rebalance', label: 'Rebalance' },
+                            { value: 'signal', label: 'Sinais' },
+                            { value: 'arbitrage', label: 'Arbitragem' },
+                            { value: 'custom', label: 'Custom' },
+                          ]}
+                          onChange={(event) => setBotStrategyForm((current) => ({
+                            ...current,
+                            type: event.target.value,
+                          }))}
+                          className="h-10 py-0 text-body-sm"
+                        />
+                        <Select
+                          value={botStrategyForm.status}
+                          options={[
+                            { value: 'draft', label: 'Rascunho' },
+                            { value: 'published', label: 'Publicado' },
+                            { value: 'disabled', label: 'Desativado' },
+                          ]}
+                          onChange={(event) => setBotStrategyForm((current) => ({
+                            ...current,
+                            status: event.target.value,
+                          }))}
+                          className="h-10 py-0 text-body-sm"
+                        />
+                        <input
+                          value={botStrategyForm.allowedSymbols}
+                          onChange={(event) => setBotStrategyForm((current) => ({
+                            ...current,
+                            allowedSymbols: event.target.value,
+                          }))}
+                          placeholder="BTC, ETH, SOL"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-4">
+                        <input
+                          value={botStrategyForm.shortWindow}
+                          onChange={(event) => setBotStrategyForm((current) => ({
+                            ...current,
+                            shortWindow: event.target.value,
+                          }))}
+                          placeholder="MA curta"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                        <input
+                          value={botStrategyForm.longWindow}
+                          onChange={(event) => setBotStrategyForm((current) => ({
+                            ...current,
+                            longWindow: event.target.value,
+                          }))}
+                          placeholder="MA longa"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                        <input
+                          value={botStrategyForm.maxOrderUsd}
+                          onChange={(event) => setBotStrategyForm((current) => ({
+                            ...current,
+                            maxOrderUsd: event.target.value,
+                          }))}
+                          placeholder="Max ordem USD"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                        <input
+                          value={botStrategyForm.maxPositionUsd}
+                          onChange={(event) => setBotStrategyForm((current) => ({
+                            ...current,
+                            maxPositionUsd: event.target.value,
+                          }))}
+                          placeholder="Max posicao USD"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                      </div>
+                      <textarea
+                        value={botStrategyForm.description}
+                        onChange={(event) => setBotStrategyForm((current) => ({
+                          ...current,
+                          description: event.target.value,
+                        }))}
+                        placeholder="Descricao operacional, indicadores e condicoes de entrada/saida"
+                        className="min-h-20 rounded-lg border border-border-subtle bg-background-primary px-3 py-2 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                      <Button type="submit">Criar estrategia</Button>
+                    </form>
+                  </CardContent>
+                </Card>
+
+                <Card variant="glass">
+                  <CardHeader>
+                    <CardTitle>Rodar backtest</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <form className="grid gap-3" onSubmit={runBotBacktest}>
+                      <Select
+                        value={backtestForm.strategyId}
+                        options={[
+                          { value: '', label: 'Selecione uma estrategia' },
+                          ...botStrategies.map((strategy) => ({
+                            value: strategy.id,
+                            label: `${strategy.name} v${strategy.version}`,
+                          })),
+                        ]}
+                        onChange={(event) => setBacktestForm((current) => ({
+                          ...current,
+                          strategyId: event.target.value,
+                        }))}
+                        className="h-10 py-0 text-body-sm"
+                      />
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <input
+                          value={backtestForm.symbol}
+                          onChange={(event) => setBacktestForm((current) => ({
+                            ...current,
+                            symbol: event.target.value.toUpperCase(),
+                          }))}
+                          placeholder="BTC"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                        <input
+                          value={backtestForm.initialCapital}
+                          onChange={(event) => setBacktestForm((current) => ({
+                            ...current,
+                            initialCapital: event.target.value,
+                          }))}
+                          placeholder="Capital inicial USD"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                      </div>
+                      <Button type="submit">Executar backtest</Button>
+                    </form>
+                    <div className="mt-5 space-y-3">
+                      {botBacktests.slice(0, 5).map((backtest) => (
+                        <div key={backtest.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-heading-sm text-text-primary">{backtest.name}</p>
+                            <Badge variant={backtest.status === 'succeeded' ? 'success' : backtest.status === 'failed' ? 'error' : 'yellow'} size="sm">
+                              {backtest.status}
+                            </Badge>
+                            <Badge variant="blue" size="sm">{backtest.symbol}</Badge>
+                          </div>
+                          <p className="mt-2 text-caption text-text-secondary">
+                            Retorno: {String(backtest.result_summary.total_return_percent ?? 'n/a')}% - Trades: {String(backtest.result_summary.trade_count ?? 0)}
+                          </p>
+                          {backtest.error && <p className="mt-1 text-caption text-status-error">{backtest.error}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card variant="glass">
+                <CardHeader>
+                  <CardTitle>Estrategias cadastradas</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {botStrategies.length === 0 && (
+                    <p className="py-6 text-center text-body-sm text-text-muted">Nenhuma estrategia criada ainda.</p>
+                  )}
+                  {botStrategies.map((strategy) => (
+                    <div key={strategy.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-heading-sm text-text-primary">{strategy.name}</p>
+                            <Badge variant={strategy.status === 'published' ? 'success' : strategy.status === 'disabled' ? 'error' : 'yellow'} size="sm">
+                              {strategy.status}
+                            </Badge>
+                            <Badge variant="purple" size="sm">{strategy.type}</Badge>
+                            <Badge variant="blue" size="sm">v{strategy.version}</Badge>
+                          </div>
+                          <p className="mt-1 text-caption text-text-muted">{strategy.description || 'Sem descricao.'}</p>
+                          <p className="mt-2 text-caption text-text-tertiary">
+                            {strategy.template_count} produtos - {strategy.instance_count} instancias - {strategy.backtest_count} backtests
+                          </p>
+                        </div>
+                        <Select
+                          value={strategy.status}
+                          options={[
+                            { value: 'draft', label: 'Rascunho' },
+                            { value: 'published', label: 'Publicado' },
+                            { value: 'disabled', label: 'Desativado' },
+                          ]}
+                          onChange={(event) => updateBotStrategy(strategy, { status: event.target.value })}
+                          className="h-9 min-w-[150px] py-0 text-body-sm"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
           )}
           {activeTab === 'bots' && (
-            <PlaceholderSection
-              title="Bots"
-              description="Painel global futuro para acompanhar bots ativos, filas, sinais, locks e falhas por conta."
-            />
+            <div className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-3">
+                {[
+                  ['Produtos', botTemplates.length, 'Bots criados pela plataforma'],
+                  ['Publicados', botTemplates.filter((template) => template.status === 'published').length, 'Disponiveis para clientes'],
+                  ['Instancias', botInstances.length, 'Ativacoes em contas de clientes'],
+                ].map(([label, value, caption]) => (
+                  <Card key={label} variant="glass" className="p-5">
+                    <p className="text-caption text-text-muted">{label}</p>
+                    <p className="mt-2 text-heading-md text-text-primary">{value}</p>
+                    <p className="mt-1 text-caption text-text-tertiary">{caption}</p>
+                  </Card>
+                ))}
+              </div>
+
+              <Card variant="glass">
+                <CardHeader>
+                  <CardTitle>Criar Bot Produto</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <form className="grid gap-3" onSubmit={createBotTemplate}>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <input
+                        value={botTemplateForm.name}
+                        onChange={(event) => setBotTemplateForm((current) => ({
+                          ...current,
+                          name: event.target.value,
+                          slug: current.slug || slugify(event.target.value),
+                        }))}
+                        placeholder="Nome do bot. Ex: DCA Bitcoin Conservador"
+                        className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                      <input
+                        value={botTemplateForm.slug}
+                        onChange={(event) => setBotTemplateForm((current) => ({
+                          ...current,
+                          slug: slugify(event.target.value),
+                        }))}
+                        placeholder="slug-do-bot"
+                        className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <Select
+                        value={botTemplateForm.type}
+                        options={[
+                          { value: 'dca', label: 'DCA' },
+                          { value: 'grid', label: 'Grid' },
+                          { value: 'rebalance', label: 'Rebalance' },
+                          { value: 'signal', label: 'Sinais' },
+                          { value: 'arbitrage', label: 'Arbitragem' },
+                          { value: 'custom', label: 'Custom' },
+                        ]}
+                        onChange={(event) => setBotTemplateForm((current) => ({
+                          ...current,
+                          type: event.target.value,
+                        }))}
+                        className="h-10 py-0 text-body-sm"
+                      />
+                      <Select
+                        value={botTemplateForm.requiredPlan}
+                        options={[
+                          { value: 'free', label: 'Free' },
+                          { value: 'pro', label: 'Pro' },
+                          { value: 'enterprise', label: 'Enterprise' },
+                        ]}
+                        onChange={(event) => setBotTemplateForm((current) => ({
+                          ...current,
+                          requiredPlan: event.target.value,
+                        }))}
+                        className="h-10 py-0 text-body-sm"
+                      />
+                      <Select
+                        value={botTemplateForm.status}
+                        options={[
+                          { value: 'draft', label: 'Rascunho' },
+                          { value: 'published', label: 'Publicado' },
+                          { value: 'disabled', label: 'Desativado' },
+                        ]}
+                        onChange={(event) => setBotTemplateForm((current) => ({
+                          ...current,
+                          status: event.target.value,
+                        }))}
+                        className="h-10 py-0 text-body-sm"
+                      />
+                    </div>
+                    <Select
+                      value={botTemplateForm.strategyId}
+                      options={[
+                        { value: '', label: 'Sem estrategia vinculada' },
+                        ...botStrategies.map((strategy) => ({
+                          value: strategy.id,
+                          label: `${strategy.name} v${strategy.version}`,
+                        })),
+                      ]}
+                      onChange={(event) => setBotTemplateForm((current) => ({
+                        ...current,
+                        strategyId: event.target.value,
+                      }))}
+                      className="h-10 py-0 text-body-sm"
+                    />
+                    <textarea
+                      value={botTemplateForm.description}
+                      onChange={(event) => setBotTemplateForm((current) => ({
+                        ...current,
+                        description: event.target.value,
+                      }))}
+                      placeholder="Descricao para o cliente entender quando ativar esse bot"
+                      className="min-h-20 rounded-lg border border-border-subtle bg-background-primary px-3 py-2 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                    />
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <input
+                        value={botTemplateForm.supportedExchanges}
+                        onChange={(event) => setBotTemplateForm((current) => ({
+                          ...current,
+                          supportedExchanges: event.target.value,
+                        }))}
+                        placeholder="Exchanges suportadas: bybit, binance"
+                        className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                      <input
+                        value={botTemplateForm.supportedAssets}
+                        onChange={(event) => setBotTemplateForm((current) => ({
+                          ...current,
+                          supportedAssets: event.target.value,
+                        }))}
+                        placeholder="Ativos suportados: BTC, ETH, SOL"
+                        className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                    </div>
+                    <textarea
+                      value={botTemplateForm.riskNotes}
+                      onChange={(event) => setBotTemplateForm((current) => ({
+                        ...current,
+                        riskNotes: event.target.value,
+                      }))}
+                      placeholder="Notas de risco e operacao interna"
+                      className="min-h-20 rounded-lg border border-border-subtle bg-background-primary px-3 py-2 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                    />
+                    <Button type="submit">Criar bot produto</Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <Card variant="glass">
+                  <CardHeader>
+                    <CardTitle>Catalogo de bots</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {botTemplates.length === 0 && (
+                      <p className="py-6 text-center text-body-sm text-text-muted">Nenhum bot produto criado ainda.</p>
+                    )}
+                    {botTemplates.map((template) => (
+                      <div key={template.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-heading-sm text-text-primary">{template.name}</p>
+                              <Badge variant={template.status === 'published' ? 'success' : template.status === 'disabled' ? 'error' : 'yellow'} size="sm">
+                                {template.status}
+                              </Badge>
+                              <Badge variant="purple" size="sm">{template.type}</Badge>
+                              <Badge variant="blue" size="sm">{template.required_plan}</Badge>
+                              {template.strategy_name && <Badge variant="success" size="sm">{template.strategy_name}</Badge>}
+                            </div>
+                            <p className="mt-1 text-caption text-text-muted">{template.description || 'Sem descricao publica.'}</p>
+                            <p className="mt-2 text-caption text-text-tertiary">
+                              {template.total_instance_count} instancias - {template.active_instance_count} ativas
+                            </p>
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-3">
+                            <Select
+                              value={template.status}
+                              options={[
+                                { value: 'draft', label: 'Rascunho' },
+                                { value: 'published', label: 'Publicado' },
+                                { value: 'disabled', label: 'Desativado' },
+                                { value: 'archived', label: 'Arquivado' },
+                              ]}
+                              onChange={(event) => updateBotTemplate(template, { status: event.target.value })}
+                              className="h-9 min-w-[140px] py-0 text-body-sm"
+                            />
+                            <Select
+                              value={template.required_plan}
+                              options={[
+                                { value: 'free', label: 'Free' },
+                                { value: 'pro', label: 'Pro' },
+                                { value: 'enterprise', label: 'Enterprise' },
+                              ]}
+                              onChange={(event) => updateBotTemplate(template, {
+                                required_plan: event.target.value as 'free' | 'pro' | 'enterprise',
+                              })}
+                              className="h-9 min-w-[140px] py-0 text-body-sm"
+                            />
+                            <Select
+                              value={template.strategy_id || ''}
+                              options={[
+                                { value: '', label: 'Sem estrategia' },
+                                ...botStrategies.map((strategy) => ({
+                                  value: strategy.id,
+                                  label: strategy.name,
+                                })),
+                              ]}
+                              onChange={(event) => updateBotTemplate(template, {
+                                strategy_id: event.target.value || null,
+                              })}
+                              className="h-9 min-w-[160px] py-0 text-body-sm"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+
+                <Card variant="glass">
+                  <CardHeader>
+                    <CardTitle>Instancias de clientes</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {botInstances.length === 0 && (
+                      <p className="py-6 text-center text-body-sm text-text-muted">Nenhum cliente ativou bots ainda.</p>
+                    )}
+                    {botInstances.map((instance) => (
+                      <div key={instance.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-heading-sm text-text-primary">{instance.name}</p>
+                              <Badge variant={instance.status === 'active' ? 'success' : instance.status === 'error' ? 'error' : 'yellow'} size="sm">
+                                {instance.status}
+                              </Badge>
+                              <Badge variant="purple" size="sm">{instance.mode}</Badge>
+                              {instance.strategy_name && <Badge variant="blue" size="sm">{instance.strategy_name}</Badge>}
+                            </div>
+                            <p className="mt-1 text-caption text-text-muted">
+                              Cliente: {instance.organization_name || 'Conta'} - Carteira: {instance.client_name}
+                            </p>
+                            <p className="mt-1 text-caption text-text-tertiary">
+                              Produto: {instance.template_name || 'Template removido'} - Exchange: {instance.exchange_name || 'Nao vinculada'}
+                            </p>
+                            <p className="mt-1 text-caption text-text-tertiary">
+                              Ultimo ciclo: {formatDateTime(instance.last_run_at)} - Max ordem: ${String(instance.risk_config.max_order_usd || 0)}
+                            </p>
+                            {instance.last_error && (
+                              <p className="mt-2 text-caption text-status-error">{instance.last_error}</p>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              disabled={instance.status === 'paused'}
+                              onClick={() => updateBotInstance(instance, 'paused')}
+                            >
+                              Pausar
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={instance.status === 'disabled'}
+                              onClick={() => updateBotInstance(instance, 'disabled')}
+                            >
+                              Desabilitar
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
           )}
           {activeTab === 'finance' && (
-            <PlaceholderSection
-              title="Financeiro"
-              description="Futuro modulo para assinaturas, invoices, inadimplencia, limites e conciliacao de pagamentos."
-            />
+            <div className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {[
+                  ['MRR', formatMoney(financeSummary.mrr_cents, financeSummary.currency), 'Receita recorrente ativa'],
+                  ['Aberto', formatMoney(financeSummary.open_amount_cents, financeSummary.currency), `${financeSummary.open_invoice_count} cobrancas abertas`],
+                  ['Vencido', formatMoney(financeSummary.overdue_amount_cents, financeSummary.currency), `${financeSummary.overdue_invoice_count} cobrancas vencidas`],
+                  ['Pago 30d', formatMoney(financeSummary.paid_amount_30d_cents, financeSummary.currency), 'Recebido nos ultimos 30 dias'],
+                ].map(([label, value, caption]) => (
+                  <Card key={label} variant="glass" className="p-5">
+                    <p className="text-caption text-text-muted">{label}</p>
+                    <p className="mt-2 text-heading-md text-text-primary">{value}</p>
+                    <p className="mt-1 text-caption text-text-tertiary">{caption}</p>
+                  </Card>
+                ))}
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <Card variant="glass">
+                  <CardHeader>
+                    <CardTitle>Criar cobranca manual</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <form className="grid gap-3" onSubmit={createBillingInvoice}>
+                      <Select
+                        value={invoiceForm.organizationId || selectedOrganizationId}
+                        options={organizationOptions.filter((option) => option.value)}
+                        onChange={(event) => setInvoiceForm((current) => ({
+                          ...current,
+                          organizationId: event.target.value,
+                        }))}
+                        className="h-10 py-0 text-body-sm"
+                      />
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <input
+                          value={invoiceForm.amount}
+                          onChange={(event) => setInvoiceForm((current) => ({
+                            ...current,
+                            amount: event.target.value,
+                          }))}
+                          placeholder="Valor em R$"
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                        <input
+                          type="date"
+                          value={invoiceForm.dueDate}
+                          onChange={(event) => setInvoiceForm((current) => ({
+                            ...current,
+                            dueDate: event.target.value,
+                          }))}
+                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                      </div>
+                      <textarea
+                        value={invoiceForm.notes}
+                        onChange={(event) => setInvoiceForm((current) => ({
+                          ...current,
+                          notes: event.target.value,
+                        }))}
+                        placeholder="Notas internas"
+                        className="min-h-20 rounded-lg border border-border-subtle bg-background-primary px-3 py-2 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                      <Button type="submit">Criar cobranca</Button>
+                    </form>
+                  </CardContent>
+                </Card>
+
+                <Card variant="glass">
+                  <CardHeader>
+                    <CardTitle>Registrar pagamento manual</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <form className="grid gap-3" onSubmit={registerBillingPayment}>
+                      <Select
+                        value={paymentForm.invoiceId}
+                        options={[
+                          { value: '', label: 'Selecione uma cobranca' },
+                          ...billingInvoices
+                            .filter((invoice) => !['paid', 'void'].includes(invoice.status))
+                            .map((invoice) => ({
+                              value: invoice.id,
+                              label: `${invoice.organization_name} - ${formatMoney(invoice.amount_due_cents - invoice.amount_paid_cents, invoice.currency)}`,
+                            })),
+                        ]}
+                        onChange={(event) => setPaymentForm((current) => ({
+                          ...current,
+                          invoiceId: event.target.value,
+                        }))}
+                        className="h-10 py-0 text-body-sm"
+                      />
+                      <input
+                        value={paymentForm.amount}
+                        onChange={(event) => setPaymentForm((current) => ({
+                          ...current,
+                          amount: event.target.value,
+                        }))}
+                        placeholder="Valor em R$"
+                        className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                      <textarea
+                        value={paymentForm.notes}
+                        onChange={(event) => setPaymentForm((current) => ({
+                          ...current,
+                          notes: event.target.value,
+                        }))}
+                        placeholder="Notas internas"
+                        className="min-h-20 rounded-lg border border-border-subtle bg-background-primary px-3 py-2 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                      <Button type="submit">Registrar pagamento</Button>
+                    </form>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card variant="glass">
+                <CardHeader>
+                  <CardTitle>Assinaturas</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {billingSubscriptions.map((subscription) => (
+                    <div key={subscription.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-heading-sm text-text-primary">{subscription.organization_name}</p>
+                            <Badge
+                              variant={subscription.status === 'active' ? 'success' : subscription.status === 'past_due' ? 'error' : 'yellow'}
+                              size="sm"
+                            >
+                              {subscription.status}
+                            </Badge>
+                            <Badge variant="purple" size="sm">{subscription.provider}</Badge>
+                          </div>
+                          <p className="mt-1 text-caption text-text-muted">
+                            {subscription.billing_email || 'Sem email de cobranca'} - {formatMoney(subscription.monthly_amount_cents, subscription.currency)}/mes
+                          </p>
+                        </div>
+                        <div className="grid gap-2 md:grid-cols-4">
+                          <Select
+                            value={subscription.plan}
+                            options={[
+                              { value: 'free', label: 'Free' },
+                              { value: 'pro', label: 'Pro' },
+                              { value: 'enterprise', label: 'Enterprise' },
+                            ]}
+                            onChange={(event) => updateBillingSubscription(subscription, {
+                              plan: event.target.value as AdminBillingSubscription['plan'],
+                            })}
+                            className="h-9 min-w-[130px] py-0 text-body-sm"
+                          />
+                          <Select
+                            value={subscription.status}
+                            options={[
+                              { value: 'trialing', label: 'Trial' },
+                              { value: 'active', label: 'Ativa' },
+                              { value: 'past_due', label: 'Vencida' },
+                              { value: 'unpaid', label: 'Inadimplente' },
+                              { value: 'canceled', label: 'Cancelada' },
+                            ]}
+                            onChange={(event) => updateBillingSubscription(subscription, {
+                              status: event.target.value,
+                            })}
+                            className="h-9 min-w-[150px] py-0 text-body-sm"
+                          />
+                          <input
+                            defaultValue={(subscription.monthly_amount_cents / 100).toFixed(2)}
+                            onBlur={(event) => {
+                              const cents = amountToCents(event.target.value);
+                              if (cents !== null && cents !== subscription.monthly_amount_cents) {
+                                updateBillingSubscription(subscription, { monthly_amount_cents: cents });
+                              }
+                            }}
+                            className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                          />
+                          <input
+                            defaultValue={subscription.billing_email || ''}
+                            placeholder="Email cobranca"
+                            onBlur={(event) => updateBillingSubscription(subscription, {
+                              billing_email: event.target.value || null,
+                            })}
+                            className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card variant="glass">
+                <CardHeader>
+                  <CardTitle>Cobrancas</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {billingInvoices.length === 0 && (
+                    <p className="py-6 text-center text-body-sm text-text-muted">Nenhuma cobranca criada ainda.</p>
+                  )}
+                  {billingInvoices.map((invoice) => {
+                    const remainingCents = Math.max(invoice.amount_due_cents - invoice.amount_paid_cents, 0);
+                    return (
+                      <div key={invoice.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-heading-sm text-text-primary">{invoice.organization_name}</p>
+                              <Badge
+                                variant={invoice.status === 'paid' ? 'success' : invoice.status === 'overdue' ? 'error' : 'yellow'}
+                                size="sm"
+                              >
+                                {invoice.status}
+                              </Badge>
+                              {invoice.number && <Badge variant="default" size="sm">{invoice.number}</Badge>}
+                            </div>
+                            <p className="mt-1 text-caption text-text-muted">
+                              Total {formatMoney(invoice.amount_due_cents, invoice.currency)} - pago {formatMoney(invoice.amount_paid_cents, invoice.currency)} - restante {formatMoney(remainingCents, invoice.currency)}
+                            </p>
+                            <p className="mt-1 text-caption text-text-tertiary">
+                              Vencimento: {formatDateTime(invoice.due_date)}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              disabled={remainingCents <= 0 || invoice.status === 'void'}
+                              onClick={() => markInvoicePaid(invoice)}
+                            >
+                              Baixar total
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={invoice.status === 'paid' || invoice.status === 'void'}
+                              onClick={() => voidBillingInvoice(invoice)}
+                            >
+                              Cancelar
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+
+              <Card variant="glass">
+                <CardHeader>
+                  <CardTitle>Pagamentos recentes</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {billingPayments.length === 0 && (
+                    <p className="py-6 text-center text-body-sm text-text-muted">Nenhum pagamento registrado ainda.</p>
+                  )}
+                  {billingPayments.map((payment) => (
+                    <div key={payment.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-heading-sm text-text-primary">{payment.organization_name}</p>
+                            <Badge variant={payment.status === 'succeeded' ? 'success' : payment.status === 'failed' ? 'error' : 'yellow'} size="sm">
+                              {payment.status}
+                            </Badge>
+                            <Badge variant="purple" size="sm">{payment.provider}</Badge>
+                          </div>
+                          <p className="mt-1 text-caption text-text-muted">
+                            {formatMoney(payment.amount_cents, payment.currency)} - {formatDateTime(payment.paid_at)}
+                          </p>
+                          {payment.notes && <p className="mt-1 text-caption text-text-tertiary">{payment.notes}</p>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
           )}
           {activeTab === 'plans' && (
             <div className="space-y-6">

@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     analytics,
     alerts,
     assets,
+    bots,
     manual_assets,
     staking_positions,
     pool_positions,
@@ -32,6 +33,8 @@ api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Platform Admin"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(team.router, prefix="/team", tags=["Team"])
+api_router.include_router(bots.router, prefix="/bots", tags=["Bots"])
+api_router.include_router(bots.admin_router, prefix="/admin/bots", tags=["Platform Admin Bots"])
 api_router.include_router(clients.router, prefix="/clients", tags=["Clients"])
 api_router.include_router(wallets.router, prefix="/clients/{client_id}/wallets", tags=["Wallets"])
 api_router.include_router(exchanges.router, prefix="/clients/{client_id}/exchanges", tags=["Exchanges"])

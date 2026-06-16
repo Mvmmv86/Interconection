@@ -372,6 +372,235 @@ interface AdminPlanUsage {
   over_limit: Record<string, boolean>;
 }
 
+interface AdminFinanceSummary {
+  subscription_count: number;
+  active_subscription_count: number;
+  past_due_subscription_count: number;
+  open_invoice_count: number;
+  overdue_invoice_count: number;
+  mrr_cents: number;
+  open_amount_cents: number;
+  overdue_amount_cents: number;
+  paid_amount_30d_cents: number;
+  currency: string;
+}
+
+interface AdminBillingSubscription {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  plan: 'free' | 'pro' | 'enterprise';
+  status: string;
+  provider: string;
+  billing_email: string | null;
+  currency: string;
+  monthly_amount_cents: number;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  trial_ends_at: string | null;
+  cancel_at_period_end: boolean;
+  provider_customer_id: string | null;
+  provider_subscription_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AdminBillingInvoice {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  subscription_id: string | null;
+  status: string;
+  provider: string;
+  number: string | null;
+  currency: string;
+  amount_due_cents: number;
+  amount_paid_cents: number;
+  issued_at: string | null;
+  due_date: string | null;
+  paid_at: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  provider_invoice_id: string | null;
+  hosted_invoice_url: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AdminBillingPayment {
+  id: string;
+  organization_id: string;
+  organization_name: string;
+  invoice_id: string | null;
+  provider: string;
+  status: string;
+  amount_cents: number;
+  currency: string;
+  paid_at: string | null;
+  provider_payment_id: string | null;
+  external_reference: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotTemplateParameter {
+  id: string;
+  template_id: string;
+  key: string;
+  label: string;
+  type: string;
+  required: boolean;
+  default_value: unknown | null;
+  min_value: string | null;
+  max_value: string | null;
+  options: unknown[] | null;
+  help_text: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotTemplate {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  type: string;
+  status: string;
+  required_plan: string;
+  requires_trade_permission: boolean;
+  supported_exchanges: string[];
+  supported_assets: string[];
+  default_parameters: Record<string, unknown>;
+  risk_notes: string | null;
+  strategy_id: string | null;
+  strategy_name: string | null;
+  parameter_count: number;
+  active_instance_count: number;
+  total_instance_count: number;
+  parameters: BotTemplateParameter[];
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotInstance {
+  id: string;
+  template_id: string | null;
+  template_name: string | null;
+  template_type: string | null;
+  organization_id: string;
+  organization_name: string | null;
+  client_id: string;
+  client_name: string;
+  exchange_id: string | null;
+  exchange_name: string | null;
+  strategy_id: string | null;
+  strategy_name: string | null;
+  name: string;
+  mode: string;
+  status: string;
+  live_enabled: boolean;
+  parameters: Record<string, unknown>;
+  risk_config: Record<string, unknown>;
+  last_error: string | null;
+  last_heartbeat_at: string | null;
+  last_run_at: string | null;
+  started_at: string | null;
+  paused_at: string | null;
+  disabled_at: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotStrategy {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  type: string;
+  status: string;
+  version: number;
+  indicator_config: Record<string, unknown>;
+  rule_config: Record<string, unknown>;
+  risk_defaults: Record<string, unknown>;
+  template_count: number;
+  instance_count: number;
+  backtest_count: number;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotRun {
+  id: string;
+  instance_id: string;
+  organization_id: string;
+  client_id: string;
+  exchange_id: string | null;
+  strategy_id: string | null;
+  mode: string;
+  status: string;
+  cycle_key: string;
+  input_snapshot: Record<string, unknown>;
+  decision_snapshot: Record<string, unknown>;
+  risk_snapshot: Record<string, unknown>;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotSignal {
+  id: string;
+  instance_id: string;
+  run_id: string | null;
+  organization_id: string;
+  client_id: string;
+  exchange_id: string | null;
+  strategy_id: string | null;
+  action: string;
+  status: string;
+  symbol: string | null;
+  confidence: number | null;
+  price_usd: number | null;
+  quantity: number | null;
+  notional_usd: number | null;
+  reason: string | null;
+  input_snapshot: Record<string, unknown>;
+  risk_snapshot: Record<string, unknown>;
+  generated_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotBacktest {
+  id: string;
+  strategy_id: string;
+  template_id: string | null;
+  organization_id: string | null;
+  name: string;
+  symbol: string;
+  timeframe: string;
+  status: string;
+  period_start: string | null;
+  period_end: string | null;
+  initial_capital_usd: number;
+  result_summary: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  logs: unknown[];
+  error: string | null;
+  created_by_user_id: string | null;
+  started_at: string;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface AdminClient {
   id: string;
   organization_id: string;
@@ -779,6 +1008,272 @@ class ApiClient {
     return this.request<AdminPlanUsage[]>(`/api/v1/admin/plan-usage${qs}`);
   }
 
+  async getAdminFinanceSummary(organizationId?: string): Promise<ApiResponse<AdminFinanceSummary>> {
+    const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+    return this.request<AdminFinanceSummary>(`/api/v1/admin/finance/summary${qs}`);
+  }
+
+  async getAdminBillingSubscriptions(
+    organizationId?: string
+  ): Promise<ApiResponse<AdminBillingSubscription[]>> {
+    const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+    return this.request<AdminBillingSubscription[]>(`/api/v1/admin/finance/subscriptions${qs}`);
+  }
+
+  async updateAdminBillingSubscription(
+    organizationId: string,
+    data: Partial<{
+      plan: 'free' | 'pro' | 'enterprise';
+      status: string;
+      provider: string;
+      billing_email: string | null;
+      currency: string;
+      monthly_amount_cents: number;
+      current_period_start: string | null;
+      current_period_end: string | null;
+      trial_ends_at: string | null;
+      cancel_at_period_end: boolean;
+      provider_customer_id: string | null;
+      provider_subscription_id: string | null;
+      notes: string | null;
+    }>
+  ): Promise<ApiResponse<AdminBillingSubscription>> {
+    return this.request<AdminBillingSubscription>(
+      `/api/v1/admin/finance/subscriptions/${organizationId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
+  async getAdminBillingInvoices(organizationId?: string): Promise<ApiResponse<AdminBillingInvoice[]>> {
+    const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+    return this.request<AdminBillingInvoice[]>(`/api/v1/admin/finance/invoices${qs}`);
+  }
+
+  async createAdminBillingInvoice(data: {
+    organization_id: string;
+    amount_due_cents: number;
+    due_date?: string | null;
+    issued_at?: string | null;
+    period_start?: string | null;
+    period_end?: string | null;
+    number?: string | null;
+    notes?: string | null;
+  }): Promise<ApiResponse<AdminBillingInvoice>> {
+    return this.request<AdminBillingInvoice>('/api/v1/admin/finance/invoices', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAdminBillingInvoice(
+    invoiceId: string,
+    data: Partial<{
+      status: string;
+      number: string | null;
+      amount_due_cents: number;
+      issued_at: string | null;
+      due_date: string | null;
+      paid_at: string | null;
+      period_start: string | null;
+      period_end: string | null;
+      provider_invoice_id: string | null;
+      hosted_invoice_url: string | null;
+      notes: string | null;
+    }>
+  ): Promise<ApiResponse<AdminBillingInvoice>> {
+    return this.request<AdminBillingInvoice>(`/api/v1/admin/finance/invoices/${invoiceId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getAdminBillingPayments(organizationId?: string): Promise<ApiResponse<AdminBillingPayment[]>> {
+    const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+    return this.request<AdminBillingPayment[]>(`/api/v1/admin/finance/payments${qs}`);
+  }
+
+  async createAdminBillingPayment(data: {
+    organization_id?: string | null;
+    invoice_id?: string | null;
+    amount_cents: number;
+    paid_at?: string | null;
+    provider_payment_id?: string | null;
+    external_reference?: string | null;
+    notes?: string | null;
+  }): Promise<ApiResponse<AdminBillingPayment>> {
+    return this.request<AdminBillingPayment>('/api/v1/admin/finance/payments', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAdminBillingPayment(
+    paymentId: string,
+    data: Partial<{
+      status: string;
+      amount_cents: number;
+      paid_at: string | null;
+      provider_payment_id: string | null;
+      external_reference: string | null;
+      notes: string | null;
+    }>
+  ): Promise<ApiResponse<AdminBillingPayment>> {
+    return this.request<AdminBillingPayment>(`/api/v1/admin/finance/payments/${paymentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getAdminBotTemplates(status?: string): Promise<ApiResponse<BotTemplate[]>> {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    return this.request<BotTemplate[]>(`/api/v1/admin/bots/templates${qs}`);
+  }
+
+  async getAdminBotStrategies(status?: string): Promise<ApiResponse<BotStrategy[]>> {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    return this.request<BotStrategy[]>(`/api/v1/admin/bots/strategies${qs}`);
+  }
+
+  async createAdminBotStrategy(data: {
+    name: string;
+    slug: string;
+    description?: string | null;
+    type: string;
+    status: string;
+    indicator_config: Record<string, unknown>;
+    rule_config: Record<string, unknown>;
+    risk_defaults: Record<string, unknown>;
+  }): Promise<ApiResponse<BotStrategy>> {
+    return this.request<BotStrategy>('/api/v1/admin/bots/strategies', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAdminBotStrategy(
+    strategyId: string,
+    data: Partial<{
+      name: string;
+      slug: string;
+      description: string | null;
+      type: string;
+      status: string;
+      indicator_config: Record<string, unknown>;
+      rule_config: Record<string, unknown>;
+      risk_defaults: Record<string, unknown>;
+    }>
+  ): Promise<ApiResponse<BotStrategy>> {
+    return this.request<BotStrategy>(`/api/v1/admin/bots/strategies/${strategyId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async runAdminBotBacktest(
+    strategyId: string,
+    data: {
+      name?: string | null;
+      symbol: string;
+      timeframe?: string;
+      initial_capital_usd?: number;
+      period_start?: string | null;
+      period_end?: string | null;
+    }
+  ): Promise<ApiResponse<BotBacktest>> {
+    return this.request<BotBacktest>(`/api/v1/admin/bots/strategies/${strategyId}/backtests`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getAdminBotBacktests(strategyId?: string): Promise<ApiResponse<BotBacktest[]>> {
+    const qs = strategyId ? `?strategy_id=${encodeURIComponent(strategyId)}` : '';
+    return this.request<BotBacktest[]>(`/api/v1/admin/bots/backtests${qs}`);
+  }
+
+  async createAdminBotTemplate(data: {
+    name: string;
+    slug: string;
+    description?: string | null;
+    type: string;
+    status: string;
+    required_plan: 'free' | 'pro' | 'enterprise';
+    requires_trade_permission: boolean;
+    supported_exchanges: string[];
+    supported_assets: string[];
+    default_parameters: Record<string, unknown>;
+    risk_notes?: string | null;
+    strategy_id?: string | null;
+    parameters?: Array<{
+      key: string;
+      label: string;
+      type: string;
+      required: boolean;
+      default_value?: unknown | null;
+      min_value?: string | null;
+      max_value?: string | null;
+      options?: unknown[] | null;
+      help_text?: string | null;
+    }>;
+  }): Promise<ApiResponse<BotTemplate>> {
+    return this.request<BotTemplate>('/api/v1/admin/bots/templates', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAdminBotTemplate(
+    templateId: string,
+    data: Partial<{
+      name: string;
+      slug: string;
+      description: string | null;
+      type: string;
+      status: string;
+      required_plan: 'free' | 'pro' | 'enterprise';
+      requires_trade_permission: boolean;
+      supported_exchanges: string[];
+      supported_assets: string[];
+      default_parameters: Record<string, unknown>;
+      risk_notes: string | null;
+      strategy_id: string | null;
+      parameters: Array<{
+        key: string;
+        label: string;
+        type: string;
+        required: boolean;
+        default_value?: unknown | null;
+        min_value?: string | null;
+        max_value?: string | null;
+        options?: unknown[] | null;
+        help_text?: string | null;
+      }>;
+    }>
+  ): Promise<ApiResponse<BotTemplate>> {
+    return this.request<BotTemplate>(`/api/v1/admin/bots/templates/${templateId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getAdminBotInstances(organizationId?: string): Promise<ApiResponse<BotInstance[]>> {
+    const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+    return this.request<BotInstance[]>(`/api/v1/admin/bots/instances${qs}`);
+  }
+
+  async updateAdminBotInstance(
+    instanceId: string,
+    data: Partial<{ status: string; last_error: string | null }>
+  ): Promise<ApiResponse<BotInstance>> {
+    return this.request<BotInstance>(`/api/v1/admin/bots/instances/${instanceId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   async updateAdminOrganization(
     organizationId: string,
     data: { plan?: 'free' | 'pro' | 'enterprise'; is_active?: boolean }
@@ -812,6 +1307,78 @@ class ApiClient {
   async getAdminAuditLogs(organizationId?: string): Promise<ApiResponse<AdminAuditLog[]>> {
     const qs = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
     return this.request<AdminAuditLog[]>(`/api/v1/admin/audit-logs${qs}`);
+  }
+
+  async getBotTemplates(): Promise<ApiResponse<BotTemplate[]>> {
+    return this.request<BotTemplate[]>('/api/v1/bots/templates');
+  }
+
+  async getBotStrategies(): Promise<ApiResponse<BotStrategy[]>> {
+    return this.request<BotStrategy[]>('/api/v1/bots/strategies');
+  }
+
+  async getBotInstances(): Promise<ApiResponse<BotInstance[]>> {
+    return this.request<BotInstance[]>('/api/v1/bots/instances');
+  }
+
+  async createBotInstance(data: {
+    template_id: string;
+    client_id: string;
+    exchange_id?: string | null;
+    strategy_id?: string | null;
+    name?: string | null;
+    mode: 'paper' | 'live';
+    parameters?: Record<string, unknown>;
+    risk_config?: Record<string, unknown>;
+  }): Promise<ApiResponse<BotInstance>> {
+    return this.request<BotInstance>('/api/v1/bots/instances', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateBotInstance(
+    instanceId: string,
+    data: Partial<{
+      name: string;
+      client_id: string;
+      exchange_id: string | null;
+      strategy_id: string | null;
+      mode: 'paper' | 'live';
+      status: string;
+      parameters: Record<string, unknown>;
+      risk_config: Record<string, unknown>;
+    }>
+  ): Promise<ApiResponse<BotInstance>> {
+    return this.request<BotInstance>(`/api/v1/bots/instances/${instanceId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async runBotInstancePaper(instanceId: string, cycleKey?: string): Promise<ApiResponse<BotRun>> {
+    return this.request<BotRun>(`/api/v1/bots/instances/${instanceId}/run-paper`, {
+      method: 'POST',
+      body: JSON.stringify({ cycle_key: cycleKey || null }),
+    });
+  }
+
+  async getBotInstanceRuns(instanceId: string): Promise<ApiResponse<BotRun[]>> {
+    return this.request<BotRun[]>(`/api/v1/bots/instances/${instanceId}/runs`);
+  }
+
+  async getBotInstanceSignals(instanceId: string): Promise<ApiResponse<BotSignal[]>> {
+    return this.request<BotSignal[]>(`/api/v1/bots/instances/${instanceId}/signals`);
+  }
+
+  async requestBotLiveEnable(
+    instanceId: string,
+    data: { confirm_risk: boolean; reason?: string | null }
+  ): Promise<ApiResponse<BotInstance>> {
+    return this.request<BotInstance>(`/api/v1/bots/instances/${instanceId}/live/enable`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   // ========================
@@ -1045,6 +1612,16 @@ export type {
   AdminOverview,
   AdminPlanDefinition,
   AdminPlanUsage,
+  AdminFinanceSummary,
+  AdminBillingSubscription,
+  AdminBillingInvoice,
+  AdminBillingPayment,
+  BotTemplate,
+  BotInstance,
+  BotStrategy,
+  BotRun,
+  BotSignal,
+  BotBacktest,
   AdminClient,
   AdminAuditLog,
 };
