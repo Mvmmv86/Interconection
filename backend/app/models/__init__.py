@@ -23,6 +23,7 @@ from app.models.billing import (
 from app.models.bot import (
     BotBacktest,
     BotBacktestStatus,
+    BotIndicator,
     BotInstance,
     BotInstanceMode,
     BotInstanceStatus,
@@ -96,6 +97,7 @@ __all__ = [
     "BotSignalAction",
     "BotSignalStatus",
     "BotBacktestStatus",
+    "BotIndicator",
     "BotStrategy",
     "BotInstanceMode",
     "BotInstanceStatus",

@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, List, Optional
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -103,6 +103,31 @@ class BotBacktestStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class BotIndicator(Base, UUIDMixin, TimestampMixin):
+    """Reusable technical indicator available to strategy builders."""
+
+    __tablename__ = "bot_indicators"
+    __table_args__ = (
+        UniqueConstraint("key", name="uq_bot_indicators_key"),
+    )
+
+    key: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    category: Mapped[str] = mapped_column(String(80), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="active", nullable=False)
+    parameter_schema: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    output_schema: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    default_parameters: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    supported_timeframes: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    required_inputs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    # v1 stores the future engine handler reference. The current backtest still
+    # uses a transparent MA-crossover placeholder until strategy-specific
+    # handlers are implemented.
+    engine_handler: Mapped[str] = mapped_column(String(120), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
 class BotStrategy(Base, UUIDMixin, TimestampMixin):
     """Reusable strategy definition used by bot templates and instances."""
 
@@ -125,6 +150,7 @@ class BotStrategy(Base, UUIDMixin, TimestampMixin):
         nullable=False,
     )
     version: Mapped[int] = mapped_column(default=1, nullable=False)
+    market_config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     indicator_config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     rule_config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     risk_defaults: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)

@@ -316,6 +316,33 @@ class BotEngineService:
         }
         return decision, risk_snapshot
 
+    def _resolve_backtest_windows(self, strategy: BotStrategy) -> tuple[int, int]:
+        indicator_config = strategy.indicator_config or {}
+        short_window = int(indicator_config.get("short_window", 5) or 5)
+        long_window = int(indicator_config.get("long_window", 20) or 20)
+        indicators = indicator_config.get("indicators")
+        if isinstance(indicators, list):
+            lengths = []
+            for indicator in indicators:
+                if not isinstance(indicator, dict):
+                    continue
+                parameters = indicator.get("parameters")
+                if not isinstance(parameters, dict):
+                    continue
+                length = parameters.get("length") or parameters.get("fast_length") or parameters.get("short_length")
+                try:
+                    parsed = int(length)
+                except (TypeError, ValueError):
+                    continue
+                if parsed > 0:
+                    lengths.append(parsed)
+            if lengths:
+                short_window = min(lengths)
+                long_window = max(lengths)
+                if short_window == long_window:
+                    long_window = max(short_window + 1, 20)
+        return short_window, long_window
+
     async def run_backtest(
         self,
         *,
@@ -377,8 +404,7 @@ class BotEngineService:
         peak_equity = cash
         max_drawdown = Decimal("0")
         logs = []
-        short_window = int(strategy.indicator_config.get("short_window", 5) or 5)
-        long_window = int(strategy.indicator_config.get("long_window", 20) or 20)
+        short_window, long_window = self._resolve_backtest_windows(strategy)
         prices: list[Decimal] = []
 
         for candle in candles:
@@ -425,6 +451,9 @@ class BotEngineService:
             "final_equity_usd": _json_number(final_equity),
             "total_return_percent": _json_number(total_return),
             "trade_count": len(logs),
+            "engine_note": "v1 placeholder: ran moving-average crossover with windows extracted from selected indicators. Strategy-specific logic ships in the next phase.",
+            "short_window": short_window,
+            "long_window": long_window,
         }
         backtest.metrics = {
             "max_drawdown_percent": _json_number(max_drawdown),

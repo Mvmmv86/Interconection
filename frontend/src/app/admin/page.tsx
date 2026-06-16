@@ -9,6 +9,7 @@ import {
   Building2,
   CreditCard,
   FileText,
+  Info,
   Layers3,
   LineChart,
   LogOut,
@@ -31,6 +32,7 @@ import {
   type AdminUser,
   type BotInstance,
   type BotBacktest,
+  type BotIndicator,
   type BotStrategy,
   type BotTemplate,
 } from '@/lib/api/client';
@@ -101,6 +103,58 @@ const planMetricLabels: Record<string, string> = {
   strategies: 'Estrategias',
 };
 
+const indicatorCategoryLabels: Record<string, string> = {
+  moving_average: 'Medias moveis',
+  momentum: 'Momentum',
+  trend: 'Tendencia',
+  volatility: 'Volatilidade',
+  volume: 'Volume',
+  crypto_derivatives: 'Cripto derivativos',
+  onchain: 'On-chain',
+  macro_crypto: 'Macro cripto',
+};
+
+const strategyOperatorOptions = [
+  { value: 'greater_than', label: 'maior que' },
+  { value: 'less_than', label: 'menor que' },
+  { value: 'crosses_above', label: 'cruza acima' },
+  { value: 'crosses_below', label: 'cruza abaixo' },
+  { value: 'between', label: 'entre faixa' },
+];
+
+function InfoLabel({ label, info }: { label: string; info: string }) {
+  return (
+    <label className="mb-1.5 flex items-center gap-1.5 text-caption font-medium text-text-secondary">
+      {label}
+      <span className="group relative inline-flex">
+        <Info className="h-3.5 w-3.5 cursor-help text-text-muted" />
+        <span className="pointer-events-none absolute left-1/2 top-5 z-20 hidden w-64 -translate-x-1/2 rounded-lg border border-border-subtle bg-background-primary p-3 text-caption font-normal text-text-secondary shadow-lg group-hover:block">
+          {info}
+        </span>
+      </span>
+    </label>
+  );
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+function getIndicatorOutputs(indicator?: BotIndicator): string[] {
+  return asStringArray(indicator?.output_schema?.outputs).length > 0
+    ? asStringArray(indicator?.output_schema?.outputs)
+    : ['value'];
+}
+
+function getDefaultIndicatorParameters(indicator: BotIndicator): Record<string, unknown> {
+  return Object.entries(indicator.parameter_schema || {}).reduce<Record<string, unknown>>((acc, [key, schema]) => {
+    if (schema && typeof schema === 'object' && 'default' in schema) {
+      acc[key] = (schema as { default?: unknown }).default;
+    }
+    return acc;
+  }, {});
+}
+
 function PlaceholderSection({ title, description }: { title: string; description: string }) {
   return (
     <Card variant="glass" className="border-accent-blue/10">
@@ -145,6 +199,7 @@ export default function PlatformAdminPage() {
   const [billingInvoices, setBillingInvoices] = useState<AdminBillingInvoice[]>([]);
   const [billingPayments, setBillingPayments] = useState<AdminBillingPayment[]>([]);
   const [botStrategies, setBotStrategies] = useState<BotStrategy[]>([]);
+  const [botIndicators, setBotIndicators] = useState<BotIndicator[]>([]);
   const [botBacktests, setBotBacktests] = useState<BotBacktest[]>([]);
   const [botTemplates, setBotTemplates] = useState<BotTemplate[]>([]);
   const [botInstances, setBotInstances] = useState<BotInstance[]>([]);
@@ -168,10 +223,26 @@ export default function PlatformAdminPage() {
     type: 'dca',
     status: 'draft',
     description: '',
-    shortWindow: '5',
-    longWindow: '20',
+    marketType: 'spot',
+    timeframes: '1h, 4h, 1d',
+    exchanges: 'binance, bybit',
+    selectedIndicators: [] as string[],
+    entryIndicator: '',
+    entryOutput: 'value',
+    entryOperator: 'greater_than',
+    entryValue: '0',
+    exitIndicator: '',
+    exitOutput: 'value',
+    exitOperator: 'less_than',
+    exitValue: '0',
     maxOrderUsd: '100',
     maxPositionUsd: '1000',
+    stopLossPercent: '3',
+    takeProfitPercent: '8',
+    trailingStopPercent: '2',
+    breakevenPercent: '4',
+    cooldownMinutes: '60',
+    maxDailySignals: '5',
     allowedSymbols: '',
   });
   const [backtestForm, setBacktestForm] = useState({
@@ -194,6 +265,26 @@ export default function PlatformAdminPage() {
     [organizations]
   );
 
+  const indicatorsByCategory = useMemo(() => {
+    return botIndicators.reduce<Record<string, BotIndicator[]>>((acc, indicator) => {
+      acc[indicator.category] = [...(acc[indicator.category] || []), indicator];
+      return acc;
+    }, {});
+  }, [botIndicators]);
+
+  const selectedStrategyIndicators = useMemo(
+    () => botIndicators.filter((indicator) => botStrategyForm.selectedIndicators.includes(indicator.key)),
+    [botIndicators, botStrategyForm.selectedIndicators]
+  );
+
+  const selectedIndicatorOptions = useMemo(
+    () => selectedStrategyIndicators.map((indicator) => ({ value: indicator.key, label: indicator.name })),
+    [selectedStrategyIndicators]
+  );
+
+  const entryIndicator = botIndicators.find((indicator) => indicator.key === botStrategyForm.entryIndicator);
+  const exitIndicator = botIndicators.find((indicator) => indicator.key === botStrategyForm.exitIndicator);
+
   const loadAdminData = useCallback(async (organizationId?: string) => {
     if (!user?.is_superuser) {
       setIsLoading(false);
@@ -214,6 +305,7 @@ export default function PlatformAdminPage() {
       billingInvoicesResult,
       billingPaymentsResult,
       botStrategiesResult,
+      botIndicatorsResult,
       botBacktestsResult,
       botTemplatesResult,
       botInstancesResult,
@@ -230,6 +322,7 @@ export default function PlatformAdminPage() {
       api.getAdminBillingInvoices(organizationId),
       api.getAdminBillingPayments(organizationId),
       api.getAdminBotStrategies(),
+      api.getAdminBotIndicators(),
       api.getAdminBotBacktests(),
       api.getAdminBotTemplates(),
       api.getAdminBotInstances(organizationId),
@@ -248,6 +341,7 @@ export default function PlatformAdminPage() {
       || !billingInvoicesResult.success
       || !billingPaymentsResult.success
       || !botStrategiesResult.success
+      || !botIndicatorsResult.success
       || !botBacktestsResult.success
       || !botTemplatesResult.success
       || !botInstancesResult.success
@@ -265,6 +359,7 @@ export default function PlatformAdminPage() {
         || billingInvoicesResult.error
         || billingPaymentsResult.error
         || botStrategiesResult.error
+        || botIndicatorsResult.error
         || botBacktestsResult.error
         || botTemplatesResult.error
         || botInstancesResult.error
@@ -286,6 +381,7 @@ export default function PlatformAdminPage() {
     setBillingInvoices(billingInvoicesResult.data || []);
     setBillingPayments(billingPaymentsResult.data || []);
     setBotStrategies(botStrategiesResult.data || []);
+    setBotIndicators(botIndicatorsResult.data || []);
     setBotBacktests(botBacktestsResult.data || []);
     setBotTemplates(botTemplatesResult.data || []);
     setBotInstances(botInstancesResult.data || []);
@@ -349,6 +445,11 @@ export default function PlatformAdminPage() {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
+  const parseNumber = (value: string, fallback: number) => {
+    const parsed = Number.parseFloat(value.replace(',', '.'));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
   const updateBillingSubscription = async (
     subscription: AdminBillingSubscription,
     data: Partial<{
@@ -375,26 +476,73 @@ export default function PlatformAdminPage() {
       setError('Informe nome e slug validos para criar a estrategia');
       return;
     }
+    if (selectedStrategyIndicators.length === 0) {
+      setError('Selecione ao menos um indicador para a estrategia');
+      return;
+    }
+    const entryIndicatorConfig = entryIndicator || selectedStrategyIndicators[0];
+    const exitIndicatorConfig = exitIndicator || entryIndicatorConfig;
+    if (!entryIndicatorConfig || !exitIndicatorConfig) {
+      setError('Configure indicadores validos para entrada e saida');
+      return;
+    }
     const result = await api.createAdminBotStrategy({
       name,
       slug,
       type: botStrategyForm.type,
       status: botStrategyForm.status,
       description: botStrategyForm.description || null,
+      market_config: {
+        market_type: botStrategyForm.marketType,
+        allowed_symbols: splitCsv(botStrategyForm.allowedSymbols).map((asset) => asset.toUpperCase()),
+        supported_timeframes: splitCsv(botStrategyForm.timeframes),
+        supported_exchanges: splitCsv(botStrategyForm.exchanges).map((exchange) => exchange.toLowerCase()),
+      },
       indicator_config: {
-        short_window: Number.parseInt(botStrategyForm.shortWindow, 10) || 5,
-        long_window: Number.parseInt(botStrategyForm.longWindow, 10) || 20,
+        version: 1,
+        indicators: selectedStrategyIndicators.map((indicator) => ({
+          key: indicator.key,
+          name: indicator.name,
+          category: indicator.category,
+          parameters: getDefaultIndicatorParameters(indicator),
+          outputs: getIndicatorOutputs(indicator),
+        })),
       },
       rule_config: {
-        engine: 'moving_average_v1',
+        version: 1,
+        logic: 'AND',
+        entry: {
+          action: 'buy',
+          conditions: [
+            {
+              indicator: entryIndicatorConfig.key,
+              output: botStrategyForm.entryOutput || getIndicatorOutputs(entryIndicatorConfig)[0],
+              operator: botStrategyForm.entryOperator,
+              value: parseNumber(botStrategyForm.entryValue, 0),
+            },
+          ],
+        },
+        exit: {
+          action: 'sell',
+          conditions: [
+            {
+              indicator: exitIndicatorConfig.key,
+              output: botStrategyForm.exitOutput || getIndicatorOutputs(exitIndicatorConfig)[0],
+              operator: botStrategyForm.exitOperator,
+              value: parseNumber(botStrategyForm.exitValue, 0),
+            },
+          ],
+        },
       },
       risk_defaults: {
-        max_order_usd: amountToCents(botStrategyForm.maxOrderUsd) !== null
-          ? Number.parseFloat(botStrategyForm.maxOrderUsd.replace(',', '.'))
-          : 100,
-        max_position_usd: amountToCents(botStrategyForm.maxPositionUsd) !== null
-          ? Number.parseFloat(botStrategyForm.maxPositionUsd.replace(',', '.'))
-          : 1000,
+        max_order_usd: parseNumber(botStrategyForm.maxOrderUsd, 100),
+        max_position_usd: parseNumber(botStrategyForm.maxPositionUsd, 1000),
+        stop_loss_percent: parseNumber(botStrategyForm.stopLossPercent, 3),
+        take_profit_percent: parseNumber(botStrategyForm.takeProfitPercent, 8),
+        trailing_stop_percent: parseNumber(botStrategyForm.trailingStopPercent, 2),
+        breakeven_activation_percent: parseNumber(botStrategyForm.breakevenPercent, 4),
+        cooldown_minutes: Math.max(0, Math.round(parseNumber(botStrategyForm.cooldownMinutes, 60))),
+        max_daily_signals: Math.max(1, Math.round(parseNumber(botStrategyForm.maxDailySignals, 5))),
         allowed_symbols: splitCsv(botStrategyForm.allowedSymbols).map((asset) => asset.toUpperCase()),
       },
     });
@@ -408,10 +556,26 @@ export default function PlatformAdminPage() {
       type: 'dca',
       status: 'draft',
       description: '',
-      shortWindow: '5',
-      longWindow: '20',
+      marketType: 'spot',
+      timeframes: '1h, 4h, 1d',
+      exchanges: 'binance, bybit',
+      selectedIndicators: [],
+      entryIndicator: '',
+      entryOutput: 'value',
+      entryOperator: 'greater_than',
+      entryValue: '0',
+      exitIndicator: '',
+      exitOutput: 'value',
+      exitOperator: 'less_than',
+      exitValue: '0',
       maxOrderUsd: '100',
       maxPositionUsd: '1000',
+      stopLossPercent: '3',
+      takeProfitPercent: '8',
+      trailingStopPercent: '2',
+      breakevenPercent: '4',
+      cooldownMinutes: '60',
+      maxDailySignals: '5',
       allowedSymbols: '',
     });
     await reloadCurrentAdminData();
@@ -943,10 +1107,11 @@ export default function PlatformAdminPage() {
 
           {activeTab === 'strategies' && (
             <div className="space-y-6">
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-4">
                 {[
                   ['Estrategias', botStrategies.length, 'Motores cadastrados'],
                   ['Publicadas', botStrategies.filter((strategy) => strategy.status === 'published').length, 'Disponiveis para bots'],
+                  ['Indicadores', botIndicators.length, 'Catalogo tecnico'],
                   ['Backtests', botBacktests.length, 'Simulacoes executadas'],
                 ].map(([label, value, caption]) => (
                   <Card key={label} variant="glass" className="p-5">
@@ -957,121 +1122,340 @@ export default function PlatformAdminPage() {
                 ))}
               </div>
 
-              <div className="grid gap-4 xl:grid-cols-2">
+              <Card variant="glass" className="border-accent-blue/15">
+                <CardContent className="grid gap-3 py-5 lg:grid-cols-3">
+                  <div>
+                    <p className="text-heading-sm text-text-primary">Fluxo correto</p>
+                    <p className="mt-1 text-caption text-text-muted">Indicadores sao pecas reutilizaveis; estrategia combina indicadores, regras e risco.</p>
+                  </div>
+                  <div>
+                    <p className="text-heading-sm text-text-primary">Backtest antes de publicar</p>
+                    <p className="mt-1 text-caption text-text-muted">Use simulacao para validar comportamento antes de liberar a estrategia para bots.</p>
+                  </div>
+                  <div>
+                    <p className="text-heading-sm text-text-primary">Cliente nao edita o motor</p>
+                    <p className="mt-1 text-caption text-text-muted">Cliente ativa bots publicados e ajusta limites dentro do permitido.</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
                 <Card variant="glass">
                   <CardHeader>
                     <CardTitle>Criar estrategia</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <form className="grid gap-3" onSubmit={createBotStrategy}>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <input
-                          value={botStrategyForm.name}
+                    <form className="grid gap-5" onSubmit={createBotStrategy}>
+                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-heading-sm text-text-primary">1. Identidade</p>
+                            <p className="text-caption text-text-muted">Nome, familia operacional e status de publicacao.</p>
+                          </div>
+                          <Badge variant="blue" size="sm">Builder v1</Badge>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div>
+                            <InfoLabel label="Nome da estrategia" info="Nome humano usado pelo admin e exibido no catalogo de estrategias." />
+                            <input
+                              value={botStrategyForm.name}
+                              onChange={(event) => setBotStrategyForm((current) => ({
+                                ...current,
+                                name: event.target.value,
+                                slug: current.slug || slugify(event.target.value),
+                              }))}
+                              placeholder="Ex: DCA BTC Conservador"
+                              className="h-10 w-full rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                            />
+                          </div>
+                          <div>
+                            <InfoLabel label="Slug tecnico" info="Identificador unico da estrategia. Use letras, numeros e hifens." />
+                            <input
+                              value={botStrategyForm.slug}
+                              onChange={(event) => setBotStrategyForm((current) => ({
+                                ...current,
+                                slug: slugify(event.target.value),
+                              }))}
+                              placeholder="dca-btc-conservador"
+                              className="h-10 w-full rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-3">
+                          <div>
+                            <InfoLabel label="Tipo de estrategia" info="Define a familia do motor. Ex: DCA acumula, Rebalance ajusta alocacao, Signal gera sinais." />
+                            <Select
+                              value={botStrategyForm.type}
+                              options={[
+                                { value: 'dca', label: 'DCA' },
+                                { value: 'grid', label: 'Grid' },
+                                { value: 'rebalance', label: 'Rebalance' },
+                                { value: 'signal', label: 'Sinais' },
+                                { value: 'arbitrage', label: 'Arbitragem' },
+                                { value: 'custom', label: 'Custom' },
+                              ]}
+                              onChange={(event) => setBotStrategyForm((current) => ({
+                                ...current,
+                                type: event.target.value,
+                              }))}
+                              className="h-10 py-0 text-body-sm"
+                            />
+                          </div>
+                          <div>
+                            <InfoLabel label="Status" info="Rascunho nao aparece para clientes. Publicado fica disponivel para vincular em bots." />
+                            <Select
+                              value={botStrategyForm.status}
+                              options={[
+                                { value: 'draft', label: 'Rascunho' },
+                                { value: 'published', label: 'Publicado' },
+                                { value: 'disabled', label: 'Desativado' },
+                              ]}
+                              onChange={(event) => setBotStrategyForm((current) => ({
+                                ...current,
+                                status: event.target.value,
+                              }))}
+                              className="h-10 py-0 text-body-sm"
+                            />
+                          </div>
+                          <div>
+                            <InfoLabel label="Mercado" info="Spot por enquanto. Futures/live exigira executor, reconciliacao e travas adicionais." />
+                            <Select
+                              value={botStrategyForm.marketType}
+                              options={[
+                                { value: 'spot', label: 'Spot' },
+                                { value: 'futures', label: 'Futures (planejado)' },
+                                { value: 'paper_only', label: 'Paper only' },
+                              ]}
+                              onChange={(event) => setBotStrategyForm((current) => ({
+                                ...current,
+                                marketType: event.target.value,
+                              }))}
+                              className="h-10 py-0 text-body-sm"
+                            />
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
+                        <p className="text-heading-sm text-text-primary">2. Mercado e ativos</p>
+                        <p className="mb-3 text-caption text-text-muted">Define onde a estrategia pode rodar e quais ativos ela aceita.</p>
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <div>
+                            <InfoLabel label="Ativos permitidos" info="Lista de simbolos autorizados. O risco tambem usa essa lista para bloquear sinais fora do escopo." />
+                            <input
+                              value={botStrategyForm.allowedSymbols}
+                              onChange={(event) => setBotStrategyForm((current) => ({
+                                ...current,
+                                allowedSymbols: event.target.value,
+                              }))}
+                              placeholder="BTC, ETH, SOL"
+                              className="h-10 w-full rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                            />
+                          </div>
+                          <div>
+                            <InfoLabel label="Timeframes" info="Candles aceitos no backtest e no motor. Ex: 1h, 4h, 1d." />
+                            <input
+                              value={botStrategyForm.timeframes}
+                              onChange={(event) => setBotStrategyForm((current) => ({
+                                ...current,
+                                timeframes: event.target.value,
+                              }))}
+                              placeholder="1h, 4h, 1d"
+                              className="h-10 w-full rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                            />
+                          </div>
+                          <div>
+                            <InfoLabel label="Exchanges compatíveis" info="Usado depois para filtrar onde o bot pode ser ativado." />
+                            <input
+                              value={botStrategyForm.exchanges}
+                              onChange={(event) => setBotStrategyForm((current) => ({
+                                ...current,
+                                exchanges: event.target.value,
+                              }))}
+                              placeholder="binance, bybit"
+                              className="h-10 w-full rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                            />
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
+                        <p className="text-heading-sm text-text-primary">3. Indicadores usados</p>
+                        <p className="mb-3 text-caption text-text-muted">Escolha as pecas tecnicas que a estrategia vai usar. Os parametros default vem do catalogo.</p>
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                          {Object.entries(indicatorsByCategory).map(([category, indicators]) => (
+                            <div key={category} className="rounded-xl border border-border-subtle bg-background-primary/70 p-3">
+                              <p className="mb-2 text-caption font-semibold uppercase tracking-[0.14em] text-text-muted">
+                                {indicatorCategoryLabels[category] || category}
+                              </p>
+                              <div className="space-y-2">
+                                {indicators.map((indicator) => {
+                                  const checked = botStrategyForm.selectedIndicators.includes(indicator.key);
+                                  return (
+                                    <label key={indicator.id} className="flex cursor-pointer items-start gap-2 rounded-lg p-2 hover:bg-background-secondary">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(event) => setBotStrategyForm((current) => ({
+                                          ...current,
+                                          selectedIndicators: event.target.checked
+                                            ? Array.from(new Set([...current.selectedIndicators, indicator.key]))
+                                            : current.selectedIndicators.filter((key) => key !== indicator.key),
+                                        }))}
+                                        className="mt-1"
+                                      />
+                                      <span>
+                                        <span className="block text-body-sm font-medium text-text-primary">{indicator.name}</span>
+                                        <span className="block text-caption text-text-muted">{indicator.description}</span>
+                                      </span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+
+                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
+                        <p className="text-heading-sm text-text-primary">4. Regras e condicoes</p>
+                        <p className="mb-3 text-caption text-text-muted">Monte a primeira condicao de entrada e saida. Na proxima evolucao vamos permitir grupos AND/OR multiplos.</p>
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          <div className="rounded-xl border border-border-subtle bg-background-primary/70 p-3">
+                            <p className="mb-3 text-body-sm font-semibold text-text-primary">Entrada</p>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <Select
+                                value={botStrategyForm.entryIndicator}
+                                options={[{ value: '', label: 'Indicador de entrada' }, ...selectedIndicatorOptions]}
+                                onChange={(event) => {
+                                  const indicator = botIndicators.find((item) => item.key === event.target.value);
+                                  setBotStrategyForm((current) => ({
+                                    ...current,
+                                    entryIndicator: event.target.value,
+                                    entryOutput: getIndicatorOutputs(indicator)[0] || 'value',
+                                  }));
+                                }}
+                                className="h-10 py-0 text-body-sm"
+                              />
+                              <Select
+                                value={botStrategyForm.entryOutput}
+                                options={getIndicatorOutputs(entryIndicator).map((output) => ({ value: output, label: output }))}
+                                onChange={(event) => setBotStrategyForm((current) => ({
+                                  ...current,
+                                  entryOutput: event.target.value,
+                                }))}
+                                className="h-10 py-0 text-body-sm"
+                              />
+                              <Select
+                                value={botStrategyForm.entryOperator}
+                                options={strategyOperatorOptions}
+                                onChange={(event) => setBotStrategyForm((current) => ({
+                                  ...current,
+                                  entryOperator: event.target.value,
+                                }))}
+                                className="h-10 py-0 text-body-sm"
+                              />
+                              <input
+                                value={botStrategyForm.entryValue}
+                                onChange={(event) => setBotStrategyForm((current) => ({
+                                  ...current,
+                                  entryValue: event.target.value,
+                                }))}
+                                placeholder="Valor"
+                                className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="rounded-xl border border-border-subtle bg-background-primary/70 p-3">
+                            <p className="mb-3 text-body-sm font-semibold text-text-primary">Saida</p>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <Select
+                                value={botStrategyForm.exitIndicator}
+                                options={[{ value: '', label: 'Indicador de saida' }, ...selectedIndicatorOptions]}
+                                onChange={(event) => {
+                                  const indicator = botIndicators.find((item) => item.key === event.target.value);
+                                  setBotStrategyForm((current) => ({
+                                    ...current,
+                                    exitIndicator: event.target.value,
+                                    exitOutput: getIndicatorOutputs(indicator)[0] || 'value',
+                                  }));
+                                }}
+                                className="h-10 py-0 text-body-sm"
+                              />
+                              <Select
+                                value={botStrategyForm.exitOutput}
+                                options={getIndicatorOutputs(exitIndicator).map((output) => ({ value: output, label: output }))}
+                                onChange={(event) => setBotStrategyForm((current) => ({
+                                  ...current,
+                                  exitOutput: event.target.value,
+                                }))}
+                                className="h-10 py-0 text-body-sm"
+                              />
+                              <Select
+                                value={botStrategyForm.exitOperator}
+                                options={strategyOperatorOptions}
+                                onChange={(event) => setBotStrategyForm((current) => ({
+                                  ...current,
+                                  exitOperator: event.target.value,
+                                }))}
+                                className="h-10 py-0 text-body-sm"
+                              />
+                              <input
+                                value={botStrategyForm.exitValue}
+                                onChange={(event) => setBotStrategyForm((current) => ({
+                                  ...current,
+                                  exitValue: event.target.value,
+                                }))}
+                                placeholder="Valor"
+                                className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="rounded-2xl border border-border-subtle bg-background-secondary/50 p-4">
+                        <p className="text-heading-sm text-text-primary">5. Risco operacional</p>
+                        <p className="mb-3 text-caption text-text-muted">Esses limites sao aplicados pelo motor antes de gerar sinal.</p>
+                        <div className="grid gap-3 md:grid-cols-3">
+                          {[
+                            ['maxOrderUsd', 'Max ordem USD', 'Valor maximo por sinal/ordem simulada.', botStrategyForm.maxOrderUsd],
+                            ['maxPositionUsd', 'Max posicao USD', 'Exposicao maxima permitida no ativo.', botStrategyForm.maxPositionUsd],
+                            ['stopLossPercent', 'Stop loss %', 'Perda maxima por posicao antes de sair.', botStrategyForm.stopLossPercent],
+                            ['takeProfitPercent', 'Take profit %', 'Alvo de lucro para saida parcial/total.', botStrategyForm.takeProfitPercent],
+                            ['trailingStopPercent', 'Trailing stop %', 'Distancia dinamica para proteger lucro quando o preco anda a favor.', botStrategyForm.trailingStopPercent],
+                            ['breakevenPercent', 'Breakeven apos %', 'Move protecao para preco de entrada depois desse ganho.', botStrategyForm.breakevenPercent],
+                            ['cooldownMinutes', 'Cooldown minutos', 'Tempo minimo entre sinais para evitar overtrading.', botStrategyForm.cooldownMinutes],
+                            ['maxDailySignals', 'Max sinais/dia', 'Limite diario de sinais acionaveis. HOLD nao conta.', botStrategyForm.maxDailySignals],
+                          ].map(([key, label, info, value]) => (
+                            <div key={key}>
+                              <InfoLabel label={label} info={info} />
+                              <input
+                                value={value}
+                                onChange={(event) => setBotStrategyForm((current) => ({
+                                  ...current,
+                                  [key]: event.target.value,
+                                }))}
+                                className="h-10 w-full rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+
+                      <div>
+                        <InfoLabel label="Descricao operacional" info="Explique a tese da estrategia, quando ela deve operar e quais riscos o admin precisa lembrar." />
+                        <textarea
+                          value={botStrategyForm.description}
                           onChange={(event) => setBotStrategyForm((current) => ({
                             ...current,
-                            name: event.target.value,
-                            slug: current.slug || slugify(event.target.value),
+                            description: event.target.value,
                           }))}
-                          placeholder="Nome. Ex: DCA MA Conservador"
-                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                        />
-                        <input
-                          value={botStrategyForm.slug}
-                          onChange={(event) => setBotStrategyForm((current) => ({
-                            ...current,
-                            slug: slugify(event.target.value),
-                          }))}
-                          placeholder="slug-da-estrategia"
-                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                          placeholder="Ex: Usa RSI + EMA para comprar sobrevenda em tendencia primaria positiva; sai por take profit, trailing ou perda de momentum."
+                          className="min-h-24 w-full rounded-lg border border-border-subtle bg-background-primary px-3 py-2 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                         />
                       </div>
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <Select
-                          value={botStrategyForm.type}
-                          options={[
-                            { value: 'dca', label: 'DCA' },
-                            { value: 'grid', label: 'Grid' },
-                            { value: 'rebalance', label: 'Rebalance' },
-                            { value: 'signal', label: 'Sinais' },
-                            { value: 'arbitrage', label: 'Arbitragem' },
-                            { value: 'custom', label: 'Custom' },
-                          ]}
-                          onChange={(event) => setBotStrategyForm((current) => ({
-                            ...current,
-                            type: event.target.value,
-                          }))}
-                          className="h-10 py-0 text-body-sm"
-                        />
-                        <Select
-                          value={botStrategyForm.status}
-                          options={[
-                            { value: 'draft', label: 'Rascunho' },
-                            { value: 'published', label: 'Publicado' },
-                            { value: 'disabled', label: 'Desativado' },
-                          ]}
-                          onChange={(event) => setBotStrategyForm((current) => ({
-                            ...current,
-                            status: event.target.value,
-                          }))}
-                          className="h-10 py-0 text-body-sm"
-                        />
-                        <input
-                          value={botStrategyForm.allowedSymbols}
-                          onChange={(event) => setBotStrategyForm((current) => ({
-                            ...current,
-                            allowedSymbols: event.target.value,
-                          }))}
-                          placeholder="BTC, ETH, SOL"
-                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                        />
-                      </div>
-                      <div className="grid gap-3 md:grid-cols-4">
-                        <input
-                          value={botStrategyForm.shortWindow}
-                          onChange={(event) => setBotStrategyForm((current) => ({
-                            ...current,
-                            shortWindow: event.target.value,
-                          }))}
-                          placeholder="MA curta"
-                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                        />
-                        <input
-                          value={botStrategyForm.longWindow}
-                          onChange={(event) => setBotStrategyForm((current) => ({
-                            ...current,
-                            longWindow: event.target.value,
-                          }))}
-                          placeholder="MA longa"
-                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                        />
-                        <input
-                          value={botStrategyForm.maxOrderUsd}
-                          onChange={(event) => setBotStrategyForm((current) => ({
-                            ...current,
-                            maxOrderUsd: event.target.value,
-                          }))}
-                          placeholder="Max ordem USD"
-                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                        />
-                        <input
-                          value={botStrategyForm.maxPositionUsd}
-                          onChange={(event) => setBotStrategyForm((current) => ({
-                            ...current,
-                            maxPositionUsd: event.target.value,
-                          }))}
-                          placeholder="Max posicao USD"
-                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                        />
-                      </div>
-                      <textarea
-                        value={botStrategyForm.description}
-                        onChange={(event) => setBotStrategyForm((current) => ({
-                          ...current,
-                          description: event.target.value,
-                        }))}
-                        placeholder="Descricao operacional, indicadores e condicoes de entrada/saida"
-                        className="min-h-20 rounded-lg border border-border-subtle bg-background-primary px-3 py-2 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                      />
                       <Button type="submit">Criar estrategia</Button>
                     </form>
                   </CardContent>

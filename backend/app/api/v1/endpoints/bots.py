@@ -23,6 +23,7 @@ from app.api.deps import (
 from app.models.audit_log import AuditAction
 from app.models.bot import (
     BotBacktest,
+    BotIndicator,
     BotInstance,
     BotInstanceMode,
     BotInstanceStatus,
@@ -43,6 +44,7 @@ from app.schemas.bot import (
     AdminBotTemplateUpdate,
     BotBacktestCreate,
     BotBacktestResponse,
+    BotIndicatorResponse,
     BotInstanceCreate,
     BotInstanceResponse,
     BotInstanceUpdate,
@@ -308,6 +310,7 @@ def _strategy_response(
         type=_enum_value(strategy.type),
         status=_enum_value(strategy.status),
         version=strategy.version,
+        market_config=dict(strategy.market_config or {}),
         indicator_config=dict(strategy.indicator_config or {}),
         rule_config=dict(strategy.rule_config or {}),
         risk_defaults=dict(strategy.risk_defaults or {}),
@@ -392,6 +395,56 @@ def _backtest_response(backtest) -> BotBacktestResponse:
     )
 
 
+def _indicator_response(indicator: BotIndicator) -> BotIndicatorResponse:
+    return BotIndicatorResponse(
+        id=indicator.id,
+        key=indicator.key,
+        name=indicator.name,
+        category=indicator.category,
+        description=indicator.description,
+        status=indicator.status,
+        parameter_schema=dict(indicator.parameter_schema or {}),
+        output_schema=dict(indicator.output_schema or {}),
+        default_parameters=dict(indicator.default_parameters or {}),
+        supported_timeframes=list(indicator.supported_timeframes or []),
+        required_inputs=list(indicator.required_inputs or []),
+        engine_handler=indicator.engine_handler,
+        sort_order=indicator.sort_order,
+        created_at=indicator.created_at,
+        updated_at=indicator.updated_at,
+    )
+
+
+def _extract_strategy_indicator_keys(indicator_config: dict) -> set[str]:
+    indicators = indicator_config.get("indicators")
+    if not isinstance(indicators, list):
+        return set()
+    keys: set[str] = set()
+    for item in indicators:
+        if isinstance(item, dict) and item.get("key"):
+            keys.add(str(item["key"]).strip().lower())
+    return keys
+
+
+async def _ensure_strategy_indicators_exist(db: DBSession, indicator_config: dict) -> None:
+    keys = _extract_strategy_indicator_keys(indicator_config)
+    if not keys:
+        return
+    result = await db.execute(
+        select(BotIndicator.key).where(
+            BotIndicator.key.in_(keys),
+            BotIndicator.status == "active",
+        )
+    )
+    existing_keys = {str(key) for key in result.scalars().all()}
+    missing = sorted(keys - existing_keys)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Unknown or inactive strategy indicators", "keys": missing},
+        )
+
+
 @router.get("/templates", response_model=list[BotTemplateResponse])
 async def list_available_bot_templates(
     _permission_ctx: Annotated[
@@ -425,6 +478,27 @@ async def list_available_bot_strategies(
         .order_by(BotStrategy.name)
     )
     return [_strategy_response(strategy) for strategy in result.scalars().all()]
+
+
+@router.get("/indicators", response_model=list[BotIndicatorResponse])
+async def list_available_bot_indicators(
+    _permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("strategies:view", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+    category: Optional[str] = Query(default=None),
+) -> list[BotIndicatorResponse]:
+    """List active technical indicators available to customer-readable strategies."""
+    query = (
+        select(BotIndicator)
+        .where(BotIndicator.status == "active")
+        .order_by(BotIndicator.category, BotIndicator.sort_order, BotIndicator.name)
+    )
+    if category:
+        query = query.where(BotIndicator.category == category)
+    result = await db.execute(query)
+    return [_indicator_response(indicator) for indicator in result.scalars().all()]
 
 
 @router.get("/instances", response_model=list[BotInstanceResponse])
@@ -826,6 +900,23 @@ async def list_admin_bot_strategies(
     ]
 
 
+@admin_router.get("/indicators", response_model=list[BotIndicatorResponse])
+async def list_admin_bot_indicators(
+    _superuser: SuperUser,
+    db: DBSession,
+    category: Optional[str] = Query(default=None),
+    active_only: bool = Query(default=True),
+) -> list[BotIndicatorResponse]:
+    """List technical indicators available to the admin strategy builder."""
+    query = select(BotIndicator).order_by(BotIndicator.category, BotIndicator.sort_order, BotIndicator.name)
+    if category:
+        query = query.where(BotIndicator.category == category)
+    if active_only:
+        query = query.where(BotIndicator.status == "active")
+    result = await db.execute(query)
+    return [_indicator_response(indicator) for indicator in result.scalars().all()]
+
+
 @admin_router.post("/strategies", response_model=BotStrategyResponse, status_code=status.HTTP_201_CREATED)
 async def create_admin_bot_strategy(
     data: BotStrategyCreate,
@@ -834,6 +925,7 @@ async def create_admin_bot_strategy(
     request: Request,
 ) -> BotStrategyResponse:
     """Create a reusable strategy for bot products."""
+    await _ensure_strategy_indicators_exist(db, data.indicator_config)
     strategy = BotStrategy(
         id=uuid4(),
         name=data.name,
@@ -841,6 +933,7 @@ async def create_admin_bot_strategy(
         description=data.description,
         type=data.type,
         status=data.status,
+        market_config=data.market_config,
         indicator_config=data.indicator_config,
         rule_config=data.rule_config,
         risk_defaults=data.risk_defaults,
@@ -885,6 +978,8 @@ async def update_admin_bot_strategy(
     update_data = data.model_dump(exclude_unset=True)
     if "slug" in update_data and update_data["slug"] is not None:
         update_data["slug"] = update_data["slug"].strip().lower()
+    if "indicator_config" in update_data and update_data["indicator_config"] is not None:
+        await _ensure_strategy_indicators_exist(db, update_data["indicator_config"])
     for field, value in update_data.items():
         setattr(strategy, field, value)
     if update_data:

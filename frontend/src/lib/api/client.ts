@@ -524,6 +524,7 @@ interface BotStrategy {
   type: string;
   status: string;
   version: number;
+  market_config: Record<string, unknown>;
   indicator_config: Record<string, unknown>;
   rule_config: Record<string, unknown>;
   risk_defaults: Record<string, unknown>;
@@ -531,6 +532,24 @@ interface BotStrategy {
   instance_count: number;
   backtest_count: number;
   created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotIndicator {
+  id: string;
+  key: string;
+  name: string;
+  category: string;
+  description: string | null;
+  status: string;
+  parameter_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  default_parameters: Record<string, unknown>;
+  supported_timeframes: string[];
+  required_inputs: string[];
+  engine_handler: string;
+  sort_order: number;
   created_at: string;
   updated_at: string;
 }
@@ -1137,12 +1156,18 @@ class ApiClient {
     return this.request<BotStrategy[]>(`/api/v1/admin/bots/strategies${qs}`);
   }
 
+  async getAdminBotIndicators(category?: string): Promise<ApiResponse<BotIndicator[]>> {
+    const qs = category ? `?category=${encodeURIComponent(category)}` : '';
+    return this.request<BotIndicator[]>(`/api/v1/admin/bots/indicators${qs}`);
+  }
+
   async createAdminBotStrategy(data: {
     name: string;
     slug: string;
     description?: string | null;
     type: string;
     status: string;
+    market_config: Record<string, unknown>;
     indicator_config: Record<string, unknown>;
     rule_config: Record<string, unknown>;
     risk_defaults: Record<string, unknown>;
@@ -1161,6 +1186,7 @@ class ApiClient {
       description: string | null;
       type: string;
       status: string;
+      market_config: Record<string, unknown>;
       indicator_config: Record<string, unknown>;
       rule_config: Record<string, unknown>;
       risk_defaults: Record<string, unknown>;
@@ -1315,6 +1341,10 @@ class ApiClient {
 
   async getBotStrategies(): Promise<ApiResponse<BotStrategy[]>> {
     return this.request<BotStrategy[]>('/api/v1/bots/strategies');
+  }
+
+  async getBotIndicators(): Promise<ApiResponse<BotIndicator[]>> {
+    return this.request<BotIndicator[]>('/api/v1/bots/indicators');
   }
 
   async getBotInstances(): Promise<ApiResponse<BotInstance[]>> {
@@ -1619,6 +1649,7 @@ export type {
   BotTemplate,
   BotInstance,
   BotStrategy,
+  BotIndicator,
   BotRun,
   BotSignal,
   BotBacktest,

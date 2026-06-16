@@ -184,6 +184,26 @@ class BotInstanceResponse(BaseSchema):
     updated_at: datetime
 
 
+class BotIndicatorResponse(BaseSchema):
+    """Technical indicator available to the strategy builder."""
+
+    id: UUID
+    key: str
+    name: str
+    category: str
+    description: Optional[str] = None
+    status: str
+    parameter_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    default_parameters: dict[str, Any]
+    supported_timeframes: list[str]
+    required_inputs: list[str]
+    engine_handler: str
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class BotStrategyCreate(BaseSchema):
     """Create a reusable platform strategy."""
 
@@ -192,6 +212,7 @@ class BotStrategyCreate(BaseSchema):
     description: Optional[str] = None
     type: BotTemplateType = BotTemplateType.CUSTOM
     status: BotStrategyStatus = BotStrategyStatus.DRAFT
+    market_config: dict[str, Any] = Field(default_factory=dict)
     indicator_config: dict[str, Any] = Field(default_factory=dict)
     rule_config: dict[str, Any] = Field(default_factory=dict)
     risk_defaults: dict[str, Any] = Field(default_factory=dict)
@@ -205,6 +226,7 @@ class BotStrategyUpdate(BaseSchema):
     description: Optional[str] = None
     type: Optional[BotTemplateType] = None
     status: Optional[BotStrategyStatus] = None
+    market_config: Optional[dict[str, Any]] = None
     indicator_config: Optional[dict[str, Any]] = None
     rule_config: Optional[dict[str, Any]] = None
     risk_defaults: Optional[dict[str, Any]] = None
@@ -220,6 +242,7 @@ class BotStrategyResponse(BaseSchema):
     type: str
     status: str
     version: int
+    market_config: dict[str, Any]
     indicator_config: dict[str, Any]
     rule_config: dict[str, Any]
     risk_defaults: dict[str, Any]
