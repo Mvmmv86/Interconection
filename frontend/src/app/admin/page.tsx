@@ -120,10 +120,41 @@ const indicatorCategoryLabels: Record<string, string> = {
 const strategyOperatorOptions = [
   { value: 'greater_than', label: 'maior que' },
   { value: 'less_than', label: 'menor que' },
+  { value: 'greater_or_equal', label: 'maior ou igual' },
+  { value: 'less_or_equal', label: 'menor ou igual' },
   { value: 'crosses_above', label: 'cruza acima' },
   { value: 'crosses_below', label: 'cruza abaixo' },
   { value: 'between', label: 'entre faixa' },
 ];
+
+type StrategyRuleSide = 'entry' | 'exit';
+type StrategyRightMode = 'value' | 'indicator';
+
+type StrategyConditionForm = {
+  id: string;
+  indicator: string;
+  output: string;
+  operator: string;
+  rightMode: StrategyRightMode;
+  compareIndicator: string;
+  compareOutput: string;
+  value: string;
+  valueMax: string;
+};
+
+function createStrategyCondition(side: StrategyRuleSide, index = 1): StrategyConditionForm {
+  return {
+    id: `${side}-${index}`,
+    indicator: '',
+    output: 'value',
+    operator: side === 'entry' ? 'greater_than' : 'less_than',
+    rightMode: 'value',
+    compareIndicator: '',
+    compareOutput: 'value',
+    value: side === 'entry' ? '0' : '0',
+    valueMax: '',
+  };
+}
 
 function InfoLabel({ label, info }: { label: string; info: string }) {
   return (
@@ -240,6 +271,8 @@ export default function PlatformAdminPage() {
     entryCompareIndicator: '',
     entryCompareOutput: 'value',
     entryValue: '0',
+    entryLogic: 'AND',
+    entryConditions: [createStrategyCondition('entry')] as StrategyConditionForm[],
     exitIndicator: '',
     exitOutput: 'value',
     exitOperator: 'less_than',
@@ -247,6 +280,8 @@ export default function PlatformAdminPage() {
     exitCompareIndicator: '',
     exitCompareOutput: 'value',
     exitValue: '0',
+    exitLogic: 'AND',
+    exitConditions: [createStrategyCondition('exit')] as StrategyConditionForm[],
     maxOrderUsd: '100',
     maxPositionUsd: '1000',
     stopLossPercent: '3',
@@ -316,8 +351,49 @@ export default function PlatformAdminPage() {
     [selectedStrategyIndicators]
   );
 
-  const entryIndicator = botIndicators.find((indicator) => indicator.key === botStrategyForm.entryIndicator);
-  const exitIndicator = botIndicators.find((indicator) => indicator.key === botStrategyForm.exitIndicator);
+  const updateStrategyCondition = (
+    side: StrategyRuleSide,
+    conditionId: string,
+    patch: Partial<StrategyConditionForm>
+  ) => {
+    setBotStrategyForm((current) => ({
+      ...current,
+      entryConditions: side === 'entry'
+        ? current.entryConditions.map((condition) => (
+          condition.id === conditionId ? { ...condition, ...patch } : condition
+        ))
+        : current.entryConditions,
+      exitConditions: side === 'exit'
+        ? current.exitConditions.map((condition) => (
+          condition.id === conditionId ? { ...condition, ...patch } : condition
+        ))
+        : current.exitConditions,
+    }));
+  };
+
+  const addStrategyCondition = (side: StrategyRuleSide) => {
+    setBotStrategyForm((current) => ({
+      ...current,
+      entryConditions: side === 'entry'
+        ? [...current.entryConditions, createStrategyCondition(side, current.entryConditions.length + 1 + Date.now())]
+        : current.entryConditions,
+      exitConditions: side === 'exit'
+        ? [...current.exitConditions, createStrategyCondition(side, current.exitConditions.length + 1 + Date.now())]
+        : current.exitConditions,
+    }));
+  };
+
+  const removeStrategyCondition = (side: StrategyRuleSide, conditionId: string) => {
+    setBotStrategyForm((current) => ({
+      ...current,
+      entryConditions: side === 'entry' && current.entryConditions.length > 1
+        ? current.entryConditions.filter((condition) => condition.id !== conditionId)
+        : current.entryConditions,
+      exitConditions: side === 'exit' && current.exitConditions.length > 1
+        ? current.exitConditions.filter((condition) => condition.id !== conditionId)
+        : current.exitConditions,
+    }));
+  };
 
   const loadAdminData = useCallback(async (organizationId?: string) => {
     if (!user?.is_superuser) {
@@ -514,20 +590,45 @@ export default function PlatformAdminPage() {
       setError('Selecione ao menos um indicador para a estrategia');
       return;
     }
-    const entryIndicatorConfig = entryIndicator || selectedStrategyIndicators[0];
-    const exitIndicatorConfig = exitIndicator || entryIndicatorConfig;
-    const entryCompareIndicatorConfig = botIndicators.find((indicator) => indicator.key === botStrategyForm.entryCompareIndicator);
-    const exitCompareIndicatorConfig = botIndicators.find((indicator) => indicator.key === botStrategyForm.exitCompareIndicator);
-    if (!entryIndicatorConfig || !exitIndicatorConfig) {
-      setError('Configure indicadores validos para entrada e saida');
-      return;
-    }
-    if (botStrategyForm.entryRightMode === 'indicator' && !entryCompareIndicatorConfig) {
-      setError('Configure o indicador de comparacao da entrada');
-      return;
-    }
-    if (botStrategyForm.exitRightMode === 'indicator' && !exitCompareIndicatorConfig) {
-      setError('Configure o indicador de comparacao da saida');
+    const serializeConditions = (conditions: StrategyConditionForm[], side: StrategyRuleSide) => {
+      const serialized = conditions
+        .filter((condition) => condition.indicator)
+        .map((condition) => {
+          const indicator = botIndicators.find((item) => item.key === condition.indicator);
+          const compareIndicator = botIndicators.find((item) => item.key === condition.compareIndicator);
+          if (!indicator) {
+            throw new Error(`Configure um indicador valido para ${side === 'entry' ? 'entrada' : 'saida'}`);
+          }
+          if (condition.rightMode === 'indicator' && !compareIndicator) {
+            throw new Error(`Configure o indicador comparado para ${side === 'entry' ? 'entrada' : 'saida'}`);
+          }
+          return {
+            indicator: indicator.key,
+            output: condition.output || getIndicatorOutputs(indicator)[0],
+            operator: condition.operator,
+            right_type: condition.rightMode,
+            value: condition.rightMode === 'value' ? parseNumber(condition.value, 0) : null,
+            value_max: condition.operator === 'between' ? parseNumber(condition.valueMax || condition.value, parseNumber(condition.value, 0)) : null,
+            compare_to: condition.rightMode === 'indicator' && compareIndicator
+              ? {
+                indicator: compareIndicator.key,
+                output: condition.compareOutput || getIndicatorOutputs(compareIndicator)[0],
+              }
+              : null,
+          };
+        });
+      if (serialized.length === 0) {
+        throw new Error(`Configure ao menos uma condicao de ${side === 'entry' ? 'entrada' : 'saida'}`);
+      }
+      return serialized;
+    };
+    let entryConditions;
+    let exitConditions;
+    try {
+      entryConditions = serializeConditions(botStrategyForm.entryConditions, 'entry');
+      exitConditions = serializeConditions(botStrategyForm.exitConditions, 'exit');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Configure condicoes validas para entrada e saida');
       return;
     }
     const resolveIndicatorParameters = (indicator: BotIndicator) => {
@@ -556,7 +657,8 @@ export default function PlatformAdminPage() {
         supported_exchanges: splitCsv(botStrategyForm.exchanges).map((exchange) => exchange.toLowerCase()),
       },
       indicator_config: {
-        version: 1,
+        version: 2,
+        engine: 'strategy_rules_v2',
         indicators: selectedStrategyIndicators.map((indicator) => ({
           key: indicator.key,
           name: indicator.name,
@@ -566,43 +668,16 @@ export default function PlatformAdminPage() {
         })),
       },
       rule_config: {
-        version: 1,
-        logic: 'AND',
+        version: 2,
         entry: {
           action: 'buy',
-          conditions: [
-            {
-              indicator: entryIndicatorConfig.key,
-              output: botStrategyForm.entryOutput || getIndicatorOutputs(entryIndicatorConfig)[0],
-              operator: botStrategyForm.entryOperator,
-              right_type: botStrategyForm.entryRightMode,
-              value: botStrategyForm.entryRightMode === 'value' ? parseNumber(botStrategyForm.entryValue, 0) : null,
-              compare_to: botStrategyForm.entryRightMode === 'indicator' && entryCompareIndicatorConfig
-                ? {
-                  indicator: entryCompareIndicatorConfig.key,
-                  output: botStrategyForm.entryCompareOutput || getIndicatorOutputs(entryCompareIndicatorConfig)[0],
-                }
-                : null,
-            },
-          ],
+          logic: botStrategyForm.entryLogic,
+          conditions: entryConditions,
         },
         exit: {
           action: 'sell',
-          conditions: [
-            {
-              indicator: exitIndicatorConfig.key,
-              output: botStrategyForm.exitOutput || getIndicatorOutputs(exitIndicatorConfig)[0],
-              operator: botStrategyForm.exitOperator,
-              right_type: botStrategyForm.exitRightMode,
-              value: botStrategyForm.exitRightMode === 'value' ? parseNumber(botStrategyForm.exitValue, 0) : null,
-              compare_to: botStrategyForm.exitRightMode === 'indicator' && exitCompareIndicatorConfig
-                ? {
-                  indicator: exitCompareIndicatorConfig.key,
-                  output: botStrategyForm.exitCompareOutput || getIndicatorOutputs(exitCompareIndicatorConfig)[0],
-                }
-                : null,
-            },
-          ],
+          logic: botStrategyForm.exitLogic,
+          conditions: exitConditions,
         },
       },
       risk_defaults: {
@@ -639,6 +714,8 @@ export default function PlatformAdminPage() {
       entryCompareIndicator: '',
       entryCompareOutput: 'value',
       entryValue: '0',
+      entryLogic: 'AND',
+      entryConditions: [createStrategyCondition('entry')],
       exitIndicator: '',
       exitOutput: 'value',
       exitOperator: 'less_than',
@@ -646,6 +723,8 @@ export default function PlatformAdminPage() {
       exitCompareIndicator: '',
       exitCompareOutput: 'value',
       exitValue: '0',
+      exitLogic: 'AND',
+      exitConditions: [createStrategyCondition('exit')],
       maxOrderUsd: '100',
       maxPositionUsd: '1000',
       stopLossPercent: '3',
@@ -1517,6 +1596,24 @@ export default function PlatformAdminPage() {
                                   indicatorParameters: Object.fromEntries(
                                     Object.entries(current.indicatorParameters).filter(([key]) => key !== indicator.key)
                                   ),
+                                  entryConditions: current.entryConditions.map((condition) => (
+                                    condition.indicator === indicator.key || condition.compareIndicator === indicator.key
+                                      ? {
+                                        ...condition,
+                                        indicator: condition.indicator === indicator.key ? '' : condition.indicator,
+                                        compareIndicator: condition.compareIndicator === indicator.key ? '' : condition.compareIndicator,
+                                      }
+                                      : condition
+                                  )),
+                                  exitConditions: current.exitConditions.map((condition) => (
+                                    condition.indicator === indicator.key || condition.compareIndicator === indicator.key
+                                      ? {
+                                        ...condition,
+                                        indicator: condition.indicator === indicator.key ? '' : condition.indicator,
+                                        compareIndicator: condition.compareIndicator === indicator.key ? '' : condition.compareIndicator,
+                                      }
+                                      : condition
+                                  )),
                                 }))}
                                 className="rounded-full border border-accent-purple/20 bg-accent-purple/10 px-2.5 py-1 text-caption font-medium text-accent-purple transition hover:border-accent-purple hover:bg-accent-purple/15"
                                 title="Remover indicador"
@@ -1549,6 +1646,28 @@ export default function PlatformAdminPage() {
                                         Object.entries(getDefaultIndicatorParameters(indicator)).map(([key, value]) => [key, String(value)])
                                       ),
                                     },
+                                  entryConditions: checked
+                                    ? current.entryConditions.map((condition) => (
+                                      condition.indicator === indicator.key || condition.compareIndicator === indicator.key
+                                        ? {
+                                          ...condition,
+                                          indicator: condition.indicator === indicator.key ? '' : condition.indicator,
+                                          compareIndicator: condition.compareIndicator === indicator.key ? '' : condition.compareIndicator,
+                                        }
+                                        : condition
+                                    ))
+                                    : current.entryConditions,
+                                  exitConditions: checked
+                                    ? current.exitConditions.map((condition) => (
+                                      condition.indicator === indicator.key || condition.compareIndicator === indicator.key
+                                        ? {
+                                          ...condition,
+                                          indicator: condition.indicator === indicator.key ? '' : condition.indicator,
+                                          compareIndicator: condition.compareIndicator === indicator.key ? '' : condition.compareIndicator,
+                                        }
+                                        : condition
+                                    ))
+                                    : current.exitConditions,
                                 }))}
                                 className={[
                                   'group relative rounded-xl border p-3 text-left transition duration-150 hover:-translate-y-0.5 hover:shadow-md',
@@ -1671,153 +1790,166 @@ export default function PlatformAdminPage() {
                         'rounded-2xl border border-border-subtle bg-background-secondary/50 p-4',
                         strategyBuilderTab !== 'rules' ? 'hidden' : '',
                       ].join(' ')}>
-                        <p className="text-heading-sm text-text-primary">4. Regras e condicoes</p>
-                        <p className="mb-3 text-caption text-text-muted">
-                          As condicoes usam apenas os indicadores selecionados na aba anterior. Ex: RSI.value maior que 70, EMA.value cruza acima de SMA.value.
-                        </p>
+                        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-heading-sm text-text-primary">4. Regras e condicoes</p>
+                            <p className="text-caption text-text-muted">
+                              Monte grupos de entrada e saida com os indicadores selecionados. Cada grupo pode exigir todas as regras (AND) ou qualquer regra (OR).
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-accent-blue/20 bg-accent-blue/10 px-3 py-2 text-[11px] text-text-secondary">
+                            Engine: strategy_rules_v2
+                          </div>
+                        </div>
                         {selectedStrategyIndicators.length === 0 ? (
                           <div className="rounded-xl border border-status-warning/30 bg-status-warning/10 p-4 text-body-sm text-text-secondary">
                             Adicione pelo menos um indicador antes de montar as regras de entrada e saida.
                           </div>
                         ) : (
                           <div className="grid gap-4 lg:grid-cols-2">
-                            {[
-                              {
-                                title: 'Entrada',
-                                caption: 'Quando essa condicao for verdadeira, o motor gera sinal de compra/entrada.',
-                                side: 'entry',
-                                indicator: botStrategyForm.entryIndicator,
-                                output: botStrategyForm.entryOutput,
-                                operator: botStrategyForm.entryOperator,
-                                rightMode: botStrategyForm.entryRightMode,
-                                compareIndicator: botStrategyForm.entryCompareIndicator,
-                                compareOutput: botStrategyForm.entryCompareOutput,
-                                value: botStrategyForm.entryValue,
-                              },
-                              {
-                                title: 'Saida',
-                                caption: 'Quando essa condicao for verdadeira, o motor gera sinal de venda/saida.',
-                                side: 'exit',
-                                indicator: botStrategyForm.exitIndicator,
-                                output: botStrategyForm.exitOutput,
-                                operator: botStrategyForm.exitOperator,
-                                rightMode: botStrategyForm.exitRightMode,
-                                compareIndicator: botStrategyForm.exitCompareIndicator,
-                                compareOutput: botStrategyForm.exitCompareOutput,
-                                value: botStrategyForm.exitValue,
-                              },
-                            ].map((rule) => {
-                              const leftIndicator = botIndicators.find((item) => item.key === rule.indicator);
-                              const rightIndicator = botIndicators.find((item) => item.key === rule.compareIndicator);
-                              const prefix = rule.side === 'entry' ? 'entry' : 'exit';
+                            {(['entry', 'exit'] as StrategyRuleSide[]).map((side) => {
+                              const title = side === 'entry' ? 'Entrada' : 'Saida';
+                              const caption = side === 'entry'
+                                ? 'Quando o grupo passar, o motor pode gerar compra/entrada.'
+                                : 'Quando o grupo passar, o motor pode sair, alem dos guards de risco.';
+                              const conditions = side === 'entry' ? botStrategyForm.entryConditions : botStrategyForm.exitConditions;
+                              const logic = side === 'entry' ? botStrategyForm.entryLogic : botStrategyForm.exitLogic;
                               return (
-                                <div key={rule.side} className="rounded-xl border border-border-subtle bg-background-primary/80 p-4">
-                                  <div className="mb-3">
-                                    <p className="text-body-sm font-semibold text-text-primary">{rule.title}</p>
-                                    <p className="text-caption text-text-muted">{rule.caption}</p>
+                                <div key={side} className="rounded-xl border border-border-subtle bg-background-primary/80 p-3">
+                                  <div className="mb-3 flex items-center justify-between gap-3">
+                                    <div>
+                                      <p className="text-body-sm font-semibold text-text-primary">{title}</p>
+                                      <p className="text-caption text-text-muted">{caption}</p>
+                                    </div>
+                                    <Select
+                                      value={logic}
+                                      options={[
+                                        { value: 'AND', label: 'AND' },
+                                        { value: 'OR', label: 'OR' },
+                                      ]}
+                                      onChange={(event) => setBotStrategyForm((current) => ({
+                                        ...current,
+                                        entryLogic: side === 'entry' ? event.target.value : current.entryLogic,
+                                        exitLogic: side === 'exit' ? event.target.value : current.exitLogic,
+                                      }))}
+                                      className="h-9 w-24 py-0 text-caption"
+                                    />
                                   </div>
-                                  <div className="space-y-3">
-                                    <div className="grid gap-2 md:grid-cols-[1.1fr_0.8fr]">
-                                      <div>
-                                        <InfoLabel label="Indicador" info="Escolha um dos indicadores adicionados na estrategia." />
-                                        <Select
-                                          value={rule.indicator}
-                                          options={[{ value: '', label: `Indicador de ${rule.title.toLowerCase()}` }, ...selectedIndicatorOptions]}
-                                          onChange={(event) => {
-                                            const indicator = botIndicators.find((item) => item.key === event.target.value);
-                                            setBotStrategyForm((current) => ({
-                                              ...current,
-                                              [`${prefix}Indicator`]: event.target.value,
-                                              [`${prefix}Output`]: getIndicatorOutputs(indicator)[0] || 'value',
-                                            }));
-                                          }}
-                                          className="h-10 py-0 text-body-sm"
-                                        />
-                                      </div>
-                                      <div>
-                                        <InfoLabel label="Saida do indicador" info="Campo calculado pelo indicador escolhido. Ex: value, upper, lower, signal, histogram." />
-                                        <Select
-                                          value={rule.output}
-                                          options={getIndicatorOutputs(leftIndicator).map((output) => ({ value: output, label: output }))}
-                                          onChange={(event) => setBotStrategyForm((current) => ({
-                                            ...current,
-                                            [`${prefix}Output`]: event.target.value,
-                                          }))}
-                                          className="h-10 py-0 text-body-sm"
-                                        />
-                                      </div>
-                                    </div>
-                                    <div className="grid gap-2 md:grid-cols-[0.8fr_0.7fr_1fr]">
-                                      <div>
-                                        <InfoLabel label="Operador" info="Como comparar o lado esquerdo com o lado direito." />
-                                        <Select
-                                          value={rule.operator}
-                                          options={strategyOperatorOptions}
-                                          onChange={(event) => setBotStrategyForm((current) => ({
-                                            ...current,
-                                            [`${prefix}Operator`]: event.target.value,
-                                          }))}
-                                          className="h-10 py-0 text-body-sm"
-                                        />
-                                      </div>
-                                      <div>
-                                        <InfoLabel label="Comparar com" info="Use valor fixo ou compare com outro indicador selecionado." />
-                                        <Select
-                                          value={rule.rightMode}
-                                          options={[
-                                            { value: 'value', label: 'Valor fixo' },
-                                            { value: 'indicator', label: 'Outro indicador' },
-                                          ]}
-                                          onChange={(event) => setBotStrategyForm((current) => ({
-                                            ...current,
-                                            [`${prefix}RightMode`]: event.target.value,
-                                          }))}
-                                          className="h-10 py-0 text-body-sm"
-                                        />
-                                      </div>
-                                      {rule.rightMode === 'indicator' ? (
-                                        <div className="grid gap-2 sm:grid-cols-2">
-                                          <Select
-                                            value={rule.compareIndicator}
-                                            options={[{ value: '', label: 'Indicador comparado' }, ...selectedIndicatorOptions]}
-                                            onChange={(event) => {
-                                              const indicator = botIndicators.find((item) => item.key === event.target.value);
-                                              setBotStrategyForm((current) => ({
-                                                ...current,
-                                                [`${prefix}CompareIndicator`]: event.target.value,
-                                                [`${prefix}CompareOutput`]: getIndicatorOutputs(indicator)[0] || 'value',
-                                              }));
-                                            }}
-                                            className="h-10 py-0 text-body-sm"
-                                          />
-                                          <Select
-                                            value={rule.compareOutput}
-                                            options={getIndicatorOutputs(rightIndicator).map((output) => ({ value: output, label: output }))}
-                                            onChange={(event) => setBotStrategyForm((current) => ({
-                                              ...current,
-                                              [`${prefix}CompareOutput`]: event.target.value,
-                                            }))}
-                                            className="h-10 py-0 text-body-sm"
-                                          />
+                                  <div className="space-y-2">
+                                    {conditions.map((condition, conditionIndex) => {
+                                      const leftIndicator = botIndicators.find((item) => item.key === condition.indicator);
+                                      const rightIndicator = botIndicators.find((item) => item.key === condition.compareIndicator);
+                                      const operatorLabel = strategyOperatorOptions.find((item) => item.value === condition.operator)?.label || condition.operator;
+                                      return (
+                                        <div key={condition.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-2">
+                                          <div className="mb-2 flex items-center justify-between gap-2">
+                                            <span className="rounded-lg bg-background-primary px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-text-muted">
+                                              Regra {conditionIndex + 1}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() => removeStrategyCondition(side, condition.id)}
+                                              className="rounded-lg border border-border-subtle px-2 py-1 text-[10px] font-semibold text-text-muted transition hover:border-status-error/40 hover:text-status-error disabled:opacity-40"
+                                              disabled={conditions.length === 1}
+                                            >
+                                              remover
+                                            </button>
+                                          </div>
+                                          <div className="grid gap-2 xl:grid-cols-[1.1fr_0.65fr_0.8fr_0.75fr_1fr]">
+                                            <Select
+                                              value={condition.indicator}
+                                              options={[{ value: '', label: 'Indicador' }, ...selectedIndicatorOptions]}
+                                              onChange={(event) => {
+                                                const indicator = botIndicators.find((item) => item.key === event.target.value);
+                                                updateStrategyCondition(side, condition.id, {
+                                                  indicator: event.target.value,
+                                                  output: getIndicatorOutputs(indicator)[0] || 'value',
+                                                });
+                                              }}
+                                              className="h-9 py-0 text-caption"
+                                            />
+                                            <Select
+                                              value={condition.output}
+                                              options={getIndicatorOutputs(leftIndicator).map((output) => ({ value: output, label: output }))}
+                                              onChange={(event) => updateStrategyCondition(side, condition.id, { output: event.target.value })}
+                                              className="h-9 py-0 text-caption"
+                                            />
+                                            <Select
+                                              value={condition.operator}
+                                              options={strategyOperatorOptions}
+                                              onChange={(event) => updateStrategyCondition(side, condition.id, { operator: event.target.value })}
+                                              className="h-9 py-0 text-caption"
+                                            />
+                                            <Select
+                                              value={condition.rightMode}
+                                              options={[
+                                                { value: 'value', label: 'Valor' },
+                                                { value: 'indicator', label: 'Indicador' },
+                                              ]}
+                                              onChange={(event) => updateStrategyCondition(side, condition.id, {
+                                                rightMode: event.target.value as StrategyRightMode,
+                                              })}
+                                              className="h-9 py-0 text-caption"
+                                            />
+                                            {condition.rightMode === 'indicator' ? (
+                                              <div className="grid gap-2 sm:grid-cols-2">
+                                                <Select
+                                                  value={condition.compareIndicator}
+                                                  options={[{ value: '', label: 'Comparar com' }, ...selectedIndicatorOptions]}
+                                                  onChange={(event) => {
+                                                    const indicator = botIndicators.find((item) => item.key === event.target.value);
+                                                    updateStrategyCondition(side, condition.id, {
+                                                      compareIndicator: event.target.value,
+                                                      compareOutput: getIndicatorOutputs(indicator)[0] || 'value',
+                                                    });
+                                                  }}
+                                                  className="h-9 py-0 text-caption"
+                                                />
+                                                <Select
+                                                  value={condition.compareOutput}
+                                                  options={getIndicatorOutputs(rightIndicator).map((output) => ({ value: output, label: output }))}
+                                                  onChange={(event) => updateStrategyCondition(side, condition.id, { compareOutput: event.target.value })}
+                                                  className="h-9 py-0 text-caption"
+                                                />
+                                              </div>
+                                            ) : (
+                                              <div className="grid gap-2 sm:grid-cols-2">
+                                                <input
+                                                  value={condition.value}
+                                                  onChange={(event) => updateStrategyCondition(side, condition.id, { value: event.target.value })}
+                                                  placeholder="Valor"
+                                                  className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+                                                />
+                                                <input
+                                                  value={condition.valueMax}
+                                                  onChange={(event) => updateStrategyCondition(side, condition.id, { valueMax: event.target.value })}
+                                                  placeholder="Valor max"
+                                                  className={cn(
+                                                    'h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue',
+                                                    condition.operator !== 'between' && 'hidden'
+                                                  )}
+                                                />
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div className="mt-2 truncate rounded-lg border border-border-subtle bg-background-primary px-2 py-1.5 text-[11px] text-text-secondary">
+                                            SE {leftIndicator?.name || 'indicador'} . {condition.output || 'value'} {operatorLabel}{' '}
+                                            {condition.rightMode === 'indicator'
+                                              ? `${rightIndicator?.name || 'outro indicador'} . ${condition.compareOutput || 'value'}`
+                                              : condition.operator === 'between'
+                                                ? `${condition.value || '0'} e ${condition.valueMax || condition.value || '0'}`
+                                                : condition.value || '0'}
+                                          </div>
                                         </div>
-                                      ) : (
-                                        <input
-                                          value={rule.value}
-                                          onChange={(event) => setBotStrategyForm((current) => ({
-                                            ...current,
-                                            [`${prefix}Value`]: event.target.value,
-                                          }))}
-                                          placeholder="Ex: 70"
-                                          className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                                        />
-                                      )}
-                                    </div>
-                                    <div className="rounded-lg border border-border-subtle bg-background-secondary/70 px-3 py-2 text-caption text-text-secondary">
-                                      SE {leftIndicator?.name || 'indicador'} . {rule.output || 'value'} {strategyOperatorOptions.find((item) => item.value === rule.operator)?.label || rule.operator}{' '}
-                                      {rule.rightMode === 'indicator'
-                                        ? `${rightIndicator?.name || 'outro indicador'} . ${rule.compareOutput || 'value'}`
-                                        : rule.value || '0'}
-                                    </div>
+                                      );
+                                    })}
+                                    <button
+                                      type="button"
+                                      onClick={() => addStrategyCondition(side)}
+                                      className="w-full rounded-xl border border-dashed border-accent-blue/40 px-3 py-2 text-caption font-semibold text-accent-blue transition hover:bg-accent-blue/10"
+                                    >
+                                      + Adicionar condicao de {title.toLowerCase()}
+                                    </button>
                                   </div>
                                 </div>
                               );
@@ -1872,7 +2004,7 @@ export default function PlatformAdminPage() {
                       </div>
                       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle pt-4">
                         <p className="text-caption text-text-muted">
-                          {botStrategyForm.selectedIndicators.length} indicadores - Entrada: {botStrategyForm.entryIndicator || 'nao definida'} - Saida: {botStrategyForm.exitIndicator || 'nao definida'}
+                          {botStrategyForm.selectedIndicators.length} indicadores - {botStrategyForm.entryConditions.length} regras de entrada - {botStrategyForm.exitConditions.length} regras de saida
                         </p>
                         <Button type="submit">Salvar estrategia</Button>
                       </div>

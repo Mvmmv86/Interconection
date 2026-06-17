@@ -426,6 +426,47 @@ def _extract_strategy_indicator_keys(indicator_config: dict) -> set[str]:
     return keys
 
 
+def _sanitize_strategy_rule_config(rule_config: dict) -> dict:
+    """Drop incomplete conditions so direct API calls cannot persist no-op rules."""
+    if not isinstance(rule_config, dict):
+        return {}
+    sanitized = dict(rule_config)
+    for side in ("entry", "exit"):
+        group = sanitized.get(side)
+        if not isinstance(group, dict):
+            continue
+        cleaned_group = dict(group)
+        conditions = cleaned_group.get("conditions")
+        if isinstance(conditions, list):
+            cleaned_group["conditions"] = [
+                condition
+                for condition in conditions
+                if isinstance(condition, dict)
+                and condition.get("indicator")
+                and (
+                    condition.get("right_type") != "indicator"
+                    or (
+                        isinstance(condition.get("compare_to"), dict)
+                        and condition["compare_to"].get("indicator")
+                    )
+                )
+            ]
+        sanitized[side] = cleaned_group
+    return sanitized
+
+
+def _strategy_contract_version(strategy: BotStrategy | None = None, rule_config: dict | None = None) -> int:
+    versions = [1]
+    if strategy is not None:
+        versions.append(int(strategy.version or 1))
+    if isinstance(rule_config, dict):
+        try:
+            versions.append(int(rule_config.get("version") or 1))
+        except (TypeError, ValueError):
+            versions.append(1)
+    return max(versions)
+
+
 async def _ensure_strategy_indicators_exist(db: DBSession, indicator_config: dict) -> None:
     keys = _extract_strategy_indicator_keys(indicator_config)
     if not keys:
@@ -926,6 +967,7 @@ async def create_admin_bot_strategy(
 ) -> BotStrategyResponse:
     """Create a reusable strategy for bot products."""
     await _ensure_strategy_indicators_exist(db, data.indicator_config)
+    rule_config = _sanitize_strategy_rule_config(data.rule_config)
     strategy = BotStrategy(
         id=uuid4(),
         name=data.name,
@@ -935,8 +977,9 @@ async def create_admin_bot_strategy(
         status=data.status,
         market_config=data.market_config,
         indicator_config=data.indicator_config,
-        rule_config=data.rule_config,
+        rule_config=rule_config,
         risk_defaults=data.risk_defaults,
+        version=_strategy_contract_version(rule_config=rule_config),
         created_by_user_id=superuser.id,
     )
     db.add(strategy)
@@ -980,10 +1023,12 @@ async def update_admin_bot_strategy(
         update_data["slug"] = update_data["slug"].strip().lower()
     if "indicator_config" in update_data and update_data["indicator_config"] is not None:
         await _ensure_strategy_indicators_exist(db, update_data["indicator_config"])
+    if "rule_config" in update_data and update_data["rule_config"] is not None:
+        update_data["rule_config"] = _sanitize_strategy_rule_config(update_data["rule_config"])
     for field, value in update_data.items():
         setattr(strategy, field, value)
     if update_data:
-        strategy.version += 1
+        strategy.version = _strategy_contract_version(strategy, strategy.rule_config)
     try:
         await db.flush()
     except IntegrityError as exc:

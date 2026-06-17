@@ -121,9 +121,8 @@ class BotIndicator(Base, UUIDMixin, TimestampMixin):
     default_parameters: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     supported_timeframes: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     required_inputs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    # v1 stores the future engine handler reference. The current backtest still
-    # uses a transparent MA-crossover placeholder until strategy-specific
-    # handlers are implemented.
+    # References the deterministic technical-analysis handler used by the
+    # strategy_rules_v2 backtest/evaluation engine.
     engine_handler: Mapped[str] = mapped_column(String(120), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

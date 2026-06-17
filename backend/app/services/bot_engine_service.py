@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, time, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -45,12 +46,177 @@ def _enum_value(value: object) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
 
+def _safe_float(value: object, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, Decimal):
+        return float(value)
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def _safe_int(value: object, default: int = 1) -> int:
+    try:
+        parsed = int(float(str(value)))
+    except (TypeError, ValueError):
+        return default
+    return max(1, parsed)
+
+
+def _empty_series(length: int) -> list[float | None]:
+    return [None for _ in range(length)]
+
+
+def _rolling_sma(values: list[float], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    if length <= 0:
+        return output
+    rolling = 0.0
+    for index, value in enumerate(values):
+        rolling += value
+        if index >= length:
+            rolling -= values[index - length]
+        if index >= length - 1:
+            output[index] = rolling / length
+    return output
+
+
+def _rolling_max(values: list[float], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    for index in range(len(values)):
+        if index >= length - 1:
+            output[index] = max(values[index - length + 1 : index + 1])
+    return output
+
+
+def _rolling_min(values: list[float], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    for index in range(len(values)):
+        if index >= length - 1:
+            output[index] = min(values[index - length + 1 : index + 1])
+    return output
+
+
+def _rolling_stddev(values: list[float], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    for index in range(len(values)):
+        if index < length - 1:
+            continue
+        window = values[index - length + 1 : index + 1]
+        mean = sum(window) / length
+        variance = sum((item - mean) ** 2 for item in window) / length
+        output[index] = math.sqrt(variance)
+    return output
+
+
+def _ema(values: list[float], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    if not values or length <= 0:
+        return output
+    multiplier = 2 / (length + 1)
+    current: float | None = None
+    for index, value in enumerate(values):
+        if index < length - 1:
+            continue
+        if current is None:
+            current = sum(values[index - length + 1 : index + 1]) / length
+        else:
+            current = (value - current) * multiplier + current
+        output[index] = current
+    return output
+
+
+def _ema_nullable(values: list[float | None], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    multiplier = 2 / (length + 1)
+    current: float | None = None
+    buffer: list[float] = []
+    for index, value in enumerate(values):
+        if value is None:
+            continue
+        buffer.append(value)
+        if len(buffer) < length:
+            continue
+        if current is None:
+            current = sum(buffer[-length:]) / length
+        else:
+            current = (value - current) * multiplier + current
+        output[index] = current
+    return output
+
+
+def _rma(values: list[float], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    current: float | None = None
+    for index, value in enumerate(values):
+        if index < length - 1:
+            continue
+        if current is None:
+            current = sum(values[index - length + 1 : index + 1]) / length
+        else:
+            current = (current * (length - 1) + value) / length
+        output[index] = current
+    return output
+
+
+def _wma(values: list[float], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    denominator = length * (length + 1) / 2
+    for index in range(len(values)):
+        if index < length - 1:
+            continue
+        window = values[index - length + 1 : index + 1]
+        output[index] = sum(value * weight for weight, value in enumerate(window, start=1)) / denominator
+    return output
+
+
+def _series_at(series: list[float | None], index: int) -> float | None:
+    if index < 0 or index >= len(series):
+        return None
+    return series[index]
+
+
+def _coalesce_series(primary: list[float | None], fallback: list[float]) -> list[float]:
+    return [fallback[index] if value is None else value for index, value in enumerate(primary)]
+
+
 class BotEngineService:
     """Runs paper-only bot evaluations and historical backtests.
 
     The service intentionally does not place live exchange orders. The live
     path is guarded until a dedicated executor + reconciliation layer exists.
     """
+
+    IMPLEMENTED_INDICATORS = frozenset(
+        {
+            "sma",
+            "ema",
+            "wma",
+            "rma",
+            "dema",
+            "tema",
+            "vwma",
+            "roc",
+            "momentum",
+            "standard_deviation",
+            "bollinger_bands",
+            "rsi",
+            "macd",
+            "atr",
+            "donchian_channel",
+            "keltner_channel",
+            "stochastic",
+            "williams_r",
+            "cci",
+            "volume_sma",
+            "obv",
+            "vwap",
+            "mfi",
+        }
+    )
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -206,7 +372,20 @@ class BotEngineService:
             "captured_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    def _strategy_rule_version(self, strategy: BotStrategy | None) -> int:
+        if strategy is None:
+            return 1
+        rule_config = strategy.rule_config or {}
+        embedded_version = _safe_int(rule_config.get("version"), 1) if isinstance(rule_config, dict) else 1
+        return max(int(strategy.version or 1), embedded_version)
+
     async def _decide(self, instance: BotInstance, market_snapshot: dict) -> tuple[dict, dict]:
+        strategy = instance.strategy
+        if strategy is not None and self._strategy_rule_version(strategy) >= 2:
+            return await self._decide_v2(instance, strategy, market_snapshot)
+        return await self._decide_v1_legacy(instance, market_snapshot)
+
+    async def _decide_v1_legacy(self, instance: BotInstance, market_snapshot: dict) -> tuple[dict, dict]:
         template_type = instance.template.type if instance.template else BotTemplateType.CUSTOM
         strategy_type = instance.strategy.type if instance.strategy else template_type
         risk_config = {
@@ -316,32 +495,516 @@ class BotEngineService:
         }
         return decision, risk_snapshot
 
-    def _resolve_backtest_windows(self, strategy: BotStrategy) -> tuple[int, int]:
-        indicator_config = strategy.indicator_config or {}
-        short_window = int(indicator_config.get("short_window", 5) or 5)
-        long_window = int(indicator_config.get("long_window", 20) or 20)
-        indicators = indicator_config.get("indicators")
+    async def _decide_v2(
+        self,
+        instance: BotInstance,
+        strategy: BotStrategy,
+        market_snapshot: dict,
+    ) -> tuple[dict, dict]:
+        risk_config = {
+            **(strategy.risk_defaults or {}),
+            **(instance.template.default_parameters if instance.template else {}),
+            **(instance.risk_config or {}),
+        }
+        market_config = strategy.market_config or {}
+        allowed_symbols = [str(item).upper() for item in (market_config.get("allowed_symbols") or risk_config.get("allowed_symbols") or [])]
+        positions = market_snapshot.get("positions", [])
+        top_position = positions[0] if positions else None
+        symbol = (
+            allowed_symbols[0]
+            if allowed_symbols
+            else (str(top_position.get("symbol")).upper() if top_position and top_position.get("symbol") else None)
+        )
+        if not symbol:
+            return (
+                {
+                    "action": BotSignalAction.HOLD.value,
+                    "symbol": None,
+                    "confidence": 0.1,
+                    "price_usd": 0,
+                    "quantity": 0,
+                    "notional_usd": 0,
+                    "reason": "Strategy v2 has no resolvable symbol",
+                },
+                {"rule_version": self._strategy_rule_version(strategy), "blocks": ["missing_symbol"], "live_guard": "disabled"},
+            )
+
+        result = await self.db.execute(
+            select(PriceHistory)
+            .where(func.upper(PriceHistory.symbol) == symbol.upper())
+            .order_by(PriceHistory.timestamp.desc())
+            .limit(self._strategy_candle_limit(strategy))
+        )
+        candles = list(reversed(result.scalars().all()))
+        if len(candles) < 2:
+            return (
+                {
+                    "action": BotSignalAction.HOLD.value,
+                    "symbol": symbol,
+                    "confidence": 0.1,
+                    "price_usd": 0,
+                    "quantity": 0,
+                    "notional_usd": 0,
+                    "reason": "Not enough price history for strategy v2 decision",
+                },
+                {"rule_version": self._strategy_rule_version(strategy), "blocks": ["missing_price_history"], "live_guard": "disabled"},
+            )
+
+        frames, fallback_indicators = self._indicator_frames(strategy, candles)
+        latest_index = len(candles) - 1
+        entry_passed, entry_evaluations = self._evaluate_rule_group(strategy.rule_config or {}, "entry", frames, latest_index)
+        exit_passed, exit_evaluations = self._evaluate_rule_group(strategy.rule_config or {}, "exit", frames, latest_index)
+        latest_price = Decimal(str(candles[-1].price_usd))
+        max_order_usd = Decimal(str(risk_config.get("max_order_usd", 100) or 100))
+        max_position_usd = Decimal(str(risk_config.get("max_position_usd", 1000) or 1000))
+        allow_averaging = str(risk_config.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
+        max_daily_signals = int(risk_config.get("max_daily_signals", 20) or 0)
+        today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
+        signal_count_today = int(
+            await self.db.scalar(
+                select(func.count(BotSignal.id)).where(
+                    BotSignal.instance_id == instance.id,
+                    BotSignal.generated_at >= today_start,
+                    BotSignal.action != BotSignalAction.HOLD,
+                )
+            )
+            or 0
+        )
+        current_symbol_value = sum(
+            Decimal(str(item.get("current_value_usd") or 0))
+            for item in positions
+            if str(item.get("symbol") or "").upper() == symbol
+        )
+        action = BotSignalAction.HOLD
+        reason = "Strategy v2 conditions did not pass"
+        confidence = Decimal("0.25")
+        notional = Decimal("0")
+        if exit_passed and current_symbol_value > 0:
+            action = BotSignalAction.SELL
+            notional = min(current_symbol_value, max_order_usd if max_order_usd > 0 else current_symbol_value)
+            confidence = Decimal("0.78")
+            reason = "Strategy v2 exit conditions passed"
+        elif entry_passed and (current_symbol_value <= 0 or allow_averaging):
+            action = BotSignalAction.BUY
+            notional = max_order_usd
+            confidence = Decimal("0.74")
+            reason = "Strategy v2 entry conditions passed"
+        elif entry_passed:
+            reason = "Strategy v2 entry passed but averaging is disabled for an open position"
+
+        risk_blocks = []
+        if allowed_symbols and symbol not in allowed_symbols:
+            risk_blocks.append("symbol_not_allowed")
+        if max_daily_signals > 0 and signal_count_today >= max_daily_signals:
+            risk_blocks.append("daily_signal_limit")
+        if action == BotSignalAction.BUY and max_position_usd > 0 and current_symbol_value + notional > max_position_usd:
+            risk_blocks.append("max_position_usd")
+        if max_order_usd <= 0 and action in {BotSignalAction.BUY, BotSignalAction.SELL}:
+            risk_blocks.append("max_order_usd_disabled")
+        if risk_blocks:
+            action = BotSignalAction.HOLD
+            reason = f"Risk guard blocked strategy v2 signal: {', '.join(risk_blocks)}"
+            notional = Decimal("0")
+            confidence = Decimal("0.10")
+
+        quantity = notional / latest_price if latest_price > 0 and notional > 0 else Decimal("0")
+        risk_snapshot = {
+            "rule_version": self._strategy_rule_version(strategy),
+            "max_order_usd": _json_number(max_order_usd),
+            "max_position_usd": _json_number(max_position_usd),
+            "max_daily_signals": max_daily_signals,
+            "signals_today": signal_count_today,
+            "allowed_symbols": allowed_symbols,
+            "allow_averaging": allow_averaging,
+            "entry_passed": entry_passed,
+            "exit_passed": exit_passed,
+            "entry_conditions": entry_evaluations,
+            "exit_conditions": exit_evaluations,
+            "fallback_indicators": fallback_indicators,
+            "blocks": risk_blocks,
+            "live_guard": "disabled",
+        }
+        decision = {
+            "action": action.value,
+            "symbol": symbol,
+            "confidence": _json_number(confidence),
+            "price_usd": _json_number(latest_price),
+            "quantity": _json_number(quantity),
+            "notional_usd": _json_number(notional),
+            "reason": reason,
+        }
+        return decision, risk_snapshot
+
+    def _source_values(self, candles: list[PriceHistory], source: object = "close") -> list[float]:
+        source_key = str(source or "close").lower()
+        close = [_safe_float(candle.price_usd) for candle in candles]
+        high = [_safe_float(candle.high_24h, close[index]) for index, candle in enumerate(candles)]
+        low = [_safe_float(candle.low_24h, close[index]) for index, candle in enumerate(candles)]
+        volume = [_safe_float(candle.volume_24h) for candle in candles]
+        if source_key == "high":
+            return high
+        if source_key == "low":
+            return low
+        if source_key == "volume":
+            return volume
+        if source_key == "hl2":
+            return [(high[index] + low[index]) / 2 for index in range(len(candles))]
+        if source_key == "hlc3":
+            return [(high[index] + low[index] + close[index]) / 3 for index in range(len(candles))]
+        if source_key == "ohlc4":
+            return [(high[index] + low[index] + close[index] + close[index]) / 4 for index in range(len(candles))]
+        return close
+
+    def _true_range(self, candles: list[PriceHistory]) -> list[float]:
+        close = self._source_values(candles, "close")
+        high = self._source_values(candles, "high")
+        low = self._source_values(candles, "low")
+        output: list[float] = []
+        for index in range(len(candles)):
+            previous_close = close[index - 1] if index > 0 else close[index]
+            output.append(max(high[index] - low[index], abs(high[index] - previous_close), abs(low[index] - previous_close)))
+        return output
+
+    def _calculate_indicator(
+        self,
+        key: str,
+        parameters: dict,
+        candles: list[PriceHistory],
+    ) -> dict[str, list[float | None]]:
+        close = self._source_values(candles, "close")
+        high = self._source_values(candles, "high")
+        low = self._source_values(candles, "low")
+        volume = self._source_values(candles, "volume")
+        source = self._source_values(candles, parameters.get("source", "close"))
+        length = _safe_int(parameters.get("length"), 20)
+        key = key.lower()
+
+        if key == "sma":
+            return {"value": _rolling_sma(source, length)}
+        if key == "ema":
+            return {"value": _ema(source, length)}
+        if key == "wma":
+            return {"value": _wma(source, length)}
+        if key == "rma":
+            return {"value": _rma(source, length)}
+        if key == "dema":
+            first = _ema(source, length)
+            second = _ema(_coalesce_series(first, source), length)
+            return {"value": [(2 * first[index] - second[index]) if first[index] is not None and second[index] is not None else None for index in range(len(source))]}
+        if key == "tema":
+            first = _ema(source, length)
+            first_values = _coalesce_series(first, source)
+            second = _ema(first_values, length)
+            third = _ema(_coalesce_series(second, first_values), length)
+            return {
+                "value": [
+                    (3 * first[index] - 3 * second[index] + third[index])
+                    if first[index] is not None and second[index] is not None and third[index] is not None
+                    else None
+                    for index in range(len(source))
+                ]
+            }
+        if key == "vwma":
+            output = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < length - 1:
+                    continue
+                price_volume = sum(source[item] * volume[item] for item in range(index - length + 1, index + 1))
+                volume_sum = sum(volume[index - length + 1 : index + 1])
+                output[index] = price_volume / volume_sum if volume_sum > 0 else None
+            return {"value": output}
+        if key == "roc":
+            output = _empty_series(len(source))
+            for index in range(length, len(source)):
+                previous = source[index - length]
+                output[index] = ((source[index] - previous) / previous * 100) if previous else None
+            return {"value": output}
+        if key == "momentum":
+            output = _empty_series(len(source))
+            for index in range(length, len(source)):
+                output[index] = source[index] - source[index - length]
+            return {"value": output}
+        if key == "standard_deviation":
+            return {"value": _rolling_stddev(source, length)}
+        if key == "bollinger_bands":
+            basis = _rolling_sma(source, length)
+            deviation = _rolling_stddev(source, length)
+            multiplier = _safe_float(parameters.get("stddev"), 2.0)
+            upper = _empty_series(len(source))
+            lower = _empty_series(len(source))
+            bandwidth = _empty_series(len(source))
+            for index in range(len(source)):
+                if basis[index] is None or deviation[index] is None:
+                    continue
+                upper[index] = basis[index] + deviation[index] * multiplier
+                lower[index] = basis[index] - deviation[index] * multiplier
+                bandwidth[index] = ((upper[index] - lower[index]) / basis[index] * 100) if basis[index] else None
+            return {"upper": upper, "basis": basis, "lower": lower, "bandwidth": bandwidth}
+        if key == "rsi":
+            gains = [0.0]
+            losses = [0.0]
+            for index in range(1, len(source)):
+                change = source[index] - source[index - 1]
+                gains.append(max(change, 0.0))
+                losses.append(abs(min(change, 0.0)))
+            avg_gain = _rma(gains, length)
+            avg_loss = _rma(losses, length)
+            output = _empty_series(len(source))
+            for index in range(len(source)):
+                if avg_gain[index] is None or avg_loss[index] is None:
+                    continue
+                if avg_loss[index] == 0:
+                    output[index] = 100.0
+                else:
+                    relative_strength = avg_gain[index] / avg_loss[index]
+                    output[index] = 100 - (100 / (1 + relative_strength))
+            return {"value": output}
+        if key == "macd":
+            fast = _safe_int(parameters.get("fast_length"), 12)
+            slow = _safe_int(parameters.get("slow_length"), 26)
+            signal_length = _safe_int(parameters.get("signal_length"), 9)
+            fast_ema = _ema(source, fast)
+            slow_ema = _ema(source, slow)
+            macd = [
+                fast_ema[index] - slow_ema[index]
+                if fast_ema[index] is not None and slow_ema[index] is not None
+                else None
+                for index in range(len(source))
+            ]
+            signal = _ema_nullable(macd, signal_length)
+            histogram = [
+                macd[index] - signal[index]
+                if macd[index] is not None and signal[index] is not None
+                else None
+                for index in range(len(source))
+            ]
+            return {"macd": macd, "signal": signal, "histogram": histogram}
+        if key == "atr":
+            return {"value": _rma(self._true_range(candles), length)}
+        if key == "donchian_channel":
+            upper = _rolling_max(high, length)
+            lower = _rolling_min(low, length)
+            basis = [
+                (upper[index] + lower[index]) / 2 if upper[index] is not None and lower[index] is not None else None
+                for index in range(len(source))
+            ]
+            return {"upper": upper, "basis": basis, "lower": lower}
+        if key == "keltner_channel":
+            atr_length = _safe_int(parameters.get("atr_length"), 10)
+            multiplier = _safe_float(parameters.get("multiplier"), 2.0)
+            basis = _ema(source, length)
+            atr = _rma(self._true_range(candles), atr_length)
+            upper = [
+                basis[index] + atr[index] * multiplier if basis[index] is not None and atr[index] is not None else None
+                for index in range(len(source))
+            ]
+            lower = [
+                basis[index] - atr[index] * multiplier if basis[index] is not None and atr[index] is not None else None
+                for index in range(len(source))
+            ]
+            return {"upper": upper, "basis": basis, "lower": lower}
+        if key == "stochastic":
+            k_length = _safe_int(parameters.get("k_length"), 14)
+            smooth = _safe_int(parameters.get("smooth"), 3)
+            d_length = _safe_int(parameters.get("d_length"), 3)
+            raw_k = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < k_length - 1:
+                    continue
+                highest = max(high[index - k_length + 1 : index + 1])
+                lowest = min(low[index - k_length + 1 : index + 1])
+                raw_k[index] = ((close[index] - lowest) / (highest - lowest) * 100) if highest != lowest else 0.0
+            k = _rolling_sma(_coalesce_series(raw_k, [0.0 for _ in source]), smooth)
+            d = _rolling_sma(_coalesce_series(k, [0.0 for _ in source]), d_length)
+            return {"k": k, "d": d}
+        if key == "williams_r":
+            output = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < length - 1:
+                    continue
+                highest = max(high[index - length + 1 : index + 1])
+                lowest = min(low[index - length + 1 : index + 1])
+                output[index] = ((highest - close[index]) / (highest - lowest) * -100) if highest != lowest else 0.0
+            return {"value": output}
+        if key == "cci":
+            typical = [(high[index] + low[index] + close[index]) / 3 for index in range(len(source))]
+            basis = _rolling_sma(typical, length)
+            output = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < length - 1 or basis[index] is None:
+                    continue
+                window = typical[index - length + 1 : index + 1]
+                mean_deviation = sum(abs(value - basis[index]) for value in window) / length
+                output[index] = (typical[index] - basis[index]) / (0.015 * mean_deviation) if mean_deviation else 0.0
+            return {"value": output}
+        if key == "volume_sma":
+            return {"value": _rolling_sma(volume, length)}
+        if key == "obv":
+            output = _empty_series(len(source))
+            current = 0.0
+            for index in range(len(source)):
+                if index == 0:
+                    output[index] = current
+                    continue
+                if close[index] > close[index - 1]:
+                    current += volume[index]
+                elif close[index] < close[index - 1]:
+                    current -= volume[index]
+                output[index] = current
+            return {"value": output}
+        if key == "vwap":
+            output = _empty_series(len(source))
+            price_volume = 0.0
+            volume_sum = 0.0
+            typical = [(high[index] + low[index] + close[index]) / 3 for index in range(len(source))]
+            for index in range(len(source)):
+                price_volume += typical[index] * volume[index]
+                volume_sum += volume[index]
+                output[index] = price_volume / volume_sum if volume_sum else typical[index]
+            return {"value": output}
+        if key == "mfi":
+            typical = [(high[index] + low[index] + close[index]) / 3 for index in range(len(source))]
+            positive = [0.0]
+            negative = [0.0]
+            for index in range(1, len(source)):
+                flow = typical[index] * volume[index]
+                if typical[index] > typical[index - 1]:
+                    positive.append(flow)
+                    negative.append(0.0)
+                else:
+                    positive.append(0.0)
+                    negative.append(flow)
+            positive_sum = _rolling_sma(positive, length)
+            negative_sum = _rolling_sma(negative, length)
+            output = _empty_series(len(source))
+            for index in range(len(source)):
+                if positive_sum[index] is None or negative_sum[index] is None:
+                    continue
+                if negative_sum[index] == 0:
+                    output[index] = 100.0
+                else:
+                    money_ratio = positive_sum[index] / negative_sum[index]
+                    output[index] = 100 - (100 / (1 + money_ratio))
+            return {"value": output}
+
+        # Fallback keeps the engine safe for newly seeded indicators while making
+        # unsupported handlers explicit in the backtest logs/summary.
+        return {"value": source}
+
+    def _indicator_frames(self, strategy: BotStrategy, candles: list[PriceHistory]) -> tuple[dict[str, dict[str, list[float | None]]], list[str]]:
+        frames: dict[str, dict[str, list[float | None]]] = {}
+        unsupported: list[str] = []
+        indicators = (strategy.indicator_config or {}).get("indicators")
+        if not isinstance(indicators, list):
+            return frames, unsupported
+        for indicator in indicators:
+            if not isinstance(indicator, dict):
+                continue
+            key = str(indicator.get("key") or "").lower()
+            if not key:
+                continue
+            parameters = indicator.get("parameters") if isinstance(indicator.get("parameters"), dict) else {}
+            frames[key] = self._calculate_indicator(key, parameters, candles)
+            if key not in self.IMPLEMENTED_INDICATORS:
+                unsupported.append(key)
+        return frames, sorted(set(unsupported))
+
+    def _strategy_candle_limit(self, strategy: BotStrategy) -> int:
+        """Pick enough candles for indicator warm-up without unbounded reads."""
+        max_length = 500
+        indicators = (strategy.indicator_config or {}).get("indicators")
         if isinstance(indicators, list):
-            lengths = []
             for indicator in indicators:
                 if not isinstance(indicator, dict):
                     continue
                 parameters = indicator.get("parameters")
                 if not isinstance(parameters, dict):
                     continue
-                length = parameters.get("length") or parameters.get("fast_length") or parameters.get("short_length")
-                try:
-                    parsed = int(length)
-                except (TypeError, ValueError):
-                    continue
-                if parsed > 0:
-                    lengths.append(parsed)
-            if lengths:
-                short_window = min(lengths)
-                long_window = max(lengths)
-                if short_window == long_window:
-                    long_window = max(short_window + 1, 20)
-        return short_window, long_window
+                for key, value in parameters.items():
+                    if "length" not in str(key):
+                        continue
+                    max_length = max(max_length, _safe_int(value, 1) * 4)
+        return min(max_length, 5000)
+
+    def _condition_value(
+        self,
+        frames: dict[str, dict[str, list[float | None]]],
+        indicator_key: object,
+        output_key: object,
+        index: int,
+    ) -> float | None:
+        indicator_outputs = frames.get(str(indicator_key or "").lower())
+        if not indicator_outputs:
+            return None
+        output = indicator_outputs.get(str(output_key or "value"))
+        if output is None and "value" in indicator_outputs:
+            output = indicator_outputs["value"]
+        return _series_at(output, index) if output is not None else None
+
+    def _compare_condition(
+        self,
+        condition: dict,
+        frames: dict[str, dict[str, list[float | None]]],
+        index: int,
+    ) -> bool:
+        left = self._condition_value(frames, condition.get("indicator"), condition.get("output", "value"), index)
+        if left is None:
+            return False
+        right_type = str(condition.get("right_type") or "value")
+        operator = str(condition.get("operator") or "greater_than")
+        if right_type == "indicator":
+            compare_to = condition.get("compare_to") if isinstance(condition.get("compare_to"), dict) else {}
+            right = self._condition_value(frames, compare_to.get("indicator"), compare_to.get("output", "value"), index)
+            previous_left = self._condition_value(frames, condition.get("indicator"), condition.get("output", "value"), index - 1)
+            previous_right = self._condition_value(frames, compare_to.get("indicator"), compare_to.get("output", "value"), index - 1)
+        else:
+            right = _safe_float(condition.get("value"), 0.0)
+            previous_left = self._condition_value(frames, condition.get("indicator"), condition.get("output", "value"), index - 1)
+            previous_right = right
+        if right is None:
+            return False
+        if operator == "greater_than":
+            return left > right
+        if operator == "less_than":
+            return left < right
+        if operator == "greater_or_equal":
+            return left >= right
+        if operator == "less_or_equal":
+            return left <= right
+        if operator == "crosses_above":
+            return previous_left is not None and previous_right is not None and previous_left <= previous_right and left > right
+        if operator == "crosses_below":
+            return previous_left is not None and previous_right is not None and previous_left >= previous_right and left < right
+        if operator == "between":
+            upper = _safe_float(condition.get("value_max"), right)
+            low_bound, high_bound = sorted([right, upper])
+            return low_bound <= left <= high_bound
+        return False
+
+    def _evaluate_rule_group(
+        self,
+        rule_config: dict,
+        side: str,
+        frames: dict[str, dict[str, list[float | None]]],
+        index: int,
+    ) -> tuple[bool, list[dict]]:
+        group = rule_config.get(side) if isinstance(rule_config.get(side), dict) else {}
+        conditions = group.get("conditions") if isinstance(group.get("conditions"), list) else []
+        if not conditions:
+            return False, []
+        evaluations = [
+            {
+                "indicator": condition.get("indicator"),
+                "output": condition.get("output", "value"),
+                "operator": condition.get("operator"),
+                "passed": self._compare_condition(condition, frames, index),
+            }
+            for condition in conditions
+            if isinstance(condition, dict)
+        ]
+        logic = str(group.get("logic") or rule_config.get("logic") or "AND").upper()
+        passed = any(item["passed"] for item in evaluations) if logic == "OR" else all(item["passed"] for item in evaluations)
+        return passed, evaluations
 
     async def run_backtest(
         self,
@@ -355,16 +1018,13 @@ class BotEngineService:
         period_start: datetime | None = None,
         period_end: datetime | None = None,
     ) -> BotBacktest:
-        """Run a simple historical paper backtest against stored price history.
+        """Run a historical paper backtest using configured indicators/rules.
 
-        Bot Operations v1 intentionally uses one transparent baseline strategy:
-        short/long moving-average crossover driven by ``indicator_config``.
-        ``rule_config`` is stored for future strategy-specific engines, but is
-        not dispatched yet.
-
-        ``PriceHistory`` currently has no timeframe column, so ``timeframe`` is
-        persisted with the backtest request and metrics but cannot filter the
-        candle query in this version.
+        The engine is deterministic and intentionally paper-only. It evaluates
+        selected indicators once, then applies entry/exit rule groups candle by
+        candle. ``PriceHistory`` has no native timeframe column yet, so the
+        requested timeframe is persisted but cannot filter the query in this
+        version.
         """
         now = datetime.now(timezone.utc)
         backtest = BotBacktest(
@@ -399,72 +1059,173 @@ class BotEngineService:
             backtest.completed_at = datetime.now(timezone.utc)
             return backtest
 
+        rule_config = strategy.rule_config or {}
+        frames, fallback_indicators = self._indicator_frames(strategy, candles)
+        if not frames:
+            backtest.status = BotBacktestStatus.FAILED
+            backtest.error = "Strategy has no configured indicators"
+            backtest.completed_at = datetime.now(timezone.utc)
+            return backtest
+
         cash = Decimal(str(initial_capital_usd))
         units = Decimal("0")
+        entry_price = Decimal("0")
+        highest_since_entry = Decimal("0")
+        max_gain_since_entry = Decimal("0")
+        breakeven_armed = False
+        trailing_armed = False
+        realized_pnl = Decimal("0")
         peak_equity = cash
         max_drawdown = Decimal("0")
-        logs = []
-        short_window, long_window = self._resolve_backtest_windows(strategy)
-        prices: list[Decimal] = []
+        winning_trades = 0
+        losing_trades = 0
+        entry_count = 0
+        exit_count = 0
+        logs: list[dict] = []
+        risk = strategy.risk_defaults or {}
+        max_order_usd = Decimal(str(risk.get("max_order_usd", 100) or 100))
+        max_position_usd = Decimal(str(risk.get("max_position_usd", 1000) or 1000))
+        stop_loss_percent = Decimal(str(risk.get("stop_loss_percent", 0) or 0))
+        take_profit_percent = Decimal(str(risk.get("take_profit_percent", 0) or 0))
+        trailing_stop_percent = Decimal(str(risk.get("trailing_stop_percent", 0) or 0))
+        breakeven_activation_percent = Decimal(str(risk.get("breakeven_activation_percent", 0) or 0))
+        allow_averaging = str(risk.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
 
-        for candle in candles:
-            price = candle.price_usd
-            prices.append(price)
-            if len(prices) < min(short_window, long_window):
+        for index, candle in enumerate(candles):
+            price = Decimal(str(candle.price_usd))
+            if price <= 0:
                 continue
-            short_ma = sum(prices[-short_window:]) / Decimal(str(min(short_window, len(prices))))
-            long_ma = sum(prices[-long_window:]) / Decimal(str(min(long_window, len(prices))))
-            action = "hold"
-            if short_ma > long_ma and cash > 0:
-                spend = cash * Decimal("0.05")
-                units += spend / price
-                cash -= spend
-                action = "buy"
-            elif short_ma < long_ma and units > 0:
-                sell_units = units * Decimal("0.05")
-                cash += sell_units * price
-                units -= sell_units
-                action = "sell"
+            if units > 0:
+                highest_since_entry = max(highest_since_entry, price)
             equity = cash + units * price
             peak_equity = max(peak_equity, equity)
             if peak_equity > 0:
                 drawdown = (peak_equity - equity) / peak_equity * Decimal("100")
                 max_drawdown = max(max_drawdown, drawdown)
-            if action != "hold":
+
+            exit_passed, exit_evaluations = self._evaluate_rule_group(rule_config, "exit", frames, index)
+            entry_passed, entry_evaluations = self._evaluate_rule_group(rule_config, "entry", frames, index)
+            exit_reason = "rule_exit"
+            if units > 0 and entry_price > 0:
+                gain_percent = (price - entry_price) / entry_price * Decimal("100")
+                peak_gain_percent = (highest_since_entry - entry_price) / entry_price * Decimal("100")
+                max_gain_since_entry = max(max_gain_since_entry, peak_gain_percent)
+                if breakeven_activation_percent > 0 and max_gain_since_entry >= breakeven_activation_percent:
+                    breakeven_armed = True
+                if trailing_stop_percent > 0 and peak_gain_percent >= trailing_stop_percent:
+                    trailing_armed = True
+                drawdown_from_entry = (entry_price - price) / entry_price * Decimal("100")
+                trailing_drawdown = (
+                    (highest_since_entry - price) / highest_since_entry * Decimal("100")
+                    if highest_since_entry > 0
+                    else Decimal("0")
+                )
+                if stop_loss_percent > 0 and drawdown_from_entry >= stop_loss_percent:
+                    exit_passed = True
+                    exit_reason = "stop_loss"
+                elif take_profit_percent > 0 and gain_percent >= take_profit_percent:
+                    exit_passed = True
+                    exit_reason = "take_profit"
+                elif trailing_armed and trailing_drawdown >= trailing_stop_percent:
+                    exit_passed = True
+                    exit_reason = "trailing_stop"
+                elif breakeven_armed and price <= entry_price:
+                    exit_passed = True
+                    exit_reason = "breakeven_guard"
+
+            if units > 0 and exit_passed:
+                proceeds = units * price
+                trade_pnl = proceeds - units * entry_price
+                realized_pnl += trade_pnl
+                cash += proceeds
+                units = Decimal("0")
+                exit_count += 1
+                if trade_pnl >= 0:
+                    winning_trades += 1
+                else:
+                    losing_trades += 1
+                equity = cash
                 logs.append(
                     {
                         "timestamp": candle.timestamp.isoformat(),
-                        "action": action,
+                        "action": "sell",
+                        "reason": exit_reason,
                         "price": _json_number(price),
                         "equity": _json_number(equity),
+                        "pnl_usd": _json_number(trade_pnl),
+                        "conditions": exit_evaluations,
                     }
                 )
+                entry_price = Decimal("0")
+                highest_since_entry = Decimal("0")
+                max_gain_since_entry = Decimal("0")
+                breakeven_armed = False
+                trailing_armed = False
+                continue
+
+            position_value = units * price
+            if entry_passed and cash > 0 and position_value < max_position_usd and (units == 0 or allow_averaging):
+                available_capacity = max(Decimal("0"), max_position_usd - position_value)
+                spend = min(cash, max_order_usd, available_capacity)
+                if spend > 0:
+                    bought_units = spend / price
+                    weighted_cost = (entry_price * units + spend) / (units + bought_units) if units > 0 else price
+                    units += bought_units
+                    cash -= spend
+                    entry_price = weighted_cost
+                    highest_since_entry = max(highest_since_entry, price)
+                    max_gain_since_entry = Decimal("0")
+                    breakeven_armed = False
+                    trailing_armed = False
+                    entry_count += 1
+                    equity = cash + units * price
+                    logs.append(
+                        {
+                            "timestamp": candle.timestamp.isoformat(),
+                            "action": "buy",
+                            "reason": "rule_entry",
+                            "price": _json_number(price),
+                            "notional_usd": _json_number(spend),
+                            "equity": _json_number(equity),
+                            "conditions": entry_evaluations,
+                        }
+                    )
 
         final_price = candles[-1].price_usd
         final_equity = cash + units * final_price
         total_return = (
             (final_equity - Decimal(str(initial_capital_usd))) / Decimal(str(initial_capital_usd)) * Decimal("100")
         )
+        total_closed_trades = winning_trades + losing_trades
+        win_rate = Decimal(str(winning_trades)) / Decimal(str(total_closed_trades)) * Decimal("100") if total_closed_trades else Decimal("0")
         backtest.status = BotBacktestStatus.SUCCEEDED
         backtest.result_summary = {
             "initial_capital_usd": _json_number(initial_capital_usd),
             "final_equity_usd": _json_number(final_equity),
             "total_return_percent": _json_number(total_return),
-            "trade_count": len(logs),
-            "engine_note": "v1 placeholder: ran moving-average crossover with windows extracted from selected indicators. Strategy-specific logic ships in the next phase.",
-            "short_window": short_window,
-            "long_window": long_window,
+            "trade_count": entry_count + exit_count,
+            "logged_event_count": min(len(logs), 250),
+            "entry_count": entry_count,
+            "exit_count": exit_count,
+            "win_rate_percent": _json_number(win_rate),
+            "realized_pnl_usd": _json_number(realized_pnl),
+            "engine_note": "strategy_rules_v2: evaluated selected indicators and entry/exit rule groups. Unsupported advanced indicators fall back to source series until dedicated handlers ship.",
+            "fallback_indicators": fallback_indicators,
         }
         backtest.metrics = {
             "max_drawdown_percent": _json_number(max_drawdown),
             "final_cash_usd": _json_number(cash),
             "final_units": _json_number(units),
             "sample_count": len(candles),
-            "short_window": short_window,
-            "long_window": long_window,
+            "indicator_count": len(frames),
+            "allow_averaging": allow_averaging,
+            "entry_rule_logic": (rule_config.get("entry") or {}).get("logic", rule_config.get("logic", "AND")) if isinstance(rule_config.get("entry"), dict) else rule_config.get("logic", "AND"),
+            "exit_rule_logic": (rule_config.get("exit") or {}).get("logic", rule_config.get("logic", "AND")) if isinstance(rule_config.get("exit"), dict) else rule_config.get("logic", "AND"),
             "requested_timeframe": timeframe,
             "timeframe_filter_applied": False,
         }
+        # Keep the full trade counters in result_summary while capping stored
+        # event logs to avoid unbounded JSONB growth on long simulations.
         backtest.logs = logs[-250:]
         backtest.completed_at = datetime.now(timezone.utc)
         return backtest
