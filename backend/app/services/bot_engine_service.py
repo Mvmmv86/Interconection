@@ -84,6 +84,18 @@ def _rolling_sma(values: list[float], length: int) -> list[float | None]:
     return output
 
 
+def _rolling_sma_nullable(values: list[float | None], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    for index in range(len(values)):
+        if index < length - 1:
+            continue
+        window = values[index - length + 1 : index + 1]
+        if any(value is None for value in window):
+            continue
+        output[index] = sum(float(value) for value in window) / length
+    return output
+
+
 def _rolling_max(values: list[float], length: int) -> list[float | None]:
     output = _empty_series(len(values))
     for index in range(len(values)):
@@ -148,6 +160,24 @@ def _ema_nullable(values: list[float | None], length: int) -> list[float | None]
     return output
 
 
+def _rma_nullable(values: list[float | None], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    current: float | None = None
+    buffer: list[float] = []
+    for index, value in enumerate(values):
+        if value is None:
+            continue
+        buffer.append(value)
+        if len(buffer) < length:
+            continue
+        if current is None:
+            current = sum(buffer[-length:]) / length
+        else:
+            current = (current * (length - 1) + value) / length
+        output[index] = current
+    return output
+
+
 def _rma(values: list[float], length: int) -> list[float | None]:
     output = _empty_series(len(values))
     current: float | None = None
@@ -159,6 +189,19 @@ def _rma(values: list[float], length: int) -> list[float | None]:
         else:
             current = (current * (length - 1) + value) / length
         output[index] = current
+    return output
+
+
+def _wma_nullable(values: list[float | None], length: int) -> list[float | None]:
+    output = _empty_series(len(values))
+    denominator = length * (length + 1) / 2
+    for index in range(len(values)):
+        if index < length - 1:
+            continue
+        window = values[index - length + 1 : index + 1]
+        if any(value is None for value in window):
+            continue
+        output[index] = sum(float(value) * weight for weight, value in enumerate(window, start=1)) / denominator
     return output
 
 
@@ -198,16 +241,29 @@ class BotEngineService:
             "rma",
             "dema",
             "tema",
+            "hma",
+            "kama",
+            "alma",
             "vwma",
             "roc",
             "momentum",
             "standard_deviation",
             "bollinger_bands",
             "rsi",
+            "stoch_rsi",
             "macd",
+            "ultimate_oscillator",
+            "awesome_oscillator",
             "atr",
+            "adx",
+            "dmi",
+            "supertrend",
+            "parabolic_sar",
+            "ichimoku",
+            "aroon",
             "donchian_channel",
             "keltner_channel",
+            "historical_volatility",
             "stochastic",
             "williams_r",
             "cci",
@@ -215,6 +271,8 @@ class BotEngineService:
             "obv",
             "vwap",
             "mfi",
+            "accumulation_distribution",
+            "chaikin_money_flow",
         }
     )
 
@@ -536,6 +594,8 @@ class BotEngineService:
             .limit(self._strategy_candle_limit(strategy))
         )
         candles = list(reversed(result.scalars().all()))
+        data_quality = self._data_quality(candles)
+        data_warnings = self._data_quality_warnings(data_quality)
         if len(candles) < 2:
             return (
                 {
@@ -547,7 +607,13 @@ class BotEngineService:
                     "notional_usd": 0,
                     "reason": "Not enough price history for strategy v2 decision",
                 },
-                {"rule_version": self._strategy_rule_version(strategy), "blocks": ["missing_price_history"], "live_guard": "disabled"},
+                {
+                    "rule_version": self._strategy_rule_version(strategy),
+                    "blocks": ["missing_price_history"],
+                    "data_quality": data_quality,
+                    "data_warnings": data_warnings,
+                    "live_guard": "disabled",
+                },
             )
 
         frames, fallback_indicators = self._indicator_frames(strategy, candles)
@@ -621,6 +687,8 @@ class BotEngineService:
             "entry_conditions": entry_evaluations,
             "exit_conditions": exit_evaluations,
             "fallback_indicators": fallback_indicators,
+            "data_quality": data_quality,
+            "data_warnings": data_warnings,
             "blocks": risk_blocks,
             "live_guard": "disabled",
         }
@@ -704,6 +772,52 @@ class BotEngineService:
                     for index in range(len(source))
                 ]
             }
+        if key == "hma":
+            half_length = max(1, length // 2)
+            sqrt_length = max(1, int(math.sqrt(length)))
+            half_wma = _wma(source, half_length)
+            full_wma = _wma(source, length)
+            raw = [
+                (2 * half_wma[index] - full_wma[index])
+                if half_wma[index] is not None and full_wma[index] is not None
+                else None
+                for index in range(len(source))
+            ]
+            return {"value": _wma_nullable(raw, sqrt_length)}
+        if key == "kama":
+            fast_length = _safe_int(parameters.get("fast_length"), 2)
+            slow_length = _safe_int(parameters.get("slow_length"), 30)
+            fast_sc = 2 / (fast_length + 1)
+            slow_sc = 2 / (slow_length + 1)
+            output = _empty_series(len(source))
+            current: float | None = None
+            for index in range(len(source)):
+                if index < length:
+                    continue
+                direction = abs(source[index] - source[index - length])
+                volatility = sum(abs(source[item] - source[item - 1]) for item in range(index - length + 1, index + 1))
+                efficiency_ratio = direction / volatility if volatility else 0.0
+                smoothing_constant = (efficiency_ratio * (fast_sc - slow_sc) + slow_sc) ** 2
+                if current is None:
+                    current = source[index]
+                else:
+                    current = current + smoothing_constant * (source[index] - current)
+                output[index] = current
+            return {"value": output}
+        if key == "alma":
+            offset = _safe_float(parameters.get("offset"), 0.85)
+            sigma = max(_safe_float(parameters.get("sigma"), 6.0), 0.0001)
+            m = offset * (length - 1)
+            s = length / sigma
+            weights = [math.exp(-((item - m) ** 2) / (2 * s * s)) for item in range(length)]
+            denominator = sum(weights)
+            output = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < length - 1:
+                    continue
+                window = source[index - length + 1 : index + 1]
+                output[index] = sum(window[item] * weights[item] for item in range(length)) / denominator
+            return {"value": output}
         if key == "vwma":
             output = _empty_series(len(source))
             for index in range(len(source)):
@@ -726,6 +840,23 @@ class BotEngineService:
             return {"value": output}
         if key == "standard_deviation":
             return {"value": _rolling_stddev(source, length)}
+        if key == "historical_volatility":
+            annualization = _safe_float(parameters.get("annualization"), 365.0)
+            returns = _empty_series(len(source))
+            for index in range(1, len(source)):
+                if source[index - 1] > 0 and source[index] > 0:
+                    returns[index] = math.log(source[index] / source[index - 1])
+            output = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < length:
+                    continue
+                window = returns[index - length + 1 : index + 1]
+                if any(value is None for value in window):
+                    continue
+                mean = sum(float(value) for value in window) / length
+                variance = sum((float(value) - mean) ** 2 for value in window) / (length - 1) if length > 1 else 0.0
+                output[index] = math.sqrt(variance) * math.sqrt(annualization) * 100
+            return {"value": output}
         if key == "bollinger_bands":
             basis = _rolling_sma(source, length)
             deviation = _rolling_stddev(source, length)
@@ -759,6 +890,25 @@ class BotEngineService:
                     relative_strength = avg_gain[index] / avg_loss[index]
                     output[index] = 100 - (100 / (1 + relative_strength))
             return {"value": output}
+        if key == "stoch_rsi":
+            rsi_length = _safe_int(parameters.get("rsi_length"), 14)
+            stoch_length = _safe_int(parameters.get("stoch_length"), 14)
+            k_length = _safe_int(parameters.get("k_length"), 3)
+            d_length = _safe_int(parameters.get("d_length"), 3)
+            rsi = self._calculate_indicator("rsi", {"length": rsi_length, "source": parameters.get("source", "close")}, candles)["value"]
+            raw_k = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < stoch_length - 1:
+                    continue
+                window = rsi[index - stoch_length + 1 : index + 1]
+                if any(value is None for value in window):
+                    continue
+                highest = max(float(value) for value in window)
+                lowest = min(float(value) for value in window)
+                raw_k[index] = ((float(rsi[index]) - lowest) / (highest - lowest) * 100) if highest != lowest and rsi[index] is not None else 0.0
+            k = _rolling_sma_nullable(raw_k, k_length)
+            d = _rolling_sma_nullable(k, d_length)
+            return {"k": k, "d": d}
         if key == "macd":
             fast = _safe_int(parameters.get("fast_length"), 12)
             slow = _safe_int(parameters.get("slow_length"), 26)
@@ -779,8 +929,192 @@ class BotEngineService:
                 for index in range(len(source))
             ]
             return {"macd": macd, "signal": signal, "histogram": histogram}
+        if key == "ultimate_oscillator":
+            short_length = _safe_int(parameters.get("short_length"), 7)
+            mid_length = _safe_int(parameters.get("mid_length"), 14)
+            long_length = _safe_int(parameters.get("long_length"), 28)
+            buying_pressure = [0.0]
+            true_range = [0.0]
+            for index in range(1, len(source)):
+                previous_close = close[index - 1]
+                buying_pressure.append(close[index] - min(low[index], previous_close))
+                true_range.append(max(high[index], previous_close) - min(low[index], previous_close))
+            output = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < long_length:
+                    continue
+                averages = []
+                for window in (short_length, mid_length, long_length):
+                    bp_sum = sum(buying_pressure[index - window + 1 : index + 1])
+                    tr_sum = sum(true_range[index - window + 1 : index + 1])
+                    averages.append(bp_sum / tr_sum if tr_sum else 0.0)
+                output[index] = 100 * ((4 * averages[0]) + (2 * averages[1]) + averages[2]) / 7
+            return {"value": output}
+        if key == "awesome_oscillator":
+            fast = _safe_int(parameters.get("fast_length"), 5)
+            slow = _safe_int(parameters.get("slow_length"), 34)
+            median_price = [(high[index] + low[index]) / 2 for index in range(len(source))]
+            fast_sma = _rolling_sma(median_price, fast)
+            slow_sma = _rolling_sma(median_price, slow)
+            return {
+                "value": [
+                    fast_sma[index] - slow_sma[index]
+                    if fast_sma[index] is not None and slow_sma[index] is not None
+                    else None
+                    for index in range(len(source))
+                ]
+            }
         if key == "atr":
             return {"value": _rma(self._true_range(candles), length)}
+        if key in {"adx", "dmi"}:
+            smoothing = _safe_int(parameters.get("smoothing"), length)
+            true_range = self._true_range(candles)
+            plus_dm = [0.0]
+            minus_dm = [0.0]
+            for index in range(1, len(source)):
+                up_move = high[index] - high[index - 1]
+                down_move = low[index - 1] - low[index]
+                plus_dm.append(up_move if up_move > down_move and up_move > 0 else 0.0)
+                minus_dm.append(down_move if down_move > up_move and down_move > 0 else 0.0)
+            smoothed_tr = _rma(true_range, length)
+            smoothed_plus = _rma(plus_dm, length)
+            smoothed_minus = _rma(minus_dm, length)
+            plus_di = _empty_series(len(source))
+            minus_di = _empty_series(len(source))
+            dx = _empty_series(len(source))
+            for index in range(len(source)):
+                if smoothed_tr[index] is None or smoothed_tr[index] == 0:
+                    continue
+                plus_di[index] = 100 * (smoothed_plus[index] or 0) / smoothed_tr[index]
+                minus_di[index] = 100 * (smoothed_minus[index] or 0) / smoothed_tr[index]
+                denominator = (plus_di[index] or 0) + (minus_di[index] or 0)
+                dx[index] = 100 * abs((plus_di[index] or 0) - (minus_di[index] or 0)) / denominator if denominator else 0.0
+            adx = _rma_nullable(dx, smoothing)
+            if key == "adx":
+                return {"adx": adx}
+            return {"plus_di": plus_di, "minus_di": minus_di, "adx": adx}
+        if key == "supertrend":
+            atr_length = _safe_int(parameters.get("atr_length"), 10)
+            factor = _safe_float(parameters.get("factor"), 3.0)
+            atr = _rma(self._true_range(candles), atr_length)
+            value = _empty_series(len(source))
+            direction = _empty_series(len(source))
+            final_upper = _empty_series(len(source))
+            final_lower = _empty_series(len(source))
+            for index in range(len(source)):
+                if atr[index] is None:
+                    continue
+                hl2 = (high[index] + low[index]) / 2
+                basic_upper = hl2 + factor * atr[index]
+                basic_lower = hl2 - factor * atr[index]
+                if index == 0 or final_upper[index - 1] is None or final_lower[index - 1] is None:
+                    final_upper[index] = basic_upper
+                    final_lower[index] = basic_lower
+                    direction[index] = 1.0
+                    value[index] = final_lower[index]
+                    continue
+                previous_upper = final_upper[index - 1] or basic_upper
+                previous_lower = final_lower[index - 1] or basic_lower
+                final_upper[index] = basic_upper if basic_upper < previous_upper or close[index - 1] > previous_upper else previous_upper
+                final_lower[index] = basic_lower if basic_lower > previous_lower or close[index - 1] < previous_lower else previous_lower
+                previous_direction = direction[index - 1] if direction[index - 1] is not None else 1.0
+                if previous_direction < 0 and close[index] > (final_upper[index] or basic_upper):
+                    direction[index] = 1.0
+                elif previous_direction > 0 and close[index] < (final_lower[index] or basic_lower):
+                    direction[index] = -1.0
+                else:
+                    direction[index] = previous_direction
+                value[index] = final_lower[index] if direction[index] > 0 else final_upper[index]
+            return {"value": value, "direction": direction}
+        if key == "parabolic_sar":
+            start = _safe_float(parameters.get("start"), 0.02)
+            increment = _safe_float(parameters.get("increment"), 0.02)
+            maximum = _safe_float(parameters.get("maximum"), 0.2)
+            value = _empty_series(len(source))
+            direction = _empty_series(len(source))
+            if len(source) < 2:
+                return {"value": value, "direction": direction}
+            is_long = close[1] >= close[0]
+            sar = low[0] if is_long else high[0]
+            extreme_point = high[1] if is_long else low[1]
+            acceleration = start
+            for index in range(1, len(source)):
+                sar = sar + acceleration * (extreme_point - sar)
+                if is_long:
+                    sar = min(sar, low[index - 1], low[index - 2] if index > 1 else low[index - 1])
+                    if low[index] < sar:
+                        is_long = False
+                        sar = extreme_point
+                        extreme_point = low[index]
+                        acceleration = start
+                    else:
+                        if high[index] > extreme_point:
+                            extreme_point = high[index]
+                            acceleration = min(acceleration + increment, maximum)
+                else:
+                    sar = max(sar, high[index - 1], high[index - 2] if index > 1 else high[index - 1])
+                    if high[index] > sar:
+                        is_long = True
+                        sar = extreme_point
+                        extreme_point = high[index]
+                        acceleration = start
+                    else:
+                        if low[index] < extreme_point:
+                            extreme_point = low[index]
+                            acceleration = min(acceleration + increment, maximum)
+                value[index] = sar
+                direction[index] = 1.0 if is_long else -1.0
+            return {"value": value, "direction": direction}
+        if key == "ichimoku":
+            conversion_length = _safe_int(parameters.get("conversion_length"), 9)
+            base_length = _safe_int(parameters.get("base_length"), 26)
+            span_b_length = _safe_int(parameters.get("span_b_length"), 52)
+            conversion_high = _rolling_max(high, conversion_length)
+            conversion_low = _rolling_min(low, conversion_length)
+            base_high = _rolling_max(high, base_length)
+            base_low = _rolling_min(low, base_length)
+            span_b_high = _rolling_max(high, span_b_length)
+            span_b_low = _rolling_min(low, span_b_length)
+            conversion = [
+                (conversion_high[index] + conversion_low[index]) / 2
+                if conversion_high[index] is not None and conversion_low[index] is not None
+                else None
+                for index in range(len(source))
+            ]
+            base = [
+                (base_high[index] + base_low[index]) / 2
+                if base_high[index] is not None and base_low[index] is not None
+                else None
+                for index in range(len(source))
+            ]
+            span_a = [
+                (conversion[index] + base[index]) / 2
+                if conversion[index] is not None and base[index] is not None
+                else None
+                for index in range(len(source))
+            ]
+            span_b = [
+                (span_b_high[index] + span_b_low[index]) / 2
+                if span_b_high[index] is not None and span_b_low[index] is not None
+                else None
+                for index in range(len(source))
+            ]
+            return {"conversion": conversion, "base": base, "span_a": span_a, "span_b": span_b}
+        if key == "aroon":
+            up = _empty_series(len(source))
+            down = _empty_series(len(source))
+            oscillator = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < length - 1:
+                    continue
+                high_window = high[index - length + 1 : index + 1]
+                low_window = low[index - length + 1 : index + 1]
+                periods_since_high = length - 1 - max(range(length), key=lambda item: high_window[item])
+                periods_since_low = length - 1 - min(range(length), key=lambda item: low_window[item])
+                up[index] = 100 * (length - periods_since_high) / length
+                down[index] = 100 * (length - periods_since_low) / length
+                oscillator[index] = up[index] - down[index]
+            return {"up": up, "down": down, "oscillator": oscillator}
         if key == "donchian_channel":
             upper = _rolling_max(high, length)
             lower = _rolling_min(low, length)
@@ -886,6 +1220,28 @@ class BotEngineService:
                     money_ratio = positive_sum[index] / negative_sum[index]
                     output[index] = 100 - (100 / (1 + money_ratio))
             return {"value": output}
+        if key == "accumulation_distribution":
+            output = _empty_series(len(source))
+            current = 0.0
+            for index in range(len(source)):
+                price_range = high[index] - low[index]
+                money_flow_multiplier = ((close[index] - low[index]) - (high[index] - close[index])) / price_range if price_range else 0.0
+                current += money_flow_multiplier * volume[index]
+                output[index] = current
+            return {"value": output}
+        if key == "chaikin_money_flow":
+            money_flow_volume = []
+            for index in range(len(source)):
+                price_range = high[index] - low[index]
+                money_flow_multiplier = ((close[index] - low[index]) - (high[index] - close[index])) / price_range if price_range else 0.0
+                money_flow_volume.append(money_flow_multiplier * volume[index])
+            output = _empty_series(len(source))
+            for index in range(len(source)):
+                if index < length - 1:
+                    continue
+                volume_sum = sum(volume[index - length + 1 : index + 1])
+                output[index] = sum(money_flow_volume[index - length + 1 : index + 1]) / volume_sum if volume_sum else 0.0
+            return {"value": output}
 
         # Fallback keeps the engine safe for newly seeded indicators while making
         # unsupported handlers explicit in the backtest logs/summary.
@@ -925,6 +1281,35 @@ class BotEngineService:
                         continue
                     max_length = max(max_length, _safe_int(value, 1) * 4)
         return min(max_length, 5000)
+
+    def _data_quality(self, candles: list[PriceHistory]) -> dict:
+        total = len(candles)
+        if total == 0:
+            return {
+                "rows_total": 0,
+                "high_24h_coverage": 0.0,
+                "low_24h_coverage": 0.0,
+                "volume_24h_coverage": 0.0,
+                "ohlcv_source": "price_history",
+            }
+        return {
+            "rows_total": total,
+            "high_24h_coverage": sum(1 for candle in candles if candle.high_24h is not None) / total,
+            "low_24h_coverage": sum(1 for candle in candles if candle.low_24h is not None) / total,
+            "volume_24h_coverage": sum(1 for candle in candles if candle.volume_24h is not None) / total,
+            "ohlcv_source": "price_history",
+        }
+
+    def _data_quality_warnings(self, data_quality: dict) -> list[str]:
+        warnings: list[str] = []
+        high_coverage = _safe_float(data_quality.get("high_24h_coverage"), 0.0)
+        low_coverage = _safe_float(data_quality.get("low_24h_coverage"), 0.0)
+        volume_coverage = _safe_float(data_quality.get("volume_24h_coverage"), 0.0)
+        if high_coverage < 0.5 or low_coverage < 0.5:
+            warnings.append("High/low coverage below 50%; range-based indicators are degraded until OHLCV candles are available")
+        if volume_coverage < 0.5:
+            warnings.append("Volume coverage below 50%; volume-based indicators are degraded until OHLCV candles are available")
+        return warnings
 
     def _condition_value(
         self,
@@ -1059,6 +1444,8 @@ class BotEngineService:
             backtest.completed_at = datetime.now(timezone.utc)
             return backtest
 
+        data_quality = self._data_quality(candles)
+        data_warnings = self._data_quality_warnings(data_quality)
         rule_config = strategy.rule_config or {}
         frames, fallback_indicators = self._indicator_frames(strategy, candles)
         if not frames:
@@ -1209,8 +1596,10 @@ class BotEngineService:
             "exit_count": exit_count,
             "win_rate_percent": _json_number(win_rate),
             "realized_pnl_usd": _json_number(realized_pnl),
-            "engine_note": "strategy_rules_v2: evaluated selected indicators and entry/exit rule groups. Unsupported advanced indicators fall back to source series until dedicated handlers ship.",
+            "engine_note": "strategy_rules_v2: evaluated selected indicators and entry/exit rule groups with dedicated handlers for the seeded indicator catalog.",
             "fallback_indicators": fallback_indicators,
+            "data_quality": data_quality,
+            "data_warnings": data_warnings,
         }
         backtest.metrics = {
             "max_drawdown_percent": _json_number(max_drawdown),
@@ -1223,6 +1612,7 @@ class BotEngineService:
             "exit_rule_logic": (rule_config.get("exit") or {}).get("logic", rule_config.get("logic", "AND")) if isinstance(rule_config.get("exit"), dict) else rule_config.get("logic", "AND"),
             "requested_timeframe": timeframe,
             "timeframe_filter_applied": False,
+            "data_quality": data_quality,
         }
         # Keep the full trade counters in result_summary while capping stored
         # event logs to avoid unbounded JSONB growth on long simulations.
