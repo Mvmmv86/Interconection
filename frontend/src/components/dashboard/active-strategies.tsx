@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, Pause, Play, Settings2 } from 'lucide-react';
+import { Bot, Pause, Play } from 'lucide-react';
 import { api, type BotInstance, type BotTemplate } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/auth-context';
@@ -114,27 +114,30 @@ export function ActiveStrategies() {
           >
             <div className="flex items-center gap-3">
               <div
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-accent-blue"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-accent-blue transition-colors group-hover:bg-accent-blue group-hover:text-white"
                 style={{
                   background: isDark ? 'rgba(59,130,246,0.12)' : 'rgba(59,130,246,0.08)',
                 }}
               >
-                <Settings2 className="h-4 w-4" />
+                <Play className="h-4 w-4" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className={cn('truncate text-[11px] font-semibold', isDark ? 'text-white' : 'text-slate-900')}>
-                  {template.name}
-                </p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className={cn('truncate text-[11px] font-semibold', isDark ? 'text-white' : 'text-slate-900')}>
+                    {template.name}
+                  </p>
+                  <span className="shrink-0 rounded bg-accent-blue/10 px-1.5 py-0.5 text-[8px] font-bold uppercase text-accent-blue">
+                    {template.required_plan}
+                  </span>
+                </div>
                 <p className={cn('truncate text-[10px]', isDark ? 'text-white/40' : 'text-slate-500')}>
                   Configure antes de ativar
                 </p>
               </div>
-              <div className="flex flex-col items-end gap-1">
-                <span className="rounded-md bg-accent-blue/10 px-2 py-1 text-[10px] font-semibold text-accent-blue transition-colors group-hover:bg-accent-blue group-hover:text-white">
-                  Configurar
-                </span>
-                <span className={cn('text-[9px] font-semibold uppercase', isDark ? 'text-white/35' : 'text-slate-500')}>
-                  {template.required_plan}
+              <div className="flex items-center">
+                <span className="flex items-center gap-1 rounded-md bg-accent-blue/10 px-2 py-1 text-[10px] font-semibold text-accent-blue transition-colors group-hover:bg-accent-blue group-hover:text-white">
+                  <Play className="h-3 w-3" />
+                  Ativar
                 </span>
               </div>
             </div>
