@@ -271,6 +271,7 @@ class BotEngineService:
             "obv",
             "vwap",
             "mfi",
+            "bc_alpha_trend",
             "accumulation_distribution",
             "chaikin_money_flow",
         }
@@ -747,6 +748,75 @@ class BotEngineService:
         length = _safe_int(parameters.get("length"), 20)
         key = key.lower()
 
+        if key == "bc_alpha_trend":
+            atr_length = _safe_int(parameters.get("atr_length"), 14)
+            flow_length = _safe_int(parameters.get("flow_length"), 14)
+            trend_offset = _safe_int(parameters.get("trend_offset"), 2)
+            atr_multiplier = _safe_float(parameters.get("atr_multiplier"), 1.0)
+            flow_threshold = _safe_float(parameters.get("flow_threshold"), 50.0)
+            flow_source = str(parameters.get("flow_source") or "auto").lower()
+
+            atr = _rma(self._true_range(candles), atr_length)
+            rsi = self._calculate_indicator("rsi", {"length": flow_length, "source": "close"}, candles)["value"]
+            volume_coverage = sum(1 for value in volume if value > 0) / len(volume) if volume else 0.0
+            use_mfi = flow_source in {"auto", "mfi"} and volume_coverage >= 0.5
+            if flow_source == "rsi" or not use_mfi:
+                flow = rsi
+            else:
+                flow = self._calculate_indicator("mfi", {"length": flow_length}, candles)["value"]
+
+            alpha_line = _empty_series(len(source))
+            trend = _empty_series(len(source))
+            signal = _empty_series(len(source))
+            long_signal = _empty_series(len(source))
+            short_signal = _empty_series(len(source))
+            stop = _empty_series(len(source))
+
+            for index in range(len(source)):
+                signal[index] = 0.0
+                long_signal[index] = 0.0
+                short_signal[index] = 0.0
+                if atr[index] is None or flow[index] is None:
+                    continue
+
+                up_support = low[index] - atr_multiplier * float(atr[index])
+                down_resistance = high[index] + atr_multiplier * float(atr[index])
+                previous_alpha = alpha_line[index - 1] if index > 0 else None
+
+                if float(flow[index]) >= flow_threshold:
+                    alpha_line[index] = max(up_support, float(previous_alpha)) if previous_alpha is not None else up_support
+                else:
+                    alpha_line[index] = min(down_resistance, float(previous_alpha)) if previous_alpha is not None else down_resistance
+
+                reference = alpha_line[index - trend_offset] if index >= trend_offset else None
+                previous_trend = trend[index - 1] if index > 0 and trend[index - 1] is not None else None
+                if reference is None:
+                    trend[index] = previous_trend if previous_trend is not None else 0.0
+                elif alpha_line[index] > reference:
+                    trend[index] = 1.0
+                elif alpha_line[index] < reference:
+                    trend[index] = -1.0
+                else:
+                    trend[index] = previous_trend if previous_trend is not None else 0.0
+
+                if previous_trend is not None and previous_trend != 0.0 and trend[index] > 0 and previous_trend <= 0:
+                    signal[index] = 1.0
+                    long_signal[index] = 1.0
+                elif previous_trend is not None and previous_trend != 0.0 and trend[index] < 0 and previous_trend >= 0:
+                    signal[index] = -1.0
+                    short_signal[index] = 1.0
+                stop[index] = alpha_line[index]
+
+            return {
+                "value": alpha_line,
+                "trend": trend,
+                "signal": signal,
+                "long_signal": long_signal,
+                "short_signal": short_signal,
+                "stop": stop,
+                "atr": atr,
+                "flow": flow,
+            }
         if key == "sma":
             return {"value": _rolling_sma(source, length)}
         if key == "ema":
