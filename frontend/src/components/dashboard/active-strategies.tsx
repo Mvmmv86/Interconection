@@ -24,6 +24,10 @@ function statusTone(status: string) {
   return 'text-accent-blue';
 }
 
+function actionLabel(status: string) {
+  return status === 'active' ? 'Pausar' : 'Ativar';
+}
+
 export function ActiveStrategies() {
   const { isDark, label } = useThemedText();
   const { can } = useAuth();
@@ -69,7 +73,7 @@ export function ActiveStrategies() {
     <ThemedCard>
       <div className="relative z-10 mb-3 flex items-center justify-between">
         <span className={cn('text-[11px] font-semibold uppercase tracking-wider', label)}>
-          Ativacao dos bots
+          Acoes rapidas dos bots
         </span>
         <a href="/bots" className="text-[10px] font-medium text-accent-blue hover:underline">
           Ver todos
@@ -100,7 +104,7 @@ export function ActiveStrategies() {
           <a
             key={template.id}
             href="/bots"
-            className="block rounded-lg p-3 transition-all duration-200"
+            className="group block rounded-lg p-3 transition-all duration-200"
             style={{
               background: isDark
                 ? 'linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)'
@@ -122,12 +126,12 @@ export function ActiveStrategies() {
                   {template.name}
                 </p>
                 <p className={cn('truncate text-[10px]', isDark ? 'text-white/40' : 'text-slate-500')}>
-                  Configurar na aba Bots
+                  Configure antes de ativar
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <span className="rounded-md bg-accent-blue/10 px-2 py-1 text-[10px] font-semibold text-accent-blue">
-                  Setup
+                <span className="rounded-md bg-accent-blue/10 px-2 py-1 text-[10px] font-semibold text-accent-blue transition-colors group-hover:bg-accent-blue group-hover:text-white">
+                  Configurar
                 </span>
                 <span className={cn('text-[9px] font-semibold uppercase', isDark ? 'text-white/35' : 'text-slate-500')}>
                   {template.required_plan}
@@ -168,27 +172,50 @@ export function ActiveStrategies() {
               }}
             >
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  disabled={isUpdating || !can('bots:edit')}
-                  onClick={() => updateStatus(instance, isActive ? 'paused' : 'active')}
-                  className={cn(
-                    'flex h-9 w-9 items-center justify-center rounded-lg transition-all disabled:cursor-not-allowed disabled:opacity-50',
-                    isActive ? 'text-status-success' : isDark ? 'text-white/50' : 'text-slate-500'
-                  )}
-                  style={{
-                    background: isActive
-                      ? isDark
-                        ? 'rgba(34,197,94,0.15)'
-                        : 'rgba(34,197,94,0.10)'
-                      : isDark
-                        ? 'rgba(255,255,255,0.05)'
-                        : 'rgba(100,116,139,0.08)',
-                  }}
-                  aria-label={isActive ? 'Pausar bot' : 'Ativar bot'}
-                >
-                  {isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isUpdating || !can('bots:edit')}
+                    onClick={() => updateStatus(instance, isActive ? 'paused' : 'active')}
+                    className={cn(
+                      'flex h-9 min-w-[76px] items-center justify-center gap-1.5 rounded-lg px-3 text-[10px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50',
+                      isActive ? 'text-status-success' : isDark ? 'text-white/70' : 'text-slate-700'
+                    )}
+                    style={{
+                      background: isActive
+                        ? isDark
+                          ? 'rgba(34,197,94,0.15)'
+                          : 'rgba(34,197,94,0.10)'
+                        : isDark
+                          ? 'rgba(59,130,246,0.14)'
+                          : 'rgba(59,130,246,0.08)',
+                    }}
+                    aria-label={isActive ? 'Pausar bot' : 'Ativar bot'}
+                    title={can('bots:edit') ? `${actionLabel(instance.status)} bot` : 'Sem permissao para alterar bots'}
+                  >
+                    {isUpdating ? (
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    ) : isActive ? (
+                      <Pause className="h-3.5 w-3.5" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                    {isUpdating ? '...' : actionLabel(instance.status)}
+                  </button>
+
+                  <div
+                    className={cn(
+                      'flex h-9 w-9 items-center justify-center rounded-lg',
+                      isActive ? 'text-status-success' : isDark ? 'text-white/40' : 'text-slate-400'
+                    )}
+                    style={{
+                      background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(100,116,139,0.06)',
+                    }}
+                    aria-hidden="true"
+                  >
+                    <Bot className="h-4 w-4" />
+                  </div>
+                </div>
 
                 <div className="min-w-0 flex-1">
                   <p className={cn('truncate text-[11px] font-semibold', isDark ? 'text-white' : 'text-slate-900')}>
