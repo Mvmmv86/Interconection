@@ -81,7 +81,7 @@ class BingXAdapter(BaseExchangeAdapter):
 
     exchange_name = "bingx"
     supports_spot = True
-    supports_margin = False
+    supports_margin = True
     supports_futures = True
     supports_funding = False
     supports_earn = False
@@ -110,6 +110,9 @@ class BingXAdapter(BaseExchangeAdapter):
         self._price_cache: dict[str, dict[str, Decimal]] = {}
         self._price_cache_time = 0.0
         self._price_cache_ttl = 60.0
+        self._account_balance_cache: list[dict] = []
+        self._account_balance_cache_time = 0.0
+        self._account_balance_cache_ttl = 30.0
 
     def _timestamp(self) -> int:
         return int(time.time() * 1000)
@@ -353,6 +356,37 @@ class BingXAdapter(BaseExchangeAdapter):
         self._price_cache_time = now
         return prices
 
+    async def _get_all_account_balances(self) -> list[dict]:
+        """
+        Fetch BingX account-level USDT balances.
+
+        BingX can return zero balances from the detailed spot endpoint while
+        the aggregated account endpoint exposes the real spot USDT equivalent
+        under accountType=sopt. We use this only as a fallback to avoid
+        double-counting detailed asset balances.
+        """
+        now = time.time()
+        if self._account_balance_cache and (now - self._account_balance_cache_time) < self._account_balance_cache_ttl:
+            return self._account_balance_cache
+
+        try:
+            payload = await self._request("GET", "/openApi/account/v1/allAccountBalance")
+        except Exception as exc:
+            logger.debug("Failed to load BingX aggregated account balances: %s", exc)
+            return []
+
+        self._account_balance_cache = _as_list(payload)
+        self._account_balance_cache_time = now
+        return self._account_balance_cache
+
+    async def _get_spot_usdt_equivalent(self) -> Decimal:
+        total = Decimal("0")
+        for account in await self._get_all_account_balances():
+            account_type = str(account.get("accountType") or "").lower()
+            if account_type in {"spot", "sopt"}:
+                total += safe_decimal(account.get("usdtBalance"), "0")
+        return total
+
     async def get_spot_balances(self) -> list[SpotBalance]:
         """Get non-zero spot balances."""
         payload = await self._request("GET", "/openApi/spot/v1/account/balance")
@@ -390,12 +424,67 @@ class BingXAdapter(BaseExchangeAdapter):
                 )
             )
 
+        spot_usdt_equivalent = await self._get_spot_usdt_equivalent()
+        if spot_usdt_equivalent > 0:
+            existing_usdt = next((balance for balance in balances if balance.asset == "USDT"), None)
+            if existing_usdt and len(balances) == 1 and existing_usdt.value_usd < spot_usdt_equivalent:
+                existing_usdt.free = spot_usdt_equivalent
+                existing_usdt.locked = Decimal("0")
+                existing_usdt.total = spot_usdt_equivalent
+                existing_usdt.price_usd = Decimal("1")
+                existing_usdt.value_usd = spot_usdt_equivalent
+                existing_usdt.change_24h = Decimal("0")
+            elif not balances:
+                balances.append(
+                    SpotBalance(
+                        asset="USDT",
+                        free=spot_usdt_equivalent,
+                        locked=Decimal("0"),
+                        total=spot_usdt_equivalent,
+                        price_usd=Decimal("1"),
+                        value_usd=spot_usdt_equivalent,
+                        change_24h=Decimal("0"),
+                    )
+                )
+
         balances.sort(key=lambda balance: balance.value_usd, reverse=True)
         return balances
 
     async def get_margin_balances(self) -> list[MarginBalance]:
-        """BingX margin is not exposed in the initial Connectcoin read-only MVP."""
-        return []
+        """
+        Get non-spot BingX account balances as margin-equivalent holdings.
+
+        BingX exposes account-type USDT equivalents for derivatives/copy/grid
+        accounts through allAccountBalance. These are not open futures
+        positions, but they are real exchange equity and must be counted in
+        portfolio totals even when there is no active position.
+        """
+        balances: list[MarginBalance] = []
+        for account in await self._get_all_account_balances():
+            account_type = str(account.get("accountType") or "").lower()
+            if account_type in {"spot", "sopt"}:
+                continue
+
+            total = safe_decimal(account.get("usdtBalance"), "0")
+            if total <= 0:
+                continue
+
+            balances.append(
+                MarginBalance(
+                    asset="USDT",
+                    free=total,
+                    locked=Decimal("0"),
+                    total=total,
+                    borrowed=Decimal("0"),
+                    interest=Decimal("0"),
+                    net_asset=total,
+                    price_usd=Decimal("1"),
+                    value_usd=total,
+                    change_24h=Decimal("0"),
+                )
+            )
+
+        return balances
 
     async def get_futures_positions(self) -> list[FuturesPosition]:
         """Get non-zero USDT perpetual positions."""
@@ -728,13 +817,86 @@ class BingXAdapter(BaseExchangeAdapter):
 
     async def get_internal_transfers(self, limit: int = 50) -> list[ExchangeTransaction]:
         """Get recent account transfer records."""
-        payload = await self._request(
-            "GET",
-            "/openApi/api/v3/asset/transfer",
-            {"limit": min(limit, 100)},
-        )
         prices = await self._get_ticker_prices()
         transactions: list[ExchangeTransaction] = []
+        seen_ids: set[str] = set()
+        end_time = int(time.time() * 1000)
+        start_time = int((datetime.utcnow() - timedelta(days=90)).timestamp() * 1000)
+
+        account_pairs = [
+            ("fund", "spot"),
+            ("spot", "fund"),
+            ("fund", "USDTMPerp"),
+            ("USDTMPerp", "fund"),
+            ("spot", "USDTMPerp"),
+            ("USDTMPerp", "spot"),
+            ("fund", "stdFutures"),
+            ("stdFutures", "fund"),
+            ("spot", "stdFutures"),
+            ("stdFutures", "spot"),
+        ]
+
+        for from_account, to_account in account_pairs:
+            if len(transactions) >= limit:
+                break
+
+            try:
+                payload = await self._request(
+                    "GET",
+                    "/openApi/api/v3/asset/transferRecord",
+                    {
+                        "fromAccount": from_account,
+                        "toAccount": to_account,
+                        "pageIndex": 1,
+                        "pageSize": min(limit, 100),
+                        "startTime": start_time,
+                        "endTime": end_time,
+                    },
+                )
+            except Exception as exc:
+                logger.debug("Failed to load BingX transfer records %s->%s: %s", from_account, to_account, exc)
+                continue
+
+            for record in _as_list(payload):
+                record_id = str(record.get("transferId") or record.get("tranId") or record.get("id") or "")
+                if not record_id:
+                    record_id = f"{from_account}-{to_account}-{record.get('asset')}-{record.get('timestamp')}-{record.get('amount')}"
+                if record_id in seen_ids:
+                    continue
+                seen_ids.add(record_id)
+
+                coin = str(record.get("asset") or record.get("coin") or "").upper()
+                amount = safe_decimal(record.get("amount"), "0")
+                price = prices.get(coin, {"price": Decimal("0")})["price"]
+                transactions.append(
+                    ExchangeTransaction(
+                        id=f"bingx-transfer-{record_id}",
+                        exchange=self.exchange_name,
+                        type="internal_transfer",
+                        coin=coin,
+                        amount=amount,
+                        fee=Decimal("0"),
+                        value_usd=amount * price,
+                        status="completed",
+                        from_account=record.get("fromAccount") or from_account,
+                        to_account=record.get("toAccount") or to_account,
+                        timestamp=self._timestamp_from_record(record),
+                    )
+                )
+
+        if transactions:
+            transactions.sort(key=lambda item: item.timestamp, reverse=True)
+            return transactions[:limit]
+
+        try:
+            payload = await self._request(
+                "GET",
+                "/openApi/api/v3/asset/transfer",
+                {"type": "FUND_SFUTURES", "current": 1, "size": min(limit, 100), "startTime": start_time, "endTime": end_time},
+            )
+        except Exception as exc:
+            logger.debug("Failed to load BingX legacy transfer records: %s", exc)
+            return []
 
         for record in _as_list(payload)[:limit]:
             coin = str(record.get("asset") or record.get("coin") or "").upper()
@@ -758,45 +920,201 @@ class BingXAdapter(BaseExchangeAdapter):
 
         return transactions
 
+    async def _get_trade_symbols_for_cost_basis(self) -> list[str]:
+        """Build a small symbol list from current non-stable spot holdings."""
+        balances = await self.get_spot_balances()
+        symbols: list[str] = []
+        stable_assets = set(STABLECOIN_PRICES)
+        for balance in balances:
+            asset = balance.asset.upper()
+            if asset in stable_assets:
+                continue
+            symbols.append(f"{asset}-USDT")
+        return symbols
+
+    async def get_trade_history(
+        self,
+        category: str = "spot",
+        limit: int = 200,
+        days: int = 365,
+    ) -> list[dict]:
+        """
+        Get BingX trade/fill history in the normalized shape used by cost basis.
+
+        Spot fills require a symbol on BingX, so we query only symbols for
+        assets currently held by the account. This keeps sync scalable and
+        avoids a large all-market N+1 scan.
+        """
+        now_ms = int(time.time() * 1000)
+        start_ms = int((datetime.utcnow() - timedelta(days=days)).timestamp() * 1000)
+
+        if category.lower() in {"linear", "futures", "future", "swap", "perp", "perpetual"}:
+            return await self.get_futures_trade_history(limit=limit, days=days)
+
+        symbols = await self._get_trade_symbols_for_cost_basis()
+        if not symbols:
+            return []
+
+        all_trades: list[dict] = []
+        for symbol in symbols:
+            try:
+                payload = await self._request(
+                    "GET",
+                    "/openApi/spot/v1/trade/myTrades",
+                    {
+                        "symbol": symbol,
+                        "startTime": start_ms,
+                        "endTime": now_ms,
+                        "limit": min(limit, 1000),
+                    },
+                )
+            except Exception as exc:
+                logger.debug("Failed to load BingX spot trades for %s: %s", symbol, exc)
+                continue
+
+            data = payload if isinstance(payload, dict) else {}
+            fills = data.get("fills") if isinstance(data.get("fills"), list) else _as_list(payload)
+            for fill in fills:
+                is_buyer = fill.get("isBuyer")
+                side = "buy" if is_buyer is True or str(is_buyer).lower() == "true" else "sell"
+                all_trades.append(
+                    {
+                        **fill,
+                        "symbol": str(fill.get("symbol") or symbol).replace("-", ""),
+                        "side": side,
+                        "qty": fill.get("qty"),
+                        "price": fill.get("price"),
+                        "execQty": fill.get("qty"),
+                        "execPrice": fill.get("price"),
+                        "execTime": fill.get("time"),
+                    }
+                )
+
+        all_trades.sort(key=lambda trade: int(trade.get("time") or trade.get("execTime") or 0), reverse=True)
+        return all_trades[:limit]
+
+    async def get_futures_trade_history(self, limit: int = 200, days: int = 90) -> list[dict]:
+        """Fetch recent BingX perpetual fill history for known open symbols."""
+        positions = await self.get_futures_positions()
+        if not positions:
+            return []
+
+        end_ms = int(time.time() * 1000)
+        start_ms = int((datetime.utcnow() - timedelta(days=min(days, 90))).timestamp() * 1000)
+        fills: list[dict] = []
+
+        for position in positions:
+            try:
+                payload = await self._request(
+                    "GET",
+                    "/openApi/swap/v2/trade/fillHistory",
+                    {
+                        "symbol": self._bingx_symbol(position.symbol, "swap"),
+                        "currency": position.settle_coin,
+                        "startTs": start_ms,
+                        "endTs": end_ms,
+                        "pageIndex": 1,
+                        "pageSize": min(limit, 1000),
+                    },
+                )
+            except Exception as exc:
+                logger.debug("Failed to load BingX futures fills for %s: %s", position.symbol, exc)
+                continue
+
+            data = payload if isinstance(payload, dict) else {}
+            fills.extend(_as_list(data.get("fill_orders") if isinstance(data, dict) else payload))
+
+        return fills[:limit]
+
+    def calculate_cost_basis(self, trades: list[dict]) -> dict[str, dict]:
+        """Calculate average spot cost basis from BingX fills."""
+        holdings: dict[str, dict] = {}
+
+        for trade in trades:
+            symbol = str(trade.get("symbol") or "").replace("-", "").upper()
+            side = str(trade.get("side") or "").lower()
+            qty = safe_decimal(trade.get("execQty") or trade.get("qty"), "0")
+            price = safe_decimal(trade.get("execPrice") or trade.get("price"), "0")
+
+            if qty <= 0 or price <= 0:
+                continue
+
+            base_asset = self._base_asset_from_pair(symbol)
+            if not base_asset or base_asset in STABLECOIN_PRICES:
+                continue
+
+            if base_asset not in holdings:
+                holdings[base_asset] = {
+                    "total_qty": Decimal("0"),
+                    "total_cost": Decimal("0"),
+                    "avg_price": Decimal("0"),
+                }
+
+            holding = holdings[base_asset]
+            if side == "buy":
+                holding["total_cost"] += qty * price
+                holding["total_qty"] += qty
+            elif side == "sell" and holding["total_qty"] > 0:
+                avg_cost = holding["total_cost"] / holding["total_qty"]
+                holding["total_cost"] = max(holding["total_cost"] - (qty * avg_cost), Decimal("0"))
+                holding["total_qty"] = max(holding["total_qty"] - qty, Decimal("0"))
+
+            holding["avg_price"] = (
+                holding["total_cost"] / holding["total_qty"]
+                if holding["total_qty"] > 0
+                else Decimal("0")
+            )
+
+        return holdings
+
     async def get_account_summary(self, include_subaccounts: bool = False) -> ExchangeAccountSummary:
         """Fetch BingX spot and futures data with graceful partial failure."""
         _ = include_subaccounts
         results = await asyncio.gather(
             self.get_spot_balances(),
+            self.get_margin_balances(),
             self.get_futures_positions(),
             return_exceptions=True,
         )
 
         spot_balances = results[0] if not isinstance(results[0], Exception) else []
-        futures_positions = results[1] if not isinstance(results[1], Exception) else []
+        margin_balances = results[1] if not isinstance(results[1], Exception) else []
+        futures_positions = results[2] if not isinstance(results[2], Exception) else []
 
         if isinstance(results[0], Exception):
             logger.warning("Failed to get BingX spot balances: %s", results[0])
         if isinstance(results[1], Exception):
-            logger.warning("Failed to get BingX futures positions: %s", results[1])
-        if isinstance(results[0], Exception) and isinstance(results[1], Exception):
+            logger.warning("Failed to get BingX account balances: %s", results[1])
+        if isinstance(results[2], Exception):
+            logger.warning("Failed to get BingX futures positions: %s", results[2])
+        if isinstance(results[0], Exception) and isinstance(results[1], Exception) and isinstance(results[2], Exception):
             if isinstance(results[0], ExchangeAuthError):
                 raise results[0]
             if isinstance(results[1], ExchangeAuthError):
                 raise results[1]
+            if isinstance(results[2], ExchangeAuthError):
+                raise results[2]
             raise ExchangeAPIError(
                 exchange=self.exchange_name,
                 status_code=502,
-                message=f"Failed to load BingX account data: spot={results[0]}; futures={results[1]}",
+                message=f"Failed to load BingX account data: spot={results[0]}; margin={results[1]}; futures={results[2]}",
             )
 
         total_spot = sum(balance.value_usd for balance in spot_balances)
+        total_margin = sum(balance.value_usd for balance in margin_balances)
         total_futures = sum(position.margin + position.unrealized_pnl for position in futures_positions)
         total_unrealized_pnl = sum(position.unrealized_pnl for position in futures_positions)
 
         return ExchangeAccountSummary(
             spot_balances=spot_balances,
+            margin_balances=margin_balances,
             futures_positions=futures_positions,
             total_spot_usd=total_spot,
+            total_margin_usd=total_margin,
             total_futures_usd=total_futures,
-            total_value_usd=total_spot + total_futures,
+            total_value_usd=total_spot + total_margin + total_futures,
             total_unrealized_pnl=total_unrealized_pnl,
-            position_count=len(spot_balances) + len(futures_positions),
+            position_count=len(spot_balances) + len(margin_balances) + len(futures_positions),
         )
 
     async def close(self) -> None:
