@@ -136,12 +136,27 @@ class BingXAdapter(BaseExchangeAdapter):
         return raw
 
     def _sign(self, params: dict[str, Any]) -> str:
-        query = urlencode(sorted((key, value) for key, value in params.items() if value is not None))
+        query = self._canonical_params(params)
         return hmac.new(
             self.api_secret.encode("utf-8"),
             query.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
+
+    def _canonical_params(self, params: dict[str, Any]) -> str:
+        """Build BingX canonical query string before URL encoding."""
+        return "&".join(
+            f"{key}={params[key]}"
+            for key in sorted(params)
+            if params[key] is not None
+        )
+
+    def _encoded_params(self, params: dict[str, Any]) -> str:
+        """Encode query values only for the final request URL/body."""
+        return urlencode(
+            [(key, value) for key, value in sorted(params.items()) if value is not None],
+            doseq=False,
+        )
 
     async def _pace_private_request(self) -> None:
         async with self._request_lock:
@@ -207,12 +222,26 @@ class BingXAdapter(BaseExchangeAdapter):
                     request_params.setdefault("recvWindow", self.recv_window)
                     request_params["signature"] = self._sign(request_params)
                     headers["X-BX-APIKEY"] = self.api_key
+                    headers["X-SOURCE-KEY"] = "BX-AI-SKILL"
+                else:
+                    headers["X-SOURCE-KEY"] = "BX-AI-SKILL"
+
+                request_kwargs: dict[str, Any] = {"headers": headers}
+                request_url = url
+                if signed:
+                    encoded_params = self._encoded_params(request_params)
+                    if method.upper() == "POST":
+                        headers["Content-Type"] = "application/x-www-form-urlencoded"
+                        request_kwargs["content"] = encoded_params
+                    else:
+                        request_url = f"{url}?{encoded_params}"
+                else:
+                    request_kwargs["params"] = request_params
 
                 response = await self.client.request(
                     method,
-                    url,
-                    params=request_params,
-                    headers=headers,
+                    request_url,
+                    **request_kwargs,
                 )
 
                 if response.status_code == 429:
