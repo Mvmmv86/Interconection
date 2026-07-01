@@ -12,6 +12,8 @@ import type { SupportedChainId } from '@/lib/wallet/wagmi-config';
 import { usePoolBaselines, buildPositionKey } from './usePoolBaselines';
 import type { PoolBaselineUpsert } from '@/lib/api/client';
 
+const readContractConfig = wagmiConfig as unknown as Parameters<typeof readContract>[0];
+
 // ═══════════════════════════════════════════
 // V4 Contract Addresses (per chain)
 // https://docs.uniswap.org/contracts/v4/deployments
@@ -553,14 +555,14 @@ export function useUniswapV4Positions(
         try {
           // Step 1: Get full poolKey + position info + liquidity (parallel)
           const readResults = await Promise.all([
-            readContract(wagmiConfig, {
+            readContract(readContractConfig, {
               address: config.positionManager,
               abi: POSITION_MANAGER_ABI,
               functionName: 'getPoolAndPositionInfo',
               args: [BigInt(input.tokenId)],
               chainId: config.chainId,
             }),
-            readContract(wagmiConfig, {
+            readContract(readContractConfig, {
               address: config.positionManager,
               abi: POSITION_MANAGER_ABI,
               functionName: 'getPositionLiquidity',
@@ -606,21 +608,21 @@ export function useUniswapV4Positions(
 
           try {
             const stateViewResults = await Promise.all([
-              readContract(wagmiConfig, {
+              readContract(readContractConfig, {
                 address: config.stateView,
                 abi: STATE_VIEW_ABI,
                 functionName: 'getPositionInfo',
                 args: [poolId, config.positionManager, decoded.tickLower, decoded.tickUpper, salt],
                 chainId: config.chainId,
               }),
-              readContract(wagmiConfig, {
+              readContract(readContractConfig, {
                 address: config.stateView,
                 abi: STATE_VIEW_ABI,
                 functionName: 'getFeeGrowthInside',
                 args: [poolId, decoded.tickLower, decoded.tickUpper],
                 chainId: config.chainId,
               }),
-              readContract(wagmiConfig, {
+              readContract(readContractConfig, {
                 address: config.stateView,
                 abi: STATE_VIEW_ABI,
                 functionName: 'getSlot0',
