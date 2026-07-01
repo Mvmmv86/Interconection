@@ -38,6 +38,7 @@ from app.models.bot import (
 from app.models.client import Client
 from app.models.exchange import Exchange
 from app.models.organization import Organization, PlanType
+from app.schemas.exchange import SUPPORTED_EXCHANGES as ENABLED_EXCHANGE_CONNECTORS
 from app.schemas.bot import (
     AdminBotInstanceUpdate,
     AdminBotTemplateCreate,
@@ -252,7 +253,25 @@ def _ensure_exchange_supported(template: BotTemplate | None, exchange: Exchange 
     if template is None:
         return
     supported = [item.lower() for item in (template.supported_exchanges or [])]
-    if supported and exchange is not None and exchange.exchange.lower() not in supported:
+    if exchange is None:
+        if supported:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This bot requires a supported exchange connection",
+            )
+        return
+    connector = exchange.exchange.lower()
+    if connector not in ENABLED_EXCHANGE_CONNECTORS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected exchange connector is not enabled for bot automation",
+        )
+    if not exchange.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected exchange connection is inactive",
+        )
+    if supported and connector not in supported:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Selected exchange is not supported by this bot",

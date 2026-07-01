@@ -263,12 +263,22 @@ class BingXAdapter(BaseExchangeAdapter):
             spot_error = exc
             logger.debug("BingX spot connection test failed, trying futures: %s", spot_error)
 
+        futures_error: Exception | None = None
         try:
-            await self._request("GET", "/openApi/swap/v2/user/balance")
+            await self._request("GET", "/openApi/swap/v3/user/balance")
             return True
-        except Exception as futures_error:
+        except Exception as exc:
+            futures_error = exc
             logger.warning("BingX connection test failed: spot=%s futures=%s", spot_error, futures_error)
-            return False
+
+        for error in (futures_error, spot_error):
+            if isinstance(error, ExchangeAuthError):
+                raise error
+        raise ExchangeAPIError(
+            exchange=self.exchange_name,
+            status_code=502,
+            message=f"BingX connection test failed: spot={spot_error}; futures={futures_error}",
+        )
 
     async def _get_ticker_prices(self) -> dict[str, dict[str, Decimal]]:
         """Fetch spot/futures ticker prices once per sync and cache them."""

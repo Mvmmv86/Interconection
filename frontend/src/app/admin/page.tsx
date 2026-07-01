@@ -261,7 +261,7 @@ export default function PlatformAdminPage() {
     description: '',
     marketType: 'spot',
     timeframes: '1h, 4h, 1d',
-    exchanges: 'binance, bybit',
+    exchanges: 'bybit, bingx',
     selectedIndicators: [] as string[],
     indicatorParameters: {} as Record<string, Record<string, string>>,
     entryIndicator: '',
@@ -704,7 +704,7 @@ export default function PlatformAdminPage() {
       description: '',
       marketType: 'spot',
       timeframes: '1h, 4h, 1d',
-      exchanges: 'binance, bybit',
+      exchanges: 'bybit, bingx',
       selectedIndicators: [],
       indicatorParameters: {},
       entryIndicator: '',
@@ -1541,7 +1541,7 @@ export default function PlatformAdminPage() {
                                 ...current,
                                 exchanges: event.target.value,
                               }))}
-                              placeholder="binance, bybit"
+                              placeholder="bybit, bingx"
                               className="h-10 w-full rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                             />
                           </div>
@@ -2240,7 +2240,7 @@ export default function PlatformAdminPage() {
                           ...current,
                           supportedExchanges: event.target.value,
                         }))}
-                        placeholder="Exchanges suportadas: bybit, binance"
+                        placeholder="Exchanges suportadas: bybit, bingx"
                         className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                       />
                       <input

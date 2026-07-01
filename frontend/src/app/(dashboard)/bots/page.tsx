@@ -275,9 +275,18 @@ export default function BotsPage() {
               )}
               {templates.map((template) => {
                 const config = getTemplateConfig(template.id);
+                const supportedExchangeKeys = template.supported_exchanges.map((item) => item.toLowerCase());
+                const compatibleExchanges = (exchangesByClient[config.clientId] || []).filter((exchange) => (
+                  exchange.is_active !== false
+                  && (supportedExchangeKeys.length === 0 || supportedExchangeKeys.includes(exchange.exchange.toLowerCase()))
+                ));
+                const supportedExchangeLabel = supportedExchangeKeys.length
+                  ? supportedExchangeKeys.map((item) => item.toUpperCase()).join(' ou ')
+                  : 'exchange';
+                const requiresExchange = supportedExchangeKeys.length > 0;
                 const exchangeOptions = [
-                  { value: '', label: 'Exchange opcional' },
-                  ...(exchangesByClient[config.clientId] || []).map((exchange) => ({
+                  { value: '', label: supportedExchangeKeys.length ? `Selecione ${supportedExchangeLabel}` : 'Exchange opcional' },
+                  ...compatibleExchanges.map((exchange) => ({
                     value: exchange.id,
                     label: `${exchange.label} (${exchange.exchange})`,
                   })),
@@ -309,7 +318,11 @@ export default function BotsPage() {
                             <p className="mt-3 text-caption text-text-tertiary">{template.risk_notes}</p>
                           )}
                         </div>
-                        <Button type="button" disabled={!can('bots:activate')} onClick={() => activateBot(template)}>
+                        <Button
+                          type="button"
+                          disabled={!can('bots:activate') || !config.clientId || (requiresExchange && !config.exchangeId)}
+                          onClick={() => activateBot(template)}
+                        >
                           <Zap className="h-4 w-4" />
                           Ativar paper
                         </Button>
@@ -359,6 +372,11 @@ export default function BotsPage() {
                         placeholder="Simbolos permitidos separados por virgula. Ex: BTC, ETH, SOL"
                         className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                       />
+                      {config.clientId && supportedExchangeKeys.length > 0 && compatibleExchanges.length === 0 && (
+                        <p className="text-caption text-status-warning">
+                          Esta carteira ainda nao tem conexao ativa {supportedExchangeLabel}. Conecte uma exchange compativel em Positions &gt; Exchanges antes de vincular o bot.
+                        </p>
+                      )}
                     </div>
                   </div>
                 );
