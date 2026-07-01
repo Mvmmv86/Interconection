@@ -4,6 +4,7 @@ Updated to use 24h change as fallback PnL when trade history is unavailable.
 """
 
 import logging
+import asyncio
 from collections import defaultdict
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
@@ -22,8 +23,11 @@ from app.models.position import Position, SourceType, PositionType
 from app.models.asset import Asset
 from app.integrations.exchanges import (
     BaseExchangeAdapter,
+    BingXAdapter,
     BybitAdapter,
     ExchangeAccountSummary,
+    ExchangeOrderRequest,
+    ExchangeOrderResult,
     ExchangeTransaction,
     ExchangeAdapterError,
     ExchangeAuthError,
@@ -37,6 +41,7 @@ _ADVISORY_LOCK_MAX = 2**63 - 1
 # Exchange logo mappings (2-letter codes)
 EXCHANGE_LOGOS = {
     "bybit": "BY",
+    "bingx": "BX",
     "binance": "BN",
     "coinbase": "CB",
     "kraken": "KR",
@@ -49,6 +54,7 @@ EXCHANGE_LOGOS = {
 # Human-readable exchange names
 EXCHANGE_NAMES = {
     "bybit": "Bybit",
+    "bingx": "BingX",
     "binance": "Binance",
     "coinbase": "Coinbase",
     "kraken": "Kraken",
@@ -83,12 +89,93 @@ class ExchangeService:
 
         if exchange.exchange == "bybit":
             return BybitAdapter(api_key, api_secret)
+        if exchange.exchange == "bingx":
+            return BingXAdapter(api_key, api_secret)
 
         # Future: Add more exchanges here
         # if exchange.exchange == "binance":
         #     return BinanceAdapter(api_key, api_secret)
 
         raise ValueError(f"Unsupported exchange: {exchange.exchange}")
+
+    async def _get_exchange_for_org(self, exchange_id: UUID, organization_id: UUID) -> Exchange:
+        """Load an exchange only when it belongs to the organization."""
+        result = await self.db.execute(
+            select(Exchange)
+            .join(Client)
+            .where(
+                Exchange.id == exchange_id,
+                Client.organization_id == organization_id,
+            )
+            .options(selectinload(Exchange.client))
+        )
+        exchange = result.scalar_one_or_none()
+        if not exchange:
+            raise ValueError("Exchange not found")
+        return exchange
+
+    async def place_order(
+        self,
+        exchange_id: UUID,
+        organization_id: UUID,
+        order: ExchangeOrderRequest,
+    ) -> ExchangeOrderResult:
+        """
+        Place an order through a tenant-scoped exchange.
+
+        This method is intentionally internal. Public/bot execution should wrap
+        it with signal idempotency, risk checks, audit logs and reconciliation.
+        """
+        exchange = await self._get_exchange_for_org(exchange_id, organization_id)
+        adapter = self.get_adapter(exchange)
+        try:
+            return await adapter.place_order(order)
+        finally:
+            await adapter.close()
+
+    async def cancel_order(
+        self,
+        exchange_id: UUID,
+        organization_id: UUID,
+        symbol: str,
+        order_id: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+        category: str = "spot",
+    ) -> ExchangeOrderResult:
+        """Cancel an order through a tenant-scoped exchange."""
+        exchange = await self._get_exchange_for_org(exchange_id, organization_id)
+        adapter = self.get_adapter(exchange)
+        try:
+            return await adapter.cancel_order(
+                symbol=symbol,
+                order_id=order_id,
+                client_order_id=client_order_id,
+                category=category,
+            )
+        finally:
+            await adapter.close()
+
+    async def get_order(
+        self,
+        exchange_id: UUID,
+        organization_id: UUID,
+        symbol: str,
+        order_id: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+        category: str = "spot",
+    ) -> ExchangeOrderResult:
+        """Fetch order status through a tenant-scoped exchange."""
+        exchange = await self._get_exchange_for_org(exchange_id, organization_id)
+        adapter = self.get_adapter(exchange)
+        try:
+            return await adapter.get_order(
+                symbol=symbol,
+                order_id=order_id,
+                client_order_id=client_order_id,
+                category=category,
+            )
+        finally:
+            await adapter.close()
 
     async def _acquire_sync_lock(self, exchange_id: UUID) -> None:
         """Acquire a transaction-scoped PostgreSQL advisory lock for sync.
@@ -305,10 +392,63 @@ class ExchangeService:
         )
 
         positions_count = 0
+        asset_symbols: set[str] = set()
+
+        for balance in summary.spot_balances:
+            asset_symbols.add(balance.asset.upper())
+        for balance in summary.funding_balances:
+            asset_symbols.add(balance.asset.upper())
+        for balance in summary.margin_balances:
+            asset_symbols.add(balance.asset.upper())
+        for futures in summary.futures_positions:
+            asset_symbols.add(
+                futures.symbol
+                .replace("USDT", "")
+                .replace("USDC", "")
+                .replace("USD", "")
+                .replace("PERP", "")
+                .replace("-", "")
+                .upper()
+            )
+        for earn in summary.earn_positions:
+            asset_symbols.add(earn.coin.upper())
+
+        asset_cache: dict[str, Asset] = {}
+        if asset_symbols:
+            assets_result = await self.db.execute(
+                select(Asset).where(Asset.symbol.in_(asset_symbols))
+            )
+            asset_cache = {asset.symbol.upper(): asset for asset in assets_result.scalars().all()}
+
+        async def get_asset(
+            symbol: str,
+            price_usd: Decimal,
+            change_24h: Decimal = Decimal("0"),
+        ) -> Asset:
+            normalized_symbol = symbol.upper()
+            asset = asset_cache.get(normalized_symbol)
+            if asset:
+                asset.current_price_usd = price_usd
+                asset.price_change_24h = change_24h
+                asset.last_price_update = datetime.now(timezone.utc)
+                return asset
+
+            asset = Asset(
+                symbol=normalized_symbol,
+                name=normalized_symbol,
+                current_price_usd=price_usd,
+                price_change_24h=change_24h,
+                decimals=18,
+                last_price_update=datetime.now(timezone.utc),
+            )
+            self.db.add(asset)
+            await self.db.flush()
+            asset_cache[normalized_symbol] = asset
+            return asset
 
         # Store spot balances
         for balance in summary.spot_balances:
-            asset = await self._get_or_create_asset(
+            asset = await get_asset(
                 symbol=balance.asset,
                 price_usd=balance.price_usd,
                 change_24h=balance.change_24h,
@@ -361,7 +501,7 @@ class ExchangeService:
 
         # Store funding balances
         for balance in summary.funding_balances:
-            asset = await self._get_or_create_asset(
+            asset = await get_asset(
                 symbol=balance.asset,
                 price_usd=balance.price_usd,
                 change_24h=balance.change_24h,
@@ -413,7 +553,7 @@ class ExchangeService:
 
         # Store margin balances
         for balance in summary.margin_balances:
-            asset = await self._get_or_create_asset(
+            asset = await get_asset(
                 symbol=balance.asset,
                 price_usd=balance.price_usd,
                 change_24h=balance.change_24h,
@@ -445,9 +585,16 @@ class ExchangeService:
         # Store futures positions
         for futures in summary.futures_positions:
             # Extract base asset from symbol
-            base_asset = futures.symbol.replace("USDT", "").replace("USD", "").replace("PERP", "")
+            base_asset = (
+                futures.symbol
+                .replace("USDT", "")
+                .replace("USDC", "")
+                .replace("USD", "")
+                .replace("PERP", "")
+                .replace("-", "")
+            )
 
-            asset = await self._get_or_create_asset(
+            asset = await get_asset(
                 symbol=base_asset,
                 price_usd=futures.mark_price,
             )
@@ -482,7 +629,7 @@ class ExchangeService:
 
         # Store earn positions
         for earn in summary.earn_positions:
-            asset = await self._get_or_create_asset(
+            asset = await get_asset(
                 symbol=earn.coin,
                 price_usd=earn.value_usd / earn.amount if earn.amount > 0 else Decimal("0"),
             )
@@ -893,48 +1040,54 @@ class ExchangeService:
         result = await self.db.execute(query)
         exchanges = result.scalars().all()
 
+        semaphore = asyncio.Semaphore(4)
+
+        async def fetch_transactions_for_exchange(exchange: Exchange) -> list[dict]:
+            async with semaphore:
+                adapter = None
+                try:
+                    adapter = self.get_adapter(exchange)
+                    transactions = await adapter.get_all_transactions(limit=limit)
+
+                    exchange_name = EXCHANGE_NAMES.get(exchange.exchange, exchange.exchange.title())
+                    exchange_label = exchange.label or exchange_name
+
+                    return [
+                        {
+                            "id": tx.id,
+                            "exchange_id": str(exchange.id),
+                            "exchange": exchange.exchange,
+                            "exchange_name": exchange_name,
+                            "exchange_label": exchange_label,
+                            "type": tx.type,
+                            "coin": tx.coin,
+                            "amount": float(tx.amount),
+                            "fee": float(tx.fee),
+                            "value_usd": float(tx.value_usd),
+                            "status": tx.status,
+                            "tx_id": tx.tx_id,
+                            "from_account": tx.from_account,
+                            "to_account": tx.to_account,
+                            "chain": tx.chain,
+                            "address": tx.address,
+                            "timestamp": tx.timestamp.isoformat(),
+                        }
+                        for tx in transactions
+                    ]
+                except Exception as e:
+                    logger.warning(f"Failed to get transactions for exchange {exchange.id}: {e}", exc_info=True)
+                    return []
+                finally:
+                    if adapter is not None:
+                        await adapter.close()
+
+        transaction_batches = await asyncio.gather(
+            *(fetch_transactions_for_exchange(exchange) for exchange in exchanges)
+        )
+
         all_transactions = []
-
-        import sys
-        print(f"[TX-DEBUG] Fetching transactions for {len(exchanges)} exchange(s)", file=sys.stderr, flush=True)
-
-        for exchange in exchanges:
-            try:
-                adapter = self.get_adapter(exchange)
-                transactions = await adapter.get_all_transactions(limit=limit)
-                await adapter.close()
-
-                print(f"[TX-DEBUG] Exchange {exchange.exchange} ({exchange.id}): fetched {len(transactions)} transactions", file=sys.stderr, flush=True)
-
-                exchange_name = EXCHANGE_NAMES.get(exchange.exchange, exchange.exchange.title())
-                exchange_label = exchange.label or exchange_name
-
-                for tx in transactions:
-                    tx.exchange = exchange.exchange
-                    tx.exchange_label = exchange_label
-                    all_transactions.append({
-                        "id": tx.id,
-                        "exchange_id": str(exchange.id),
-                        "exchange": exchange.exchange,
-                        "exchange_name": exchange_name,
-                        "exchange_label": exchange_label,
-                        "type": tx.type,
-                        "coin": tx.coin,
-                        "amount": float(tx.amount),
-                        "fee": float(tx.fee),
-                        "value_usd": float(tx.value_usd),
-                        "status": tx.status,
-                        "tx_id": tx.tx_id,
-                        "from_account": tx.from_account,
-                        "to_account": tx.to_account,
-                        "chain": tx.chain,
-                        "address": tx.address,
-                        "timestamp": tx.timestamp.isoformat(),
-                    })
-
-            except Exception as e:
-                logger.warning(f"Failed to get transactions for exchange {exchange.id}: {e}", exc_info=True)
-                continue
+        for transactions in transaction_batches:
+            all_transactions.extend(transactions)
 
         # Sort by timestamp descending
         all_transactions.sort(key=lambda t: t["timestamp"], reverse=True)

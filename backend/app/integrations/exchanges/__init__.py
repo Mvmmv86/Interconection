@@ -13,6 +13,11 @@ from app.integrations.exchanges.base import (
     SubAccountSummary,
     ExchangeAccountSummary,
     ExchangeTransaction,
+    ExchangeOrderRequest,
+    ExchangeOrderResult,
+    ExchangeOrderSide,
+    ExchangeOrderStatus,
+    ExchangeOrderType,
     AccountType,
     # Errors
     ExchangeAdapterError,
@@ -21,6 +26,7 @@ from app.integrations.exchanges.base import (
     ExchangeAPIError,
 )
 from app.integrations.exchanges.bybit import BybitAdapter
+from app.integrations.exchanges.bingx import BingXAdapter
 
 __all__ = [
     # Base classes
@@ -35,6 +41,11 @@ __all__ = [
     "SubAccountSummary",
     "ExchangeAccountSummary",
     "ExchangeTransaction",
+    "ExchangeOrderRequest",
+    "ExchangeOrderResult",
+    "ExchangeOrderSide",
+    "ExchangeOrderStatus",
+    "ExchangeOrderType",
     "AccountType",
     # Errors
     "ExchangeAdapterError",
@@ -43,4 +54,5 @@ __all__ = [
     "ExchangeAPIError",
     # Adapters
     "BybitAdapter",
+    "BingXAdapter",
 ]

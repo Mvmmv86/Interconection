@@ -42,6 +42,18 @@ router = APIRouter(dependencies=[Depends(rbac_route_guard("exchange"))])
 
 # Supported exchanges info
 EXCHANGE_INFO = {
+    "bybit": SupportedExchangeInfo(
+        id="bybit",
+        name="Bybit",
+        logo_url="https://cryptologos.cc/logos/bybit-bit-logo.png",
+        supports_futures=True,
+    ),
+    "bingx": SupportedExchangeInfo(
+        id="bingx",
+        name="BingX",
+        logo_url="https://bingx.com/favicon.ico",
+        supports_futures=True,
+    ),
     "binance": SupportedExchangeInfo(
         id="binance",
         name="Binance",
@@ -59,12 +71,6 @@ EXCHANGE_INFO = {
         name="Kraken",
         logo_url="https://cryptologos.cc/logos/kraken-krak-logo.png",
         supports_margin=True,
-    ),
-    "bybit": SupportedExchangeInfo(
-        id="bybit",
-        name="Bybit",
-        logo_url="https://cryptologos.cc/logos/bybit-bit-logo.png",
-        supports_futures=True,
     ),
     "okx": SupportedExchangeInfo(
         id="okx",
@@ -444,7 +450,7 @@ async def list_supported_exchanges(
 ) -> List[SupportedExchangeInfo]:
     _ = permission_ctx
     """List all supported exchanges."""
-    return list(EXCHANGE_INFO.values())
+    return [EXCHANGE_INFO[exchange_id] for exchange_id in SUPPORTED_EXCHANGES if exchange_id in EXCHANGE_INFO]
 
 
 @exchange_positions_router.get("/positions", response_model=ExchangePositionsSummary)

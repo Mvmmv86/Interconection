@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,32 @@ class AccountType(str, Enum):
     FUTURES = "futures"
     FUNDING = "funding"
     EARN = "earn"
+
+
+class ExchangeOrderSide(str, Enum):
+    """Normalized exchange order side."""
+
+    BUY = "buy"
+    SELL = "sell"
+
+
+class ExchangeOrderType(str, Enum):
+    """Normalized exchange order type."""
+
+    MARKET = "market"
+    LIMIT = "limit"
+
+
+class ExchangeOrderStatus(str, Enum):
+    """Normalized order status returned by adapters."""
+
+    SUBMITTED = "submitted"
+    OPEN = "open"
+    FILLED = "filled"
+    PARTIALLY_FILLED = "partially_filled"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+    UNKNOWN = "unknown"
 
 
 class ExchangeBalance(BaseModel):
@@ -103,6 +129,34 @@ class ExchangeTransaction(BaseModel):
     chain: Optional[str] = None
     address: Optional[str] = None  # destination/source address
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExchangeOrderRequest(BaseModel):
+    """Normalized request to place an order through an exchange adapter."""
+
+    symbol: str
+    side: ExchangeOrderSide
+    order_type: ExchangeOrderType = ExchangeOrderType.MARKET
+    quantity: Decimal = Field(gt=Decimal("0"))
+    price: Optional[Decimal] = None
+    category: str = "spot"  # spot, linear, inverse, futures, swap
+    time_in_force: Optional[str] = None
+    client_order_id: str = Field(min_length=1)
+    reduce_only: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ExchangeOrderResult(BaseModel):
+    """Normalized order result returned by an exchange adapter."""
+
+    exchange: str
+    order_id: Optional[str] = None
+    client_order_id: Optional[str] = None
+    symbol: str
+    side: Optional[ExchangeOrderSide] = None
+    order_type: ExchangeOrderType
+    status: ExchangeOrderStatus = ExchangeOrderStatus.SUBMITTED
+    raw_response: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SubAccount(BaseModel):
@@ -308,6 +362,36 @@ class BaseExchangeAdapter(ABC):
         # Sort by timestamp descending
         transactions.sort(key=lambda t: t.timestamp, reverse=True)
         return transactions[:limit]
+
+    async def place_order(self, order: ExchangeOrderRequest) -> ExchangeOrderResult:
+        """
+        Place an order on the exchange.
+
+        Adapters opt in explicitly. Bot execution should call this only through
+        the dedicated executor/service layer with idempotency, risk checks and
+        reconciliation enabled.
+        """
+        raise NotImplementedError(f"{self.exchange_name} does not support order placement")
+
+    async def cancel_order(
+        self,
+        symbol: str,
+        order_id: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+        category: str = "spot",
+    ) -> ExchangeOrderResult:
+        """Cancel an order on the exchange."""
+        raise NotImplementedError(f"{self.exchange_name} does not support order cancellation")
+
+    async def get_order(
+        self,
+        symbol: str,
+        order_id: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+        category: str = "spot",
+    ) -> ExchangeOrderResult:
+        """Fetch order status from the exchange."""
+        raise NotImplementedError(f"{self.exchange_name} does not support order lookup")
 
     async def get_account_summary(self, include_subaccounts: bool = False) -> ExchangeAccountSummary:
         """

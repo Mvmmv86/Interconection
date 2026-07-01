@@ -12,14 +12,8 @@ from app.schemas.common import BaseSchema
 
 # Supported exchanges
 SUPPORTED_EXCHANGES = [
-    "binance",
-    "coinbase",
-    "kraken",
     "bybit",
-    "okx",
-    "kucoin",
-    "gateio",
-    "mexc",
+    "bingx",
 ]
 
 

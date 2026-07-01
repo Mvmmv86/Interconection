@@ -33,6 +33,18 @@ const EXCHANGES = [
     apiGuideUrl: 'https://www.bybit.com/app/user/api-management',
   },
   {
+    id: 'bingx',
+    name: 'BingX',
+    logo: 'BX',
+    color: '#111827',
+    supportsSpot: true,
+    supportsFutures: true,
+    supportsMargin: false,
+    requiresPassphrase: false,
+    enabled: true,
+    apiGuideUrl: 'https://bingx.com/en/accounts/api',
+  },
+  {
     id: 'binance',
     name: 'Binance',
     logo: 'BN',
