@@ -1,0 +1,194 @@
+"""Safe paper-cycle scheduler for active bot instances."""
+
+from __future__ import annotations
+
+import logging
+from uuid import UUID
+
+from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.models.bot import BotInstance, BotInstanceMode, BotInstanceStatus, BotTemplate
+from app.services.bot_engine_service import BotEngineService
+from app.services.market_data_ingestion_service import (
+    MarketDataIngestionService,
+    resolve_strategy_market_type,
+    resolve_strategy_symbols,
+    resolve_strategy_timeframe,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class BotSchedulerService:
+    """Runs active paper bots once per closed candle without duplicate cycles."""
+
+    SCHEDULER_LOCK_KEY = 86021401
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def _try_acquire_scheduler_lock(self) -> bool:
+        """Avoid duplicate scheduler loops when the API runs multiple workers."""
+        try:
+            return bool(await self.db.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": self.SCHEDULER_LOCK_KEY}))
+        except Exception as exc:
+            await self.db.rollback()
+            logger.warning("Bot scheduler advisory lock unavailable; continuing without global lock: %s", exc)
+            return True
+
+    async def _release_scheduler_lock(self) -> None:
+        try:
+            await self.db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": self.SCHEDULER_LOCK_KEY})
+        except Exception as exc:
+            await self.db.rollback()
+            logger.warning("Bot scheduler advisory lock release failed: %s", exc)
+
+    async def run_due_paper_cycles(
+        self,
+        *,
+        organization_id: UUID | None = None,
+        limit: int = 50,
+        candle_limit: int = 300,
+    ) -> dict:
+        """Run active paper instances for the latest closed candle."""
+        should_run = await self._try_acquire_scheduler_lock()
+        if not should_run:
+            return {
+                "processed": 0,
+                "cycle_attempt_count": 0,
+                "run_count": 0,
+                "skipped_count": 1,
+                "error_count": 0,
+                "runs": [],
+                "skipped": [{"reason": "scheduler_already_running"}],
+                "errors": [],
+            }
+
+        runs: list[dict] = []
+        skipped: list[dict] = []
+        errors: list[dict] = []
+        attempted_cycles = 0
+        instances: list[BotInstance] = []
+
+        try:
+            max_cycles = max(1, min(int(limit or 50), 500))
+            query = (
+                select(BotInstance)
+                .options(
+                    selectinload(BotInstance.strategy),
+                    selectinload(BotInstance.template).selectinload(BotTemplate.parameters),
+                    selectinload(BotInstance.client),
+                    selectinload(BotInstance.exchange),
+                )
+                .where(
+                    BotInstance.mode == BotInstanceMode.PAPER,
+                    BotInstance.live_enabled == False,
+                    BotInstance.status == BotInstanceStatus.ACTIVE,
+                    BotInstance.strategy_id.is_not(None),
+                    BotInstance.exchange_id.is_not(None),
+                )
+                .order_by(BotInstance.last_run_at.asc().nullsfirst(), BotInstance.created_at.asc())
+                .limit(max(1, min(max_cycles, 200)))
+            )
+            if organization_id is not None:
+                query = query.where(BotInstance.organization_id == organization_id)
+
+            result = await self.db.execute(query)
+            instances = result.scalars().unique().all()
+            ingestion = MarketDataIngestionService(self.db)
+            engine = BotEngineService(self.db)
+
+            for instance in instances:
+                if attempted_cycles >= max_cycles:
+                    break
+                if instance.exchange is None or instance.strategy is None:
+                    skipped.append({"instance_id": str(instance.id), "reason": "missing_exchange_or_strategy"})
+                    continue
+                symbols = resolve_strategy_symbols(instance.strategy, instance)
+                timeframe = resolve_strategy_timeframe(instance.strategy, instance)
+                market_type = resolve_strategy_market_type(instance.strategy, instance)
+                if not symbols:
+                    skipped.append({"instance_id": str(instance.id), "reason": "missing_symbols"})
+                    continue
+                market_snapshot = await engine.build_market_snapshot(instance)
+                for symbol in symbols:
+                    if attempted_cycles >= max_cycles:
+                        break
+                    attempted_cycles += 1
+                    try:
+                        await ingestion.sync_exchange_candles(
+                            exchange_id=instance.exchange_id,
+                            organization_id=instance.organization_id,
+                            symbols=[symbol],
+                            timeframes=[timeframe],
+                            limit=candle_limit,
+                            market_type=market_type,
+                        )
+                        latest = await ingestion.latest_closed_candle(
+                            exchange=instance.exchange.exchange,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                        )
+                        if latest is None:
+                            skipped.append({"instance_id": str(instance.id), "symbol": symbol, "reason": "no_closed_candle"})
+                            await self.db.commit()
+                            continue
+                        await self.db.commit()
+                        cycle_key = (
+                            f"paper:{instance.id}:{latest.exchange}:{latest.symbol}:"
+                            f"{latest.timeframe}:{latest.close_time.isoformat()}"
+                        )
+                        run = await engine.run_paper_cycle(
+                            instance_id=instance.id,
+                            organization_id=instance.organization_id,
+                            user_id=instance.created_by_user_id,
+                            cycle_key=cycle_key,
+                            symbol=latest.symbol,
+                            timeframe=latest.timeframe,
+                            triggered_by="scheduler",
+                            market_snapshot=market_snapshot,
+                        )
+                        risk_blocks = list((run.risk_snapshot or {}).get("blocks") or [])
+                        runs.append(
+                            {
+                                "instance_id": str(instance.id),
+                                "run_id": str(run.id),
+                                "cycle_key": run.cycle_key,
+                                "symbol": latest.symbol,
+                                "timeframe": latest.timeframe,
+                                "risk_blocks": risk_blocks,
+                            }
+                        )
+                        if "daily_signal_limit" in risk_blocks:
+                            skipped.append(
+                                {
+                                    "instance_id": str(instance.id),
+                                    "symbol": latest.symbol,
+                                    "reason": "daily_signal_limit",
+                                }
+                            )
+                        await self.db.commit()
+                    except Exception as exc:
+                        await self.db.rollback()
+                        await self.db.execute(
+                            update(BotInstance)
+                            .where(BotInstance.id == instance.id)
+                            .values(last_error=str(exc)[:1000])
+                        )
+                        await self.db.commit()
+                        errors.append({"instance_id": str(instance.id), "symbol": symbol, "error": str(exc)})
+        finally:
+            await self._release_scheduler_lock()
+
+        return {
+            "processed": len(instances),
+            "cycle_attempt_count": attempted_cycles,
+            "run_count": len(runs),
+            "skipped_count": len(skipped),
+            "error_count": len(errors),
+            "runs": runs,
+            "skipped": skipped,
+            "errors": errors,
+        }

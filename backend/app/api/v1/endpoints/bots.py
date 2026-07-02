@@ -50,8 +50,12 @@ from app.schemas.bot import (
     BotInstanceResponse,
     BotInstanceUpdate,
     BotLiveEnableRequest,
+    BotMarketCandleSyncRequest,
+    BotMarketCandleSyncResponse,
     BotRunRequest,
     BotRunResponse,
+    BotSchedulerRunRequest,
+    BotSchedulerRunResponse,
     BotSignalResponse,
     BotStrategyCreate,
     BotStrategyResponse,
@@ -62,6 +66,8 @@ from app.schemas.bot import (
 )
 from app.services.audit_service import record_audit_event, record_audit_event_immediate
 from app.services.bot_engine_service import BotEngineService
+from app.services.bot_scheduler_service import BotSchedulerService
+from app.services.market_data_ingestion_service import MarketDataIngestionService
 from app.services.plan_limits import enforce_plan_limit
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("bots"))])
@@ -1120,6 +1126,65 @@ async def list_admin_bot_backtests(
         query = query.where(BotBacktest.strategy_id == strategy_id)
     result = await db.execute(query)
     return [_backtest_response(backtest) for backtest in result.scalars().all()]
+
+
+@admin_router.post("/market-candles/sync", response_model=BotMarketCandleSyncResponse)
+async def sync_admin_market_candles(
+    data: BotMarketCandleSyncRequest,
+    superuser: SuperUser,
+    db: DBSession,
+    request: Request,
+) -> BotMarketCandleSyncResponse:
+    """Fetch exchange OHLCV candles into the normalized market_candles table."""
+    service = MarketDataIngestionService(db)
+    result = await service.sync_exchange_candles(
+        exchange_id=data.exchange_id,
+        organization_id=None,
+        symbols=data.symbols,
+        timeframes=data.timeframes,
+        limit=data.limit,
+        market_type=data.market_type,
+    )
+    await record_audit_event(
+        db,
+        organization_id=superuser.organization_id,
+        user_id=superuser.id,
+        action=AuditAction.UPDATE,
+        resource_type="market_candles",
+        resource_id=data.exchange_id,
+        description="Platform admin synced bot market candles",
+        metadata=result,
+        request=request,
+    )
+    return BotMarketCandleSyncResponse(**result)
+
+
+@admin_router.post("/scheduler/run-paper", response_model=BotSchedulerRunResponse)
+async def run_admin_bot_scheduler(
+    data: BotSchedulerRunRequest,
+    superuser: SuperUser,
+    db: DBSession,
+    request: Request,
+) -> BotSchedulerRunResponse:
+    """Run due active paper bots once per latest closed market candle."""
+    service = BotSchedulerService(db)
+    result = await service.run_due_paper_cycles(
+        organization_id=data.organization_id,
+        limit=data.limit,
+        candle_limit=data.candle_limit,
+    )
+    await record_audit_event(
+        db,
+        organization_id=superuser.organization_id,
+        user_id=superuser.id,
+        action=AuditAction.UPDATE,
+        resource_type="bot_scheduler",
+        resource_id=superuser.id,
+        description="Platform admin ran paper bot scheduler",
+        metadata=result,
+        request=request,
+    )
+    return BotSchedulerRunResponse(**result)
 
 
 @admin_router.get("/templates", response_model=list[BotTemplateResponse])

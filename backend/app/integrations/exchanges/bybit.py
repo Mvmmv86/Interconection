@@ -18,7 +18,7 @@ import hashlib
 import hmac
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Tuple
 from urllib.parse import urlencode
@@ -54,6 +54,7 @@ from app.integrations.exchanges.base import (
     ExchangeOrderResult,
     ExchangeOrderStatus,
     ExchangeOrderType,
+    MarketCandleData,
     ExchangeAuthError,
     ExchangeRateLimitError,
     ExchangeAPIError,
@@ -70,6 +71,38 @@ COMMON_COINS = [
     "APT", "ARB", "OP", "INJ", "SUI", "SEI", "TIA", "JUP",
     "PEPE", "WIF", "BONK", "SHIB", "FTM", "NEAR", "ALGO", "SAND",
 ]
+
+BYBIT_KLINE_INTERVALS = {
+    "1m": "1",
+    "3m": "3",
+    "5m": "5",
+    "15m": "15",
+    "30m": "30",
+    "1h": "60",
+    "2h": "120",
+    "4h": "240",
+    "6h": "360",
+    "12h": "720",
+    "1d": "D",
+    "1w": "W",
+    "1M": "M",
+}
+
+TIMEFRAME_DELTAS = {
+    "1m": timedelta(minutes=1),
+    "3m": timedelta(minutes=3),
+    "5m": timedelta(minutes=5),
+    "15m": timedelta(minutes=15),
+    "30m": timedelta(minutes=30),
+    "1h": timedelta(hours=1),
+    "2h": timedelta(hours=2),
+    "4h": timedelta(hours=4),
+    "6h": timedelta(hours=6),
+    "12h": timedelta(hours=12),
+    "1d": timedelta(days=1),
+    "1w": timedelta(days=7),
+    "1M": timedelta(days=31),
+}
 
 
 class BybitAdapter(BaseExchangeAdapter):
@@ -1368,6 +1401,71 @@ class BybitAdapter(BaseExchangeAdapter):
             status=self._normalize_order_status(order_data.get("orderStatus")),
             raw_response=order_data,
         )
+
+    def _market_symbol(self, symbol: str) -> str:
+        normalized = symbol.replace("-", "").replace("/", "").upper()
+        if normalized.endswith(("USDT", "USDC", "USD")):
+            return normalized
+        return f"{normalized}USDT"
+
+    def _market_category(self, category: str) -> str:
+        category_value = (category or "spot").lower()
+        if category_value in {"swap", "future", "futures", "linear"}:
+            return "linear"
+        if category_value == "inverse":
+            return "inverse"
+        return "spot"
+
+    async def get_ohlcv_candles(
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        limit: int = 200,
+        category: str = "spot",
+    ) -> List[MarketCandleData]:
+        """Fetch public Bybit OHLCV candles using v5 market kline."""
+        normalized_timeframe = timeframe if timeframe in BYBIT_KLINE_INTERVALS else "1h"
+        interval = BYBIT_KLINE_INTERVALS[normalized_timeframe]
+        delta = TIMEFRAME_DELTAS[normalized_timeframe]
+        normalized_symbol = self._market_symbol(symbol)
+        result = await self._request(
+            "GET",
+            "/v5/market/kline",
+            params={
+                "category": self._market_category(category),
+                "symbol": normalized_symbol,
+                "interval": interval,
+                "limit": max(1, min(int(limit or 200), 1000)),
+            },
+            signed=False,
+        )
+        rows = result.get("list", []) if isinstance(result, dict) else []
+        now = datetime.now(timezone.utc)
+        candles: List[MarketCandleData] = []
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 6:
+                continue
+            open_time = datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc)
+            close_time = open_time + delta
+            candles.append(
+                MarketCandleData(
+                    exchange=self.exchange_name,
+                    symbol=normalized_symbol,
+                    timeframe=normalized_timeframe,
+                    open_time=open_time,
+                    close_time=close_time,
+                    open=safe_decimal(row[1]),
+                    high=safe_decimal(row[2]),
+                    low=safe_decimal(row[3]),
+                    close=safe_decimal(row[4]),
+                    volume=safe_decimal(row[5]),
+                    quote_volume=safe_decimal(row[6]) if len(row) > 6 else Decimal("0"),
+                    trade_count=None,
+                    is_closed=close_time <= now,
+                    raw_response={"row": row},
+                )
+            )
+        return sorted(candles, key=lambda candle: candle.open_time)
 
     async def get_account_summary(self, include_subaccounts: bool = False) -> ExchangeAccountSummary:
         """

@@ -1,14 +1,14 @@
 """
 BingX Exchange Adapter.
 
-Read-only integration for Connectcoin:
+Integration for Connectcoin:
 - Spot balances
 - USDT perpetual futures balances/positions
 - Deposit, withdrawal and internal transfer history
 
-The adapter intentionally does not implement order placement. Trading stays
-blocked at this layer until the execution engine has reconciliation, idempotency
-and operator approvals wired end-to-end.
+Order placement exists as a low-level adapter capability. Bot live trading stays
+blocked until the execution engine has reconciliation, idempotency and operator
+approvals wired end-to-end.
 """
 
 import asyncio
@@ -16,7 +16,7 @@ import hashlib
 import hmac
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlencode
@@ -37,6 +37,7 @@ from app.integrations.exchanges.base import (
     ExchangeTransaction,
     FuturesPosition,
     MarginBalance,
+    MarketCandleData,
     SpotBalance,
 )
 
@@ -49,6 +50,38 @@ STABLECOIN_PRICES = {
     "DAI": {"price": Decimal("1"), "change_24h": Decimal("0")},
     "BUSD": {"price": Decimal("1"), "change_24h": Decimal("0")},
     "FDUSD": {"price": Decimal("1"), "change_24h": Decimal("0")},
+}
+
+BINGX_KLINE_INTERVALS = {
+    "1m": "1m",
+    "3m": "3m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "1h": "1h",
+    "2h": "2h",
+    "4h": "4h",
+    "6h": "6h",
+    "12h": "12h",
+    "1d": "1d",
+    "1w": "1w",
+    "1M": "1M",
+}
+
+TIMEFRAME_DELTAS = {
+    "1m": timedelta(minutes=1),
+    "3m": timedelta(minutes=3),
+    "5m": timedelta(minutes=5),
+    "15m": timedelta(minutes=15),
+    "30m": timedelta(minutes=30),
+    "1h": timedelta(hours=1),
+    "2h": timedelta(hours=2),
+    "4h": timedelta(hours=4),
+    "6h": timedelta(hours=6),
+    "12h": timedelta(hours=12),
+    "1d": timedelta(days=1),
+    "1w": timedelta(days=7),
+    "1M": timedelta(days=31),
 }
 
 
@@ -735,6 +768,116 @@ class BingXAdapter(BaseExchangeAdapter):
             status=self._normalize_order_status(response.get("status")),
             raw_response=response,
         )
+
+    def _kline_endpoint_category(self, category: str) -> str:
+        category_value = (category or "spot").lower()
+        if category_value in {"swap", "future", "futures", "linear"}:
+            return "swap"
+        return "spot"
+
+    def _parse_kline_row(
+        self,
+        row: Any,
+        *,
+        symbol: str,
+        timeframe: str,
+        delta: timedelta,
+        now: datetime,
+    ) -> MarketCandleData | None:
+        if isinstance(row, dict):
+            open_time_raw = row.get("time") or row.get("openTime") or row.get("t") or row.get("timestamp")
+            if open_time_raw is None:
+                return None
+            open_time = datetime.fromtimestamp(int(open_time_raw) / 1000, tz=timezone.utc)
+            close_time_raw = row.get("closeTime")
+            close_time = (
+                datetime.fromtimestamp(int(close_time_raw) / 1000, tz=timezone.utc)
+                if close_time_raw is not None
+                else open_time + delta
+            )
+            return MarketCandleData(
+                exchange=self.exchange_name,
+                symbol=symbol,
+                timeframe=timeframe,
+                open_time=open_time,
+                close_time=close_time,
+                open=safe_decimal(row.get("open") or row.get("o")),
+                high=safe_decimal(row.get("high") or row.get("h")),
+                low=safe_decimal(row.get("low") or row.get("l")),
+                close=safe_decimal(row.get("close") or row.get("c")),
+                volume=safe_decimal(row.get("volume") or row.get("v")),
+                quote_volume=safe_decimal(row.get("quoteVolume") or row.get("q")),
+                trade_count=int(row["tradeNum"]) if str(row.get("tradeNum") or "").isdigit() else None,
+                is_closed=close_time <= now,
+                raw_response=row,
+            )
+        if isinstance(row, list) and len(row) >= 6:
+            open_time = datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc)
+            close_time = open_time + delta
+            return MarketCandleData(
+                exchange=self.exchange_name,
+                symbol=symbol,
+                timeframe=timeframe,
+                open_time=open_time,
+                close_time=close_time,
+                open=safe_decimal(row[1]),
+                high=safe_decimal(row[2]),
+                low=safe_decimal(row[3]),
+                close=safe_decimal(row[4]),
+                volume=safe_decimal(row[5]),
+                quote_volume=safe_decimal(row[6]) if len(row) > 6 else Decimal("0"),
+                trade_count=None,
+                is_closed=close_time <= now,
+                raw_response={"row": row},
+            )
+        return None
+
+    async def get_ohlcv_candles(
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        limit: int = 200,
+        category: str = "spot",
+    ) -> list[MarketCandleData]:
+        """Fetch public BingX OHLCV candles for spot or USDT-M swap markets."""
+        normalized_timeframe = timeframe if timeframe in BINGX_KLINE_INTERVALS else "1h"
+        endpoint_category = self._kline_endpoint_category(category)
+        normalized_symbol = self._bingx_symbol(symbol, endpoint_category)
+        endpoint = (
+            "/openApi/swap/v3/quote/klines"
+            if endpoint_category == "swap"
+            else "/openApi/spot/v1/market/kline"
+        )
+        payload = await self._request(
+            "GET",
+            endpoint,
+            params={
+                "symbol": normalized_symbol,
+                "interval": BINGX_KLINE_INTERVALS[normalized_timeframe],
+                "limit": max(1, min(int(limit or 200), 1000)),
+            },
+            signed=False,
+        )
+        rows = _as_list(payload)
+        if not rows and isinstance(payload, list):
+            rows = payload
+        now = datetime.now(timezone.utc)
+        delta = TIMEFRAME_DELTAS[normalized_timeframe]
+        candles = [
+            candle
+            for candle in (
+                self._parse_kline_row(
+                    row,
+                    symbol=normalized_symbol,
+                    timeframe=normalized_timeframe,
+                    delta=delta,
+                    now=now,
+                )
+                for row in rows
+            )
+            if candle is not None
+        ]
+        return sorted(candles, key=lambda candle: candle.open_time)
 
     async def get_deposit_history(self, limit: int = 50) -> list[ExchangeTransaction]:
         """Get recent deposit records."""

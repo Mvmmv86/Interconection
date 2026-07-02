@@ -45,6 +45,7 @@ from app.models.pool_position_baseline import PoolPositionBaseline, BaselineSour
 from app.models.staking_position import StakingPosition
 from app.models.protocol_registry import ProtocolRegistry, ChainRegistry, ExchangeRegistry
 from app.models.price_history import PriceHistory, PoolMetricsHistory
+from app.models.market_candle import MarketCandle
 from app.models.integration import Integration, SyncLog
 # New models
 from app.models.ai import AIReport, AISettings
@@ -119,6 +120,7 @@ __all__ = [
     "ExchangeRegistry",
     # History
     "PriceHistory",
+    "MarketCandle",
     "PoolMetricsHistory",
     # Integrations
     "Integration",

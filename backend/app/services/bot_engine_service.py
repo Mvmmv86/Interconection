@@ -27,8 +27,14 @@ from app.models.bot import (
     BotTemplate,
     BotTemplateType,
 )
+from app.models.market_candle import MarketCandle
 from app.models.position import Position, SourceType
 from app.models.price_history import PriceHistory
+from app.services.market_data_ingestion_service import (
+    normalize_strategy_symbol,
+    resolve_strategy_symbols,
+    resolve_strategy_timeframe,
+)
 
 
 def _json_number(value: object) -> float:
@@ -64,6 +70,26 @@ def _safe_int(value: object, default: int = 1) -> int:
     except (TypeError, ValueError):
         return default
     return max(1, parsed)
+
+
+def _candle_close_value(candle: object) -> object:
+    return getattr(candle, "close", getattr(candle, "price_usd", 0))
+
+
+def _candle_high_value(candle: object, fallback: object) -> object:
+    return getattr(candle, "high", getattr(candle, "high_24h", fallback))
+
+
+def _candle_low_value(candle: object, fallback: object) -> object:
+    return getattr(candle, "low", getattr(candle, "low_24h", fallback))
+
+
+def _candle_volume_value(candle: object) -> object:
+    return getattr(candle, "volume", getattr(candle, "volume_24h", 0))
+
+
+def _candle_timestamp(candle: object) -> datetime:
+    return getattr(candle, "close_time", getattr(candle, "timestamp"))
 
 
 def _empty_series(length: int) -> list[float | None]:
@@ -285,8 +311,12 @@ class BotEngineService:
         *,
         instance_id: UUID,
         organization_id: UUID,
-        user_id: UUID,
+        user_id: UUID | None,
         cycle_key: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        triggered_by: str = "manual",
+        market_snapshot: dict | None = None,
     ) -> BotRun:
         """Run one idempotent paper evaluation for a bot instance."""
         now = datetime.now(timezone.utc)
@@ -339,7 +369,12 @@ class BotEngineService:
         if existing_after_lock is not None:
             return existing_after_lock
 
-        market_snapshot = await self._build_market_snapshot(instance)
+        market_snapshot = dict(market_snapshot) if market_snapshot is not None else await self._build_market_snapshot(instance)
+        if symbol:
+            market_snapshot["requested_symbol"] = normalize_strategy_symbol(symbol)
+        if timeframe:
+            market_snapshot["requested_timeframe"] = str(timeframe)
+        market_snapshot["triggered_by"] = triggered_by
         decision, risk_snapshot = await self._decide(instance, market_snapshot)
 
         run = BotRun(
@@ -386,6 +421,10 @@ class BotEngineService:
         self.db.add(signal)
         await self.db.flush()
         return run
+
+    async def build_market_snapshot(self, instance: BotInstance) -> dict:
+        """Build the portfolio snapshot used by one bot instance evaluation."""
+        return await self._build_market_snapshot(instance)
 
     async def _build_market_snapshot(self, instance: BotInstance) -> dict:
         query = (
@@ -452,8 +491,8 @@ class BotEngineService:
             **(instance.template.default_parameters if instance.template else {}),
             **(instance.risk_config or {}),
         }
-        supported_assets = [item.upper() for item in ((instance.template.supported_assets if instance.template else []) or [])]
-        allowed_symbols = [item.upper() for item in risk_config.get("allowed_symbols", [])]
+        supported_assets = resolve_strategy_symbols(instance.strategy, instance)
+        allowed_symbols = supported_assets
         positions = market_snapshot.get("positions", [])
         top_position = positions[0] if positions else None
         total_value = Decimal(str(market_snapshot.get("total_value_usd") or 0))
@@ -472,10 +511,15 @@ class BotEngineService:
             or 0
         )
 
+        requested_symbol = market_snapshot.get("requested_symbol")
         symbol = (
-            supported_assets[0]
-            if supported_assets
-            else (str(top_position.get("symbol")).upper() if top_position and top_position.get("symbol") else None)
+            normalize_strategy_symbol(str(requested_symbol))
+            if requested_symbol
+            else (
+                supported_assets[0]
+                if supported_assets
+                else (normalize_strategy_symbol(str(top_position.get("symbol"))) if top_position and top_position.get("symbol") else None)
+            )
         )
         action = BotSignalAction.HOLD
         reason = "No actionable condition"
@@ -493,7 +537,7 @@ class BotEngineService:
             threshold = Decimal(str(risk_config.get("target_max_allocation_percent", 50)))
             if allocation > threshold:
                 action = BotSignalAction.SELL
-                symbol = str(top_position.get("symbol")).upper()
+                symbol = normalize_strategy_symbol(str(top_position.get("symbol")))
                 price = Decimal(str(top_position.get("current_price") or 0))
                 notional = min(max_order_usd, Decimal(str(top_position.get("current_value_usd") or 0)) * Decimal("0.10"))
                 confidence = Decimal("0.70")
@@ -517,7 +561,7 @@ class BotEngineService:
             current_symbol_value = sum(
                 Decimal(str(item.get("current_value_usd") or 0))
                 for item in positions
-                if symbol and str(item.get("symbol") or "").upper() == symbol
+                if symbol and normalize_strategy_symbol(str(item.get("symbol") or "")) == symbol
             )
             if current_symbol_value + notional > max_position_usd:
                 risk_blocks.append("max_position_usd")
@@ -565,14 +609,16 @@ class BotEngineService:
             **(instance.template.default_parameters if instance.template else {}),
             **(instance.risk_config or {}),
         }
-        market_config = strategy.market_config or {}
-        allowed_symbols = [str(item).upper() for item in (market_config.get("allowed_symbols") or risk_config.get("allowed_symbols") or [])]
+        allowed_symbols = resolve_strategy_symbols(strategy, instance)
         positions = market_snapshot.get("positions", [])
         top_position = positions[0] if positions else None
+        requested_symbol = market_snapshot.get("requested_symbol")
         symbol = (
-            allowed_symbols[0]
+            normalize_strategy_symbol(str(requested_symbol))
+            if requested_symbol
+            else allowed_symbols[0]
             if allowed_symbols
-            else (str(top_position.get("symbol")).upper() if top_position and top_position.get("symbol") else None)
+            else (normalize_strategy_symbol(str(top_position.get("symbol"))) if top_position and top_position.get("symbol") else None)
         )
         if not symbol:
             return (
@@ -588,13 +634,14 @@ class BotEngineService:
                 {"rule_version": self._strategy_rule_version(strategy), "blocks": ["missing_symbol"], "live_guard": "disabled"},
             )
 
-        result = await self.db.execute(
-            select(PriceHistory)
-            .where(func.upper(PriceHistory.symbol) == symbol.upper())
-            .order_by(PriceHistory.timestamp.desc())
-            .limit(self._strategy_candle_limit(strategy))
+        timeframe = str(market_snapshot.get("requested_timeframe") or self._strategy_timeframe(strategy, instance))
+        candles, candle_source = await self._load_strategy_candles(
+            strategy,
+            symbol=symbol,
+            timeframe=timeframe,
+            limit=self._strategy_candle_limit(strategy),
+            ascending=False,
         )
-        candles = list(reversed(result.scalars().all()))
         data_quality = self._data_quality(candles)
         data_warnings = self._data_quality_warnings(data_quality)
         if len(candles) < 2:
@@ -621,9 +668,11 @@ class BotEngineService:
         latest_index = len(candles) - 1
         entry_passed, entry_evaluations = self._evaluate_rule_group(strategy.rule_config or {}, "entry", frames, latest_index)
         exit_passed, exit_evaluations = self._evaluate_rule_group(strategy.rule_config or {}, "exit", frames, latest_index)
-        latest_price = Decimal(str(candles[-1].price_usd))
+        latest_price = Decimal(str(_candle_close_value(candles[-1])))
         max_order_usd = Decimal(str(risk_config.get("max_order_usd", 100) or 100))
         max_position_usd = Decimal(str(risk_config.get("max_position_usd", 1000) or 1000))
+        risk_per_trade_percent = Decimal(str(risk_config.get("risk_per_trade_percent", 0) or 0))
+        max_exposure_per_trade_percent = Decimal(str(risk_config.get("max_exposure_per_trade_percent", 0) or 0))
         allow_averaging = str(risk_config.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
         max_daily_signals = int(risk_config.get("max_daily_signals", 20) or 0)
         today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
@@ -640,20 +689,57 @@ class BotEngineService:
         current_symbol_value = sum(
             Decimal(str(item.get("current_value_usd") or 0))
             for item in positions
-            if str(item.get("symbol") or "").upper() == symbol
+            if normalize_strategy_symbol(str(item.get("symbol") or "")) == symbol
+        )
+        alpha_stop = self._condition_value(frames, "bc_alpha_trend", "stop", latest_index)
+        stop_price = Decimal(str(alpha_stop)) if alpha_stop is not None and alpha_stop > 0 else Decimal("0")
+        stop_distance_percent = (
+            abs(latest_price - stop_price) / latest_price * Decimal("100")
+            if latest_price > 0 and stop_price > 0
+            else Decimal("0")
+        )
+        portfolio_capital = Decimal(str(market_snapshot.get("total_value_usd") or 0))
+        sizing_capital = portfolio_capital
+        sizing_capital_source = "portfolio_snapshot"
+        if sizing_capital <= 0:
+            sizing_capital = max_position_usd if max_position_usd > 0 else max_order_usd
+            sizing_capital_source = "risk_limit_fallback"
+        risk_amount = sizing_capital * risk_per_trade_percent / Decimal("100") if risk_per_trade_percent > 0 else Decimal("0")
+        risk_sized_notional = (
+            risk_amount / (stop_distance_percent / Decimal("100"))
+            if risk_amount > 0 and stop_distance_percent > 0
+            else max_order_usd
+        )
+        exposure_cap = (
+            sizing_capital * max_exposure_per_trade_percent / Decimal("100")
+            if max_exposure_per_trade_percent > 0 and sizing_capital > 0
+            else max_order_usd
         )
         action = BotSignalAction.HOLD
         reason = "Strategy v2 conditions did not pass"
         confidence = Decimal("0.25")
         notional = Decimal("0")
-        if exit_passed and current_symbol_value > 0:
+        stop_model = str(risk_config.get("stop_model") or "alpha_trend")
+        stop_exit = (
+            stop_model == "alpha_trend"
+            and current_symbol_value > 0
+            and stop_price > 0
+            and latest_price <= stop_price
+        )
+        if stop_exit:
+            action = BotSignalAction.SELL
+            notional = min(current_symbol_value, max_order_usd if max_order_usd > 0 else current_symbol_value)
+            confidence = Decimal("0.82")
+            reason = "AlphaTrend stop invalidated the open paper position"
+        elif exit_passed and current_symbol_value > 0:
             action = BotSignalAction.SELL
             notional = min(current_symbol_value, max_order_usd if max_order_usd > 0 else current_symbol_value)
             confidence = Decimal("0.78")
             reason = "Strategy v2 exit conditions passed"
         elif entry_passed and (current_symbol_value <= 0 or allow_averaging):
             action = BotSignalAction.BUY
-            notional = max_order_usd
+            available_capacity = max(Decimal("0"), max_position_usd - current_symbol_value) if max_position_usd > 0 else max_order_usd
+            notional = min(max_order_usd, risk_sized_notional, exposure_cap, available_capacity)
             confidence = Decimal("0.74")
             reason = "Strategy v2 entry conditions passed"
         elif entry_passed:
@@ -683,8 +769,19 @@ class BotEngineService:
             "signals_today": signal_count_today,
             "allowed_symbols": allowed_symbols,
             "allow_averaging": allow_averaging,
+            "timeframe": timeframe,
+            "candle_source": candle_source,
+            "stop_model": stop_model,
+            "alpha_trend_stop": _json_number(stop_price),
+            "stop_distance_percent": _json_number(stop_distance_percent),
+            "risk_per_trade_percent": _json_number(risk_per_trade_percent),
+            "sizing_capital_usd": _json_number(sizing_capital),
+            "sizing_capital_source": sizing_capital_source,
+            "risk_amount_usd": _json_number(risk_amount),
+            "sizing_model": "risk_distance" if risk_amount > 0 and stop_distance_percent > 0 else "max_order_fallback",
             "entry_passed": entry_passed,
             "exit_passed": exit_passed,
+            "stop_exit": stop_exit,
             "entry_conditions": entry_evaluations,
             "exit_conditions": exit_evaluations,
             "fallback_indicators": fallback_indicators,
@@ -704,12 +801,12 @@ class BotEngineService:
         }
         return decision, risk_snapshot
 
-    def _source_values(self, candles: list[PriceHistory], source: object = "close") -> list[float]:
+    def _source_values(self, candles: list[MarketCandle | PriceHistory], source: object = "close") -> list[float]:
         source_key = str(source or "close").lower()
-        close = [_safe_float(candle.price_usd) for candle in candles]
-        high = [_safe_float(candle.high_24h, close[index]) for index, candle in enumerate(candles)]
-        low = [_safe_float(candle.low_24h, close[index]) for index, candle in enumerate(candles)]
-        volume = [_safe_float(candle.volume_24h) for candle in candles]
+        close = [_safe_float(_candle_close_value(candle)) for candle in candles]
+        high = [_safe_float(_candle_high_value(candle, close[index]), close[index]) for index, candle in enumerate(candles)]
+        low = [_safe_float(_candle_low_value(candle, close[index]), close[index]) for index, candle in enumerate(candles)]
+        volume = [_safe_float(_candle_volume_value(candle)) for candle in candles]
         if source_key == "high":
             return high
         if source_key == "low":
@@ -1352,29 +1449,73 @@ class BotEngineService:
                     max_length = max(max_length, _safe_int(value, 1) * 4)
         return min(max_length, 5000)
 
-    def _data_quality(self, candles: list[PriceHistory]) -> dict:
+    def _strategy_timeframe(self, strategy: BotStrategy, instance: BotInstance | None = None) -> str:
+        return resolve_strategy_timeframe(strategy, instance)
+
+    async def _load_strategy_candles(
+        self,
+        strategy: BotStrategy,
+        *,
+        symbol: str,
+        timeframe: str,
+        limit: int,
+        period_start: datetime | None = None,
+        period_end: datetime | None = None,
+        ascending: bool = True,
+    ) -> tuple[list[MarketCandle | PriceHistory], str]:
+        normalized_symbol = normalize_strategy_symbol(symbol)
+        query = select(MarketCandle).where(
+            MarketCandle.symbol == normalized_symbol,
+            MarketCandle.timeframe == timeframe,
+            MarketCandle.is_closed == True,
+        )
+        if period_start is not None:
+            query = query.where(MarketCandle.close_time >= period_start)
+        if period_end is not None:
+            query = query.where(MarketCandle.close_time <= period_end)
+        order_column = MarketCandle.close_time.asc() if ascending else MarketCandle.close_time.desc()
+        result = await self.db.execute(query.order_by(order_column).limit(limit))
+        market_candles = result.scalars().all()
+        if market_candles:
+            return list(market_candles if ascending else reversed(market_candles)), "market_candles"
+
+        legacy_symbol = normalized_symbol.removesuffix("USDT").removesuffix("USDC").removesuffix("USD")
+        legacy_query = select(PriceHistory).where(func.upper(PriceHistory.symbol).in_([normalized_symbol, legacy_symbol]))
+        if period_start is not None:
+            legacy_query = legacy_query.where(PriceHistory.timestamp >= period_start)
+        if period_end is not None:
+            legacy_query = legacy_query.where(PriceHistory.timestamp <= period_end)
+        legacy_order = PriceHistory.timestamp.asc() if ascending else PriceHistory.timestamp.desc()
+        legacy_result = await self.db.execute(legacy_query.order_by(legacy_order).limit(limit))
+        legacy_candles = legacy_result.scalars().all()
+        return list(legacy_candles if ascending else reversed(legacy_candles)), "price_history_legacy"
+
+    def _data_quality(self, candles: list[MarketCandle | PriceHistory]) -> dict:
         total = len(candles)
         if total == 0:
             return {
                 "rows_total": 0,
-                "high_24h_coverage": 0.0,
-                "low_24h_coverage": 0.0,
-                "volume_24h_coverage": 0.0,
-                "ohlcv_source": "price_history",
+                "high_coverage": 0.0,
+                "low_coverage": 0.0,
+                "volume_coverage": 0.0,
+                "ohlcv_source": "unknown",
             }
+        is_market_candle = isinstance(candles[0], MarketCandle)
         return {
             "rows_total": total,
-            "high_24h_coverage": sum(1 for candle in candles if candle.high_24h is not None) / total,
-            "low_24h_coverage": sum(1 for candle in candles if candle.low_24h is not None) / total,
-            "volume_24h_coverage": sum(1 for candle in candles if candle.volume_24h is not None) / total,
-            "ohlcv_source": "price_history",
+            "high_coverage": sum(1 for candle in candles if _candle_high_value(candle, None) is not None) / total,
+            "low_coverage": sum(1 for candle in candles if _candle_low_value(candle, None) is not None) / total,
+            "volume_coverage": sum(1 for candle in candles if _candle_volume_value(candle) is not None) / total,
+            "ohlcv_source": "market_candles" if is_market_candle else "price_history_legacy",
         }
 
     def _data_quality_warnings(self, data_quality: dict) -> list[str]:
         warnings: list[str] = []
-        high_coverage = _safe_float(data_quality.get("high_24h_coverage"), 0.0)
-        low_coverage = _safe_float(data_quality.get("low_24h_coverage"), 0.0)
-        volume_coverage = _safe_float(data_quality.get("volume_24h_coverage"), 0.0)
+        high_coverage = _safe_float(data_quality.get("high_coverage"), 0.0)
+        low_coverage = _safe_float(data_quality.get("low_coverage"), 0.0)
+        volume_coverage = _safe_float(data_quality.get("volume_coverage"), 0.0)
+        if data_quality.get("ohlcv_source") == "price_history_legacy":
+            warnings.append("Using legacy PriceHistory ticker snapshots; BC AlphaTrend backtests are not statistically valid until market_candles are ingested")
         if high_coverage < 0.5 or low_coverage < 0.5:
             warnings.append("High/low coverage below 50%; range-based indicators are degraded until OHLCV candles are available")
         if volume_coverage < 0.5:
@@ -1501,13 +1642,15 @@ class BotEngineService:
         self.db.add(backtest)
         await self.db.flush()
 
-        query = select(PriceHistory).where(func.upper(PriceHistory.symbol) == symbol.upper())
-        if period_start is not None:
-            query = query.where(PriceHistory.timestamp >= period_start)
-        if period_end is not None:
-            query = query.where(PriceHistory.timestamp <= period_end)
-        result = await self.db.execute(query.order_by(PriceHistory.timestamp.asc()).limit(2000))
-        candles = result.scalars().all()
+        candles, candle_source = await self._load_strategy_candles(
+            strategy,
+            symbol=symbol,
+            timeframe=timeframe,
+            limit=2000,
+            period_start=period_start,
+            period_end=period_end,
+            ascending=True,
+        )
         if len(candles) < 2:
             backtest.status = BotBacktestStatus.FAILED
             backtest.error = "Not enough price history for backtest"
@@ -1546,10 +1689,11 @@ class BotEngineService:
         take_profit_percent = Decimal(str(risk.get("take_profit_percent", 0) or 0))
         trailing_stop_percent = Decimal(str(risk.get("trailing_stop_percent", 0) or 0))
         breakeven_activation_percent = Decimal(str(risk.get("breakeven_activation_percent", 0) or 0))
+        stop_model = str(risk.get("stop_model") or "alpha_trend")
         allow_averaging = str(risk.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
 
         for index, candle in enumerate(candles):
-            price = Decimal(str(candle.price_usd))
+            price = Decimal(str(_candle_close_value(candle)))
             if price <= 0:
                 continue
             if units > 0:
@@ -1580,6 +1724,11 @@ class BotEngineService:
                 if stop_loss_percent > 0 and drawdown_from_entry >= stop_loss_percent:
                     exit_passed = True
                     exit_reason = "stop_loss"
+                elif stop_model == "alpha_trend":
+                    alpha_stop = self._condition_value(frames, "bc_alpha_trend", "stop", index)
+                    if alpha_stop is not None and alpha_stop > 0 and price <= Decimal(str(alpha_stop)):
+                        exit_passed = True
+                        exit_reason = "alpha_trend_stop"
                 elif take_profit_percent > 0 and gain_percent >= take_profit_percent:
                     exit_passed = True
                     exit_reason = "take_profit"
@@ -1604,7 +1753,7 @@ class BotEngineService:
                 equity = cash
                 logs.append(
                     {
-                        "timestamp": candle.timestamp.isoformat(),
+                        "timestamp": _candle_timestamp(candle).isoformat(),
                         "action": "sell",
                         "reason": exit_reason,
                         "price": _json_number(price),
@@ -1638,7 +1787,7 @@ class BotEngineService:
                     equity = cash + units * price
                     logs.append(
                         {
-                            "timestamp": candle.timestamp.isoformat(),
+                            "timestamp": _candle_timestamp(candle).isoformat(),
                             "action": "buy",
                             "reason": "rule_entry",
                             "price": _json_number(price),
@@ -1648,7 +1797,7 @@ class BotEngineService:
                         }
                     )
 
-        final_price = candles[-1].price_usd
+        final_price = Decimal(str(_candle_close_value(candles[-1])))
         final_equity = cash + units * final_price
         total_return = (
             (final_equity - Decimal(str(initial_capital_usd))) / Decimal(str(initial_capital_usd)) * Decimal("100")
@@ -1670,6 +1819,7 @@ class BotEngineService:
             "fallback_indicators": fallback_indicators,
             "data_quality": data_quality,
             "data_warnings": data_warnings,
+            "candle_source": candle_source,
         }
         backtest.metrics = {
             "max_drawdown_percent": _json_number(max_drawdown),
@@ -1681,7 +1831,7 @@ class BotEngineService:
             "entry_rule_logic": (rule_config.get("entry") or {}).get("logic", rule_config.get("logic", "AND")) if isinstance(rule_config.get("entry"), dict) else rule_config.get("logic", "AND"),
             "exit_rule_logic": (rule_config.get("exit") or {}).get("logic", rule_config.get("logic", "AND")) if isinstance(rule_config.get("exit"), dict) else rule_config.get("logic", "AND"),
             "requested_timeframe": timeframe,
-            "timeframe_filter_applied": False,
+            "timeframe_filter_applied": candle_source == "market_candles",
             "data_quality": data_quality,
         }
         # Keep the full trade counters in result_summary while capping stored

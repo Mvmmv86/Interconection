@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, Request
@@ -12,12 +13,44 @@ from app.core.config import settings
 from app.core.exceptions import InterconectionException
 
 
+async def _run_bot_scheduler_loop() -> None:
+    """Run active paper bots periodically when enabled by environment."""
+    from app.db.session import async_session_maker
+    from app.services.bot_scheduler_service import BotSchedulerService
+
+    interval = max(15, int(settings.bot_scheduler_interval_seconds or 60))
+    while True:
+        try:
+            async with async_session_maker() as session:
+                service = BotSchedulerService(session)
+                await service.run_due_paper_cycles(
+                    limit=settings.bot_scheduler_batch_limit,
+                    candle_limit=settings.bot_scheduler_candle_limit,
+                )
+                await session.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Bot scheduler cycle failed: {exc}")
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan handler."""
     # Startup
     print(f"Starting {settings.app_name} API...")
-    yield
+    bot_scheduler_task: asyncio.Task | None = None
+    if settings.bot_scheduler_enabled:
+        bot_scheduler_task = asyncio.create_task(_run_bot_scheduler_loop())
+        print("Bot scheduler loop enabled")
+    try:
+        yield
+    finally:
+        if bot_scheduler_task is not None:
+            bot_scheduler_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await bot_scheduler_task
     # Shutdown
     print(f"Shutting down {settings.app_name} API...")
 

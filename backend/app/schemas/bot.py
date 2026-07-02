@@ -348,3 +348,44 @@ class BotLiveEnableRequest(BaseSchema):
 
     confirm_risk: bool = False
     reason: Optional[str] = None
+
+
+class BotMarketCandleSyncRequest(BaseSchema):
+    """Admin request to ingest exchange OHLCV candles."""
+
+    exchange_id: UUID
+    symbols: list[str] = Field(min_length=1)
+    timeframes: list[str] = Field(default_factory=lambda: ["1h"])
+    limit: int = Field(default=300, ge=1, le=1000)
+    market_type: str = Field(default="spot", max_length=32)
+
+
+class BotMarketCandleSyncResponse(BaseSchema):
+    """Result of an OHLCV ingestion run."""
+
+    exchange_id: str
+    exchange: str
+    requested: int
+    stored: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class BotSchedulerRunRequest(BaseSchema):
+    """Admin request to run due paper bot cycles."""
+
+    organization_id: Optional[UUID] = None
+    limit: int = Field(default=50, ge=1, le=200)
+    candle_limit: int = Field(default=300, ge=50, le=1000)
+
+
+class BotSchedulerRunResponse(BaseSchema):
+    """Summary of a scheduler batch."""
+
+    processed: int
+    cycle_attempt_count: int = 0
+    run_count: int
+    skipped_count: int
+    error_count: int
+    runs: list[dict[str, Any]] = Field(default_factory=list)
+    skipped: list[dict[str, Any]] = Field(default_factory=list)
+    errors: list[dict[str, Any]] = Field(default_factory=list)

@@ -159,6 +159,25 @@ class ExchangeOrderResult(BaseModel):
     raw_response: Dict[str, Any] = Field(default_factory=dict)
 
 
+class MarketCandleData(BaseModel):
+    """Normalized OHLCV candle returned by exchange market-data endpoints."""
+
+    exchange: str
+    symbol: str
+    timeframe: str
+    open_time: datetime
+    close_time: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal = Field(default=Decimal("0"))
+    quote_volume: Decimal = Field(default=Decimal("0"))
+    trade_count: Optional[int] = None
+    is_closed: bool = True
+    raw_response: Dict[str, Any] = Field(default_factory=dict)
+
+
 class SubAccount(BaseModel):
     """Sub-account information."""
 
@@ -392,6 +411,21 @@ class BaseExchangeAdapter(ABC):
     ) -> ExchangeOrderResult:
         """Fetch order status from the exchange."""
         raise NotImplementedError(f"{self.exchange_name} does not support order lookup")
+
+    async def get_ohlcv_candles(
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        limit: int = 200,
+        category: str = "spot",
+    ) -> List[MarketCandleData]:
+        """
+        Fetch normalized OHLCV candles for strategy engines.
+
+        Public market data is intentionally exposed through adapters so bot
+        ingestion can reuse exchange-specific symbol and interval handling.
+        """
+        raise NotImplementedError(f"{self.exchange_name} does not support OHLCV candles")
 
     async def get_account_summary(self, include_subaccounts: bool = False) -> ExchangeAccountSummary:
         """

@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
 
+    # Bot scheduler
+    bot_scheduler_enabled: bool = False
+    bot_scheduler_interval_seconds: int = 60
+    bot_scheduler_batch_limit: int = 50
+    bot_scheduler_candle_limit: int = 300
+
     # External APIs
     coingecko_api_key: str = ""
     infura_api_key: str = ""
