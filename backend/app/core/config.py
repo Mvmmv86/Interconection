@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     bot_scheduler_interval_seconds: int = 60
     bot_scheduler_batch_limit: int = 50
     bot_scheduler_candle_limit: int = 300
+    bot_market_scanner_enabled: bool = False
+    bot_market_scanner_interval_seconds: int = 900
+    bot_market_scanner_exchange: str = "bingx"
+    bot_market_scanner_market_type: str = "futures"
+    bot_market_scanner_quote_asset: str = "USDT"
+    bot_market_scanner_universe_limit: int = 120
+    bot_market_scanner_candle_symbol_limit: int = 50
+    bot_market_scanner_top_n: int = 50
 
     # External APIs
     coingecko_api_key: str = ""

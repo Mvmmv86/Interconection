@@ -35,15 +35,45 @@ async def _run_bot_scheduler_loop() -> None:
         await asyncio.sleep(interval)
 
 
+async def _run_bot_market_scanner_loop() -> None:
+    """Refresh public market scanner snapshots periodically when enabled."""
+    from app.db.session import async_session_maker
+    from app.services.market_scanner_bootstrap_service import MarketScannerBootstrapService
+
+    interval = max(300, int(settings.bot_market_scanner_interval_seconds or 900))
+    while True:
+        try:
+            async with async_session_maker() as session:
+                service = MarketScannerBootstrapService(session)
+                await service.bootstrap(
+                    exchange=settings.bot_market_scanner_exchange,
+                    market_type=settings.bot_market_scanner_market_type,
+                    quote_asset=settings.bot_market_scanner_quote_asset,
+                    universe_limit=settings.bot_market_scanner_universe_limit,
+                    candle_symbol_limit=settings.bot_market_scanner_candle_symbol_limit,
+                    top_n=settings.bot_market_scanner_top_n,
+                )
+                await session.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Bot market scanner cycle failed: {exc}")
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     """Application lifespan handler."""
     # Startup
     print(f"Starting {settings.app_name} API...")
     bot_scheduler_task: asyncio.Task | None = None
+    bot_market_scanner_task: asyncio.Task | None = None
     if settings.bot_scheduler_enabled:
         bot_scheduler_task = asyncio.create_task(_run_bot_scheduler_loop())
         print("Bot scheduler loop enabled")
+    if settings.bot_market_scanner_enabled:
+        bot_market_scanner_task = asyncio.create_task(_run_bot_market_scanner_loop())
+        print("Bot market scanner loop enabled")
     try:
         yield
     finally:
@@ -51,6 +81,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
             bot_scheduler_task.cancel()
             with suppress(asyncio.CancelledError):
                 await bot_scheduler_task
+        if bot_market_scanner_task is not None:
+            bot_market_scanner_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await bot_market_scanner_task
     # Shutdown
     print(f"Shutting down {settings.app_name} API...")
 

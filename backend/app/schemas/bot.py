@@ -409,6 +409,38 @@ class BotMarketRankingGenerateRequest(BaseSchema):
     only_tradeable: bool = True
 
 
+class BotMarketScannerBootstrapRequest(BaseSchema):
+    """Admin request to refresh public market scanner data end-to-end."""
+
+    exchange: str = Field(default="bingx", max_length=32)
+    market_type: str = Field(default="futures", max_length=24)
+    quote_asset: str = Field(default="USDT", max_length=24)
+    universe_limit: int = Field(default=120, ge=1, le=500)
+    candle_symbol_limit: int = Field(default=50, ge=1, le=200)
+    candle_timeframes: list[str] = Field(default_factory=lambda: ["1h", "1d"])
+    ranking_timeframes: list[str] = Field(default_factory=lambda: ["1h", "24h", "7d", "30d"])
+    directions: list[str] = Field(default_factory=lambda: ["gainers", "losers"])
+    top_n: int = Field(default=50, ge=1, le=100)
+    min_quote_volume: float = Field(default=0, ge=0)
+    min_price: Optional[float] = Field(default=None, ge=0)
+    max_price: Optional[float] = Field(default=None, ge=0)
+
+
+class BotMarketScannerBootstrapResponse(BaseSchema):
+    """End-to-end public scanner refresh result."""
+
+    exchange: str
+    market_type: str
+    status: str
+    universe_count: int = 0
+    candle_symbol_count: int = 0
+    candles_stored: int = 0
+    snapshots_generated: int = 0
+    snapshot_item_count: int = 0
+    reason: Optional[str] = None
+    errors: list[str] = Field(default_factory=list)
+
+
 class BotMarketRankingItemResponse(BaseSchema):
     """One ranked market asset."""
 

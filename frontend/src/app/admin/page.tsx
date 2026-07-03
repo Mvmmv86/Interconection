@@ -14,6 +14,7 @@ import {
   LineChart,
   LogOut,
   Moon,
+  RefreshCw,
   Shield,
   Sparkles,
   Sun,
@@ -36,6 +37,7 @@ import {
   type BotBacktest,
   type BotIndicator,
   type BotStrategy,
+  type BotMarketScannerBootstrap,
   type BotTemplate,
 } from '@/lib/api/client';
 import { useAuth } from '@/contexts/auth-context';
@@ -239,6 +241,8 @@ export default function PlatformAdminPage() {
   const [botBacktests, setBotBacktests] = useState<BotBacktest[]>([]);
   const [botTemplates, setBotTemplates] = useState<BotTemplate[]>([]);
   const [botInstances, setBotInstances] = useState<BotInstance[]>([]);
+  const [marketScannerResult, setMarketScannerResult] = useState<BotMarketScannerBootstrap | null>(null);
+  const [isBootstrappingScanner, setIsBootstrappingScanner] = useState(false);
   const [invoiceForm, setInvoiceForm] = useState({ organizationId: '', amount: '', dueDate: '', notes: '' });
   const [paymentForm, setPaymentForm] = useState({ invoiceId: '', amount: '', notes: '' });
   const [botTemplateForm, setBotTemplateForm] = useState({
@@ -904,6 +908,31 @@ export default function PlatformAdminPage() {
       return;
     }
     await reloadCurrentAdminData();
+  };
+
+  const bootstrapMarketScanner = async () => {
+    setError(null);
+    setIsBootstrappingScanner(true);
+    const result = await api.bootstrapAdminBotMarketScanner({
+      exchange: 'bingx',
+      market_type: 'futures',
+      quote_asset: 'USDT',
+      universe_limit: 120,
+      candle_symbol_limit: 50,
+      candle_timeframes: ['1h', '1d'],
+      ranking_timeframes: ['1h', '24h', '7d', '30d'],
+      directions: ['gainers', 'losers'],
+      top_n: 50,
+    });
+    setIsBootstrappingScanner(false);
+    if (!result.success || !result.data) {
+      setError(result.error || 'Nao foi possivel atualizar o scanner de mercado');
+      return;
+    }
+    setMarketScannerResult(result.data);
+    if (result.data.status === 'failed') {
+      setError(result.data.errors[0] || 'Scanner de mercado falhou');
+    }
   };
 
   if (isAuthLoading) {
@@ -2137,6 +2166,50 @@ export default function PlatformAdminPage() {
                   </Card>
                 ))}
               </div>
+
+              <Card variant="glass">
+                <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <CardTitle>Scanner de mercado</CardTitle>
+                    <p className="mt-1 text-caption text-text-muted">
+                      Atualiza universo BingX Futuros, candles 1h/1d e snapshots 1h, 24h, 7d e 30d usados na aba Bots.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={isBootstrappingScanner}
+                    onClick={bootstrapMarketScanner}
+                    className="gap-2"
+                  >
+                    <RefreshCw className={cn('h-4 w-4', isBootstrappingScanner && 'animate-spin')} />
+                    {isBootstrappingScanner ? 'Atualizando...' : 'Atualizar ranking'}
+                  </Button>
+                </CardHeader>
+                {marketScannerResult && (
+                  <CardContent>
+                    <div className="grid gap-3 md:grid-cols-5">
+                      {[
+                        ['Status', marketScannerResult.status],
+                        ['Universo', marketScannerResult.universe_count],
+                        ['Ativos com candle', marketScannerResult.candle_symbol_count],
+                        ['Candles salvos', marketScannerResult.candles_stored],
+                        ['Snapshots', marketScannerResult.snapshots_generated],
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-3">
+                          <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">{label}</p>
+                          <p className="mt-1 text-heading-sm text-text-primary">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {marketScannerResult.errors.length > 0 && (
+                      <p className="mt-3 rounded-xl border border-status-error/20 bg-status-error/10 px-3 py-2 text-caption text-status-error">
+                        {marketScannerResult.errors.slice(0, 2).join(' | ')}
+                      </p>
+                    )}
+                  </CardContent>
+                )}
+              </Card>
 
               <Card variant="glass">
                 <CardHeader>

@@ -651,6 +651,19 @@ interface BotMarketRanking {
   items: BotMarketRankingItem[];
 }
 
+interface BotMarketScannerBootstrap {
+  exchange: string;
+  market_type: string;
+  status: string;
+  universe_count: number;
+  candle_symbol_count: number;
+  candles_stored: number;
+  snapshots_generated: number;
+  snapshot_item_count: number;
+  reason: string | null;
+  errors: string[];
+}
+
 interface BotMarketUniverseAsset {
   id: string;
   exchange: string;
@@ -1364,6 +1377,26 @@ class ApiClient {
     });
   }
 
+  async bootstrapAdminBotMarketScanner(data?: {
+    exchange?: string;
+    market_type?: string;
+    quote_asset?: string;
+    universe_limit?: number;
+    candle_symbol_limit?: number;
+    candle_timeframes?: string[];
+    ranking_timeframes?: string[];
+    directions?: string[];
+    top_n?: number;
+    min_quote_volume?: number;
+    min_price?: number | null;
+    max_price?: number | null;
+  }): Promise<ApiResponse<BotMarketScannerBootstrap>> {
+    return this.request<BotMarketScannerBootstrap>('/api/v1/admin/bots/market-scanner/bootstrap', {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    });
+  }
+
   async updateAdminBotInstance(
     instanceId: string,
     data: Partial<{ status: string; last_error: string | null }>
@@ -1771,6 +1804,7 @@ export type {
   BotBacktest,
   BotMarketRanking,
   BotMarketRankingItem,
+  BotMarketScannerBootstrap,
   BotMarketUniverseAsset,
   AdminClient,
   AdminAuditLog,

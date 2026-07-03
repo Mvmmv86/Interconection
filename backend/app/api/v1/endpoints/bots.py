@@ -56,6 +56,8 @@ from app.schemas.bot import (
     BotMarketRankingGenerateRequest,
     BotMarketRankingItemResponse,
     BotMarketRankingResponse,
+    BotMarketScannerBootstrapRequest,
+    BotMarketScannerBootstrapResponse,
     BotMarketUniverseAssetResponse,
     BotRunRequest,
     BotRunResponse,
@@ -74,6 +76,7 @@ from app.services.bot_engine_service import BotEngineService
 from app.services.bot_scheduler_service import BotSchedulerService
 from app.services.market_data_ingestion_service import MarketDataIngestionService, normalize_strategy_symbol
 from app.services.market_ranking_service import MarketRankingService
+from app.services.market_scanner_bootstrap_service import MarketScannerBootstrapService
 from app.services.plan_limits import enforce_plan_limit
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("bots"))])
@@ -1407,6 +1410,47 @@ async def generate_admin_market_ranking(
         direction=data.direction,
         top_n=data.top_n,
     )
+
+
+@admin_router.post("/market-scanner/bootstrap", response_model=BotMarketScannerBootstrapResponse)
+async def bootstrap_admin_market_scanner(
+    data: BotMarketScannerBootstrapRequest,
+    superuser: SuperUser,
+    db: DBSession,
+    request: Request,
+) -> BotMarketScannerBootstrapResponse:
+    """Refresh public market universe, candles and ranking snapshots in one safe cycle."""
+    service = MarketScannerBootstrapService(db)
+    try:
+        result = await service.bootstrap(
+            exchange=data.exchange,
+            market_type=data.market_type,
+            quote_asset=data.quote_asset,
+            universe_limit=data.universe_limit,
+            candle_symbol_limit=data.candle_symbol_limit,
+            candle_timeframes=data.candle_timeframes,
+            ranking_timeframes=data.ranking_timeframes,
+            directions=data.directions,
+            top_n=data.top_n,
+            min_quote_volume=Decimal(str(data.min_quote_volume)),
+            min_price=Decimal(str(data.min_price)) if data.min_price is not None else None,
+            max_price=Decimal(str(data.max_price)) if data.max_price is not None else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    await record_audit_event(
+        db,
+        organization_id=superuser.organization_id,
+        user_id=superuser.id,
+        action=AuditAction.UPDATE,
+        resource_type="market_scanner",
+        resource_id=superuser.id,
+        description="Platform admin bootstrapped bot market scanner",
+        metadata=result,
+        request=request,
+    )
+    return BotMarketScannerBootstrapResponse(**result)
 
 
 @admin_router.post("/scheduler/run-paper", response_model=BotSchedulerRunResponse)
