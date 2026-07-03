@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Bot, Pause, Play, RefreshCw, ShieldCheck, Sparkles, Zap } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bot, Pause, Play, RefreshCw, ShieldCheck, Sparkles, Zap } from 'lucide-react';
 import {
   api,
   type BotInstance,
+  type BotMarketRanking,
+  type BotMarketUniverseAsset,
   type BotSignal,
   type BotStrategy,
   type BotTemplate,
@@ -26,6 +28,9 @@ type TemplateConfig = {
   maxDailySignals: string;
   allowedSymbols: string;
 };
+
+type RankingDirection = 'gainers' | 'losers';
+type RankingTimeframe = '1h' | '24h' | '7d' | '30d';
 
 const defaultTemplateConfig: TemplateConfig = {
   clientId: '',
@@ -54,6 +59,32 @@ function formatDateTime(value: string | null | undefined) {
   return new Date(value).toLocaleString('pt-BR');
 }
 
+function formatCompactUsd(value: number | null | undefined) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return '$0';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: Math.abs(amount) >= 100000 ? 'compact' : 'standard',
+    maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 6,
+  }).format(amount);
+}
+
+function formatCompactNumber(value: number | null | undefined) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return '0';
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatPercent(value: number | null | undefined) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return '0.00%';
+  return `${amount >= 0 ? '+' : ''}${amount.toFixed(2)}%`;
+}
+
 export default function BotsPage() {
   const { can } = useAuth();
   const [templates, setTemplates] = useState<BotTemplate[]>([]);
@@ -63,9 +94,22 @@ export default function BotsPage() {
   const [configByTemplate, setConfigByTemplate] = useState<Record<string, TemplateConfig>>({});
   const [exchangesByClient, setExchangesByClient] = useState<Record<string, ClientPortfolioData['exchanges']>>({});
   const [signalsByInstance, setSignalsByInstance] = useState<Record<string, BotSignal[]>>({});
+  const [marketRanking, setMarketRanking] = useState<BotMarketRanking | null>(null);
+  const [universeAssets, setUniverseAssets] = useState<BotMarketUniverseAsset[]>([]);
+  const [rankingDirection, setRankingDirection] = useState<RankingDirection>('gainers');
+  const [rankingTimeframe, setRankingTimeframe] = useState<RankingTimeframe>('24h');
+  const [rankingExchange, setRankingExchange] = useState('bingx');
+  const [rankingMarketType, setRankingMarketType] = useState('futures');
+  const [rankingQuoteAsset, setRankingQuoteAsset] = useState('USDT');
+  const [rankingMinVolume, setRankingMinVolume] = useState('0');
+  const [rankingMinPrice, setRankingMinPrice] = useState('');
+  const [rankingMaxPrice, setRankingMaxPrice] = useState('');
+  const [rankingTopN, setRankingTopN] = useState('10');
+  const [isRankingLoading, setIsRankingLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunningId, setIsRunningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const didLoadInitialRanking = useRef(false);
 
   const clientOptions = useMemo(
     () => [
@@ -88,6 +132,12 @@ export default function BotsPage() {
     ],
     [strategies]
   );
+
+  const universeBySymbol = useMemo(() => {
+    const map = new Map<string, BotMarketUniverseAsset>();
+    universeAssets.forEach((asset) => map.set(asset.symbol, asset));
+    return map;
+  }, [universeAssets]);
 
   const loadBots = useCallback(async () => {
     setIsLoading(true);
@@ -116,9 +166,57 @@ export default function BotsPage() {
     setIsLoading(false);
   }, []);
 
+  const loadMarketRanking = useCallback(async () => {
+    setIsRankingLoading(true);
+    setError(null);
+    const minVolume = Number.parseFloat(rankingMinVolume.replace(',', '.'));
+    const minPrice = Number.parseFloat(rankingMinPrice.replace(',', '.'));
+    const maxPrice = Number.parseFloat(rankingMaxPrice.replace(',', '.'));
+    const result = await api.getBotMarketRanking({
+      exchange: rankingExchange,
+      market_type: rankingMarketType,
+      timeframe: rankingTimeframe,
+      direction: rankingDirection,
+      top_n: Number(rankingTopN),
+      min_quote_volume: Number.isFinite(minVolume) ? minVolume : 0,
+      min_price: Number.isFinite(minPrice) ? minPrice : undefined,
+      max_price: Number.isFinite(maxPrice) ? maxPrice : undefined,
+      quote_asset: rankingQuoteAsset,
+    });
+    setIsRankingLoading(false);
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel carregar scanner de mercado');
+      return;
+    }
+    setMarketRanking(result.data || null);
+  }, [rankingDirection, rankingExchange, rankingMarketType, rankingMaxPrice, rankingMinPrice, rankingMinVolume, rankingQuoteAsset, rankingTimeframe, rankingTopN]);
+
+  const loadMarketUniverse = useCallback(async () => {
+    const result = await api.getBotMarketUniverse({
+      exchange: rankingExchange,
+      market_type: rankingMarketType,
+      quote_asset: rankingQuoteAsset,
+      only_tradeable: true,
+      limit: 250,
+    });
+    if (result.success) {
+      setUniverseAssets(result.data || []);
+    }
+  }, [rankingExchange, rankingMarketType, rankingQuoteAsset]);
+
   useEffect(() => {
     loadBots();
   }, [loadBots]);
+
+  useEffect(() => {
+    if (didLoadInitialRanking.current) return;
+    didLoadInitialRanking.current = true;
+    loadMarketRanking();
+  }, [loadMarketRanking]);
+
+  useEffect(() => {
+    loadMarketUniverse();
+  }, [loadMarketUniverse]);
 
   const getTemplateConfig = (templateId: string): TemplateConfig => (
     configByTemplate[templateId] || defaultTemplateConfig
@@ -167,6 +265,13 @@ export default function BotsPage() {
       setError('Selecione uma carteira para ativar o bot');
       return;
     }
+    const manualSymbols = splitCsv(config.allowedSymbols).map((item) => item.toUpperCase());
+    const rankingSymbols = (marketRanking?.items || []).map((item) => item.base_asset.toUpperCase());
+    if (manualSymbols.length === 0 && (!marketRanking?.snapshot_id || rankingSymbols.length === 0)) {
+      setError('Gere ou carregue um ranking antes de ativar o bot com cesta dinamica, ou informe simbolos manuais.');
+      return;
+    }
+    const allowedSymbols = manualSymbols.length > 0 ? manualSymbols : rankingSymbols;
     const result = await api.createBotInstance({
       template_id: template.id,
       client_id: config.clientId,
@@ -179,7 +284,22 @@ export default function BotsPage() {
         max_order_usd: asNumber(config.maxOrderUsd, 100),
         max_position_usd: asNumber(config.maxPositionUsd, 1000),
         max_daily_signals: Math.max(0, Math.floor(asNumber(config.maxDailySignals, 20))),
-        allowed_symbols: splitCsv(config.allowedSymbols).map((item) => item.toUpperCase()),
+        allowed_symbols: allowedSymbols,
+        market_basket: manualSymbols.length > 0
+          ? { source: 'manual' }
+          : {
+              source: 'market_ranking',
+              snapshot_id: marketRanking?.snapshot_id || null,
+              exchange: rankingExchange,
+              market_type: rankingMarketType,
+              timeframe: rankingTimeframe,
+              direction: rankingDirection,
+              top_n: Number(rankingTopN),
+              min_quote_volume: Number.parseFloat(rankingMinVolume.replace(',', '.')) || 0,
+              min_price: rankingMinPrice ? Number.parseFloat(rankingMinPrice.replace(',', '.')) : null,
+              max_price: rankingMaxPrice ? Number.parseFloat(rankingMaxPrice.replace(',', '.')) : null,
+              quote_asset: rankingQuoteAsset,
+            },
       },
     });
     if (!result.success) {
@@ -258,6 +378,199 @@ export default function BotsPage() {
           ))}
         </div>
 
+        <Card variant="glass">
+          <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <CardTitle>Scanner de mercado</CardTitle>
+              <p className="mt-1 text-caption text-text-muted">
+                Ranking de ativos por performance para alimentar cestas de monitoramento dos bots.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={rankingExchange}
+                options={[
+                  { value: 'bingx', label: 'BingX' },
+                  { value: 'bybit', label: 'Bybit' },
+                ]}
+                onChange={(event) => setRankingExchange(event.target.value)}
+                className="h-9 w-28 py-0 text-caption"
+              />
+              <Select
+                value={rankingMarketType}
+                options={[
+                  { value: 'futures', label: 'Futuros' },
+                  { value: 'spot', label: 'Spot' },
+                ]}
+                onChange={(event) => setRankingMarketType(event.target.value)}
+                className="h-9 w-28 py-0 text-caption"
+              />
+              <Select
+                value={rankingQuoteAsset}
+                options={[
+                  { value: 'USDT', label: 'USDT' },
+                  { value: 'USDC', label: 'USDC' },
+                  { value: 'USD', label: 'USD' },
+                ]}
+                onChange={(event) => setRankingQuoteAsset(event.target.value)}
+                className="h-9 w-24 py-0 text-caption"
+              />
+              <Select
+                value={rankingTopN}
+                options={[
+                  { value: '10', label: 'Top 10' },
+                  { value: '20', label: 'Top 20' },
+                  { value: '50', label: 'Top 50' },
+                ]}
+                onChange={(event) => setRankingTopN(event.target.value)}
+                className="h-9 w-28 py-0 text-caption"
+              />
+              <Button type="button" size="sm" variant="secondary" onClick={loadMarketRanking}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Aplicar filtros
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap gap-2">
+                {(['1h', '24h', '7d', '30d'] as RankingTimeframe[]).map((timeframe) => (
+                  <button
+                    key={timeframe}
+                    type="button"
+                    onClick={() => setRankingTimeframe(timeframe)}
+                    className={`rounded-lg px-3 py-2 text-caption font-semibold transition ${
+                      rankingTimeframe === timeframe
+                        ? 'bg-accent-blue text-white shadow-sm'
+                        : 'border border-border-subtle bg-background-primary text-text-secondary hover:border-accent-blue/50 hover:text-accent-blue'
+                    }`}
+                  >
+                    {timeframe}
+                  </button>
+                ))}
+              </div>
+              <div className="flex rounded-xl border border-border-subtle bg-background-primary p-1">
+                {([
+                  ['gainers', 'Altas', ArrowUpRight],
+                  ['losers', 'Quedas', ArrowDownRight],
+                ] as const).map(([direction, label, Icon]) => (
+                  <button
+                    key={direction}
+                    type="button"
+                    onClick={() => setRankingDirection(direction)}
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-caption font-semibold transition ${
+                      rankingDirection === direction
+                        ? direction === 'gainers'
+                          ? 'bg-status-success/15 text-status-success'
+                          : 'bg-status-error/15 text-status-error'
+                        : 'text-text-muted hover:text-text-primary'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mb-4 grid gap-3 md:grid-cols-3">
+              <input
+                value={rankingMinVolume}
+                onChange={(event) => setRankingMinVolume(event.target.value)}
+                placeholder="Volume minimo em USDT"
+                className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+              />
+              <input
+                value={rankingMinPrice}
+                onChange={(event) => setRankingMinPrice(event.target.value)}
+                placeholder="Preco minimo"
+                className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+              />
+              <input
+                value={rankingMaxPrice}
+                onChange={(event) => setRankingMaxPrice(event.target.value)}
+                placeholder="Preco maximo"
+                className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+              />
+            </div>
+            <div className="mb-4 flex flex-wrap gap-2 text-caption text-text-muted">
+              <span className="rounded-lg border border-border-subtle bg-background-primary px-3 py-2">
+                Universo elegivel: {universeAssets.length || 'aguardando sync'}
+              </span>
+              <span className="rounded-lg border border-border-subtle bg-background-primary px-3 py-2">
+                Fonte: candles normalizados + snapshots auditaveis
+              </span>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-border-subtle bg-background-secondary/50">
+              <div className="min-w-[980px]">
+                <div className="grid grid-cols-[48px_1.2fr_1fr_0.7fr_0.7fr_0.7fr_0.7fr_1fr_0.8fr] gap-3 border-b border-border-subtle px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-muted">
+                  <span>#</span>
+                  <span>Ativo</span>
+                  <span>Preco</span>
+                  <span>1h</span>
+                  <span>24h</span>
+                  <span>7d</span>
+                  <span>30d</span>
+                  <span>Volume</span>
+                  <span>Fonte</span>
+                </div>
+                {isRankingLoading && (
+                  <div className="flex items-center justify-center gap-2 px-4 py-8 text-body-sm text-text-muted">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Carregando ranking...
+                  </div>
+                )}
+                {!isRankingLoading && (!marketRanking || marketRanking.items.length === 0) && (
+                  <div className="px-4 py-8 text-center">
+                    <BarChart3 className="mx-auto mb-3 h-8 w-8 text-text-muted" />
+                    <p className="text-body-sm text-text-secondary">Nenhum snapshot de ranking gerado ainda.</p>
+                    <p className="mt-1 text-caption text-text-tertiary">
+                      Gere candles e snapshots pelo admin para o scanner alimentar a cesta dos bots.
+                    </p>
+                  </div>
+                )}
+                {!isRankingLoading && marketRanking?.items.map((item) => (
+                  <div
+                    key={item.id}
+                    className="grid grid-cols-[48px_1.2fr_1fr_0.7fr_0.7fr_0.7fr_0.7fr_1fr_0.8fr] gap-3 border-b border-border-subtle/70 px-4 py-3 text-body-sm last:border-b-0 hover:bg-background-primary/70"
+                  >
+                    <span className="font-semibold text-text-muted">{item.rank}</span>
+                    <div>
+                      <p className="font-semibold text-text-primary">{item.base_asset}</p>
+                      <p className="text-caption text-text-tertiary">{item.symbol}</p>
+                    </div>
+                    <span className="font-semibold text-text-primary">{formatCompactUsd(universeBySymbol.get(item.symbol)?.last_price || item.price)}</span>
+                    {(['1h', '24h', '7d', '30d'] as RankingTimeframe[]).map((timeframe) => {
+                      const universe = universeBySymbol.get(item.symbol);
+                      const value = timeframe === '1h'
+                        ? universe?.change_1h_percent
+                        : timeframe === '24h'
+                          ? universe?.change_24h_percent
+                          : timeframe === '7d'
+                            ? universe?.change_7d_percent
+                            : universe?.change_30d_percent;
+                      const resolved = value ?? (timeframe === rankingTimeframe ? item.change_percent : null);
+                      return (
+                        <span
+                          key={timeframe}
+                          className={`font-semibold ${Number(resolved || 0) >= 0 ? 'text-status-success' : 'text-status-error'}`}
+                        >
+                          {resolved === null ? '-' : formatPercent(resolved)}
+                        </span>
+                      );
+                    })}
+                    <span className="text-text-secondary">{formatCompactNumber(item.quote_volume)}</span>
+                    <div className="text-caption text-text-muted">
+                      <p className="uppercase">{marketRanking.exchange}</p>
+                      <p>{formatDateTime(item.candle_close_time)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
           <Card variant="glass">
             <CardHeader>
@@ -284,6 +597,8 @@ export default function BotsPage() {
                   ? supportedExchangeKeys.map((item) => item.toUpperCase()).join(' ou ')
                   : 'exchange';
                 const requiresExchange = supportedExchangeKeys.length > 0;
+                const hasManualSymbols = splitCsv(config.allowedSymbols).length > 0;
+                const hasScannerBasket = Boolean(marketRanking?.snapshot_id && marketRanking.items.length > 0);
                 const exchangeOptions = [
                   { value: '', label: supportedExchangeKeys.length ? `Selecione ${supportedExchangeLabel}` : 'Exchange opcional' },
                   ...compatibleExchanges.map((exchange) => ({
@@ -320,7 +635,12 @@ export default function BotsPage() {
                         </div>
                         <Button
                           type="button"
-                          disabled={!can('bots:activate') || !config.clientId || (requiresExchange && !config.exchangeId)}
+                          disabled={
+                            !can('bots:activate')
+                            || !config.clientId
+                            || (requiresExchange && !config.exchangeId)
+                            || (!hasManualSymbols && !hasScannerBasket)
+                          }
                           onClick={() => activateBot(template)}
                         >
                           <Zap className="h-4 w-4" />
@@ -369,12 +689,17 @@ export default function BotsPage() {
                       <input
                         value={config.allowedSymbols}
                         onChange={(event) => updateTemplateConfig(template.id, { allowedSymbols: event.target.value })}
-                        placeholder="Simbolos permitidos separados por virgula. Ex: BTC, ETH, SOL"
+                        placeholder="Simbolos manuais. Vazio usa a cesta do scanner atual. Ex: BTC, ETH, SOL"
                         className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                       />
                       {config.clientId && supportedExchangeKeys.length > 0 && compatibleExchanges.length === 0 && (
                         <p className="text-caption text-status-warning">
                           Esta carteira ainda nao tem conexao ativa {supportedExchangeLabel}. Conecte uma exchange compativel em Positions &gt; Exchanges antes de vincular o bot.
+                        </p>
+                      )}
+                      {!hasManualSymbols && !hasScannerBasket && (
+                        <p className="text-caption text-status-warning">
+                          Carregue um ranking no Scanner de mercado ou informe simbolos manuais para ativar este bot.
                         </p>
                       )}
                     </div>

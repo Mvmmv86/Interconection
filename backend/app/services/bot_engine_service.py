@@ -31,7 +31,10 @@ from app.models.market_candle import MarketCandle
 from app.models.position import Position, SourceType
 from app.models.price_history import PriceHistory
 from app.services.market_data_ingestion_service import (
+    normalize_exchange_key,
+    normalize_market_type,
     normalize_strategy_symbol,
+    resolve_strategy_market_type,
     resolve_strategy_symbols,
     resolve_strategy_timeframe,
 )
@@ -637,6 +640,7 @@ class BotEngineService:
         timeframe = str(market_snapshot.get("requested_timeframe") or self._strategy_timeframe(strategy, instance))
         candles, candle_source = await self._load_strategy_candles(
             strategy,
+            instance=instance,
             symbol=symbol,
             timeframe=timeframe,
             limit=self._strategy_candle_limit(strategy),
@@ -1456,6 +1460,7 @@ class BotEngineService:
         self,
         strategy: BotStrategy,
         *,
+        instance: BotInstance | None = None,
         symbol: str,
         timeframe: str,
         limit: int,
@@ -1464,11 +1469,27 @@ class BotEngineService:
         ascending: bool = True,
     ) -> tuple[list[MarketCandle | PriceHistory], str]:
         normalized_symbol = normalize_strategy_symbol(symbol)
+        market_config = strategy.market_config or {}
+        market_type = normalize_market_type(resolve_strategy_market_type(strategy, instance))
+        supported_exchanges = market_config.get("supported_exchanges")
+        default_supported_exchange = supported_exchanges[0] if isinstance(supported_exchanges, list) and supported_exchanges else None
+        instance_exchange = getattr(getattr(instance, "exchange", None), "exchange", None)
+        if instance is not None:
+            configured_exchange = instance_exchange
+        else:
+            configured_exchange = (
+                market_config.get("exchange")
+                or market_config.get("default_exchange")
+                or default_supported_exchange
+            )
         query = select(MarketCandle).where(
             MarketCandle.symbol == normalized_symbol,
+            MarketCandle.market_type == market_type,
             MarketCandle.timeframe == timeframe,
             MarketCandle.is_closed == True,
         )
+        if configured_exchange:
+            query = query.where(MarketCandle.exchange == normalize_exchange_key(str(configured_exchange)))
         if period_start is not None:
             query = query.where(MarketCandle.close_time >= period_start)
         if period_end is not None:

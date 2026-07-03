@@ -620,6 +620,59 @@ interface BotBacktest {
   updated_at: string;
 }
 
+interface BotMarketRankingItem {
+  id: string;
+  rank: number;
+  symbol: string;
+  base_asset: string;
+  quote_asset: string;
+  price: number;
+  change_percent: number;
+  volume: number;
+  quote_volume: number;
+  market_cap: number | null;
+  candle_close_time: string | null;
+  raw_payload: Record<string, unknown>;
+}
+
+interface BotMarketRanking {
+  snapshot_id: string | null;
+  source: string;
+  exchange: string;
+  market_type: string;
+  timeframe: string;
+  source_timeframe: string | null;
+  direction: string;
+  metric: string;
+  top_n: number;
+  generated_at: string | null;
+  candle_time: string | null;
+  metadata: Record<string, unknown>;
+  items: BotMarketRankingItem[];
+}
+
+interface BotMarketUniverseAsset {
+  id: string;
+  exchange: string;
+  market_type: string;
+  symbol: string;
+  base_asset: string;
+  quote_asset: string;
+  display_name: string | null;
+  is_tradeable: boolean;
+  status: string;
+  last_price: number | null;
+  quote_volume_24h: number;
+  change_1h_percent: number | null;
+  change_24h_percent: number | null;
+  change_7d_percent: number | null;
+  change_30d_percent: number | null;
+  last_seen_at: string | null;
+  raw_payload: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 interface AdminClient {
   id: string;
   organization_id: string;
@@ -1290,6 +1343,27 @@ class ApiClient {
     return this.request<BotInstance[]>(`/api/v1/admin/bots/instances${qs}`);
   }
 
+  async generateAdminBotMarketRanking(data: {
+    exchange: string;
+    market_type?: string;
+    timeframe: string;
+    direction: string;
+    top_n?: number;
+    source_timeframe?: string | null;
+    min_quote_volume?: number;
+    min_price?: number | null;
+    max_price?: number | null;
+    quote_asset?: string | null;
+    include_symbols?: string[];
+    exclude_symbols?: string[];
+    only_tradeable?: boolean;
+  }): Promise<ApiResponse<BotMarketRanking>> {
+    return this.request<BotMarketRanking>('/api/v1/admin/bots/market-rankings/generate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async updateAdminBotInstance(
     instanceId: string,
     data: Partial<{ status: string; last_error: string | null }>
@@ -1349,6 +1423,48 @@ class ApiClient {
 
   async getBotInstances(): Promise<ApiResponse<BotInstance[]>> {
     return this.request<BotInstance[]>('/api/v1/bots/instances');
+  }
+
+  async getBotMarketRanking(params?: {
+    exchange?: string;
+    market_type?: string;
+    timeframe?: string;
+    direction?: string;
+    top_n?: number;
+    min_quote_volume?: number;
+    min_price?: number;
+    max_price?: number;
+    quote_asset?: string;
+  }): Promise<ApiResponse<BotMarketRanking>> {
+    const query = new URLSearchParams();
+    if (params?.exchange) query.set('exchange', params.exchange);
+    if (params?.market_type) query.set('market_type', params.market_type);
+    if (params?.timeframe) query.set('timeframe', params.timeframe);
+    if (params?.direction) query.set('direction', params.direction);
+    if (params?.top_n) query.set('top_n', String(params.top_n));
+    if (params?.min_quote_volume !== undefined) query.set('min_quote_volume', String(params.min_quote_volume));
+    if (params?.min_price !== undefined) query.set('min_price', String(params.min_price));
+    if (params?.max_price !== undefined) query.set('max_price', String(params.max_price));
+    if (params?.quote_asset) query.set('quote_asset', params.quote_asset);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return this.request<BotMarketRanking>(`/api/v1/bots/market-rankings${qs}`);
+  }
+
+  async getBotMarketUniverse(params?: {
+    exchange?: string;
+    market_type?: string;
+    quote_asset?: string;
+    only_tradeable?: boolean;
+    limit?: number;
+  }): Promise<ApiResponse<BotMarketUniverseAsset[]>> {
+    const query = new URLSearchParams();
+    if (params?.exchange) query.set('exchange', params.exchange);
+    if (params?.market_type) query.set('market_type', params.market_type);
+    if (params?.quote_asset) query.set('quote_asset', params.quote_asset);
+    if (params?.only_tradeable !== undefined) query.set('only_tradeable', String(params.only_tradeable));
+    if (params?.limit) query.set('limit', String(params.limit));
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return this.request<BotMarketUniverseAsset[]>(`/api/v1/bots/market-universe${qs}`);
   }
 
   async createBotInstance(data: {
@@ -1653,6 +1769,9 @@ export type {
   BotRun,
   BotSignal,
   BotBacktest,
+  BotMarketRanking,
+  BotMarketRankingItem,
+  BotMarketUniverseAsset,
   AdminClient,
   AdminAuditLog,
 };

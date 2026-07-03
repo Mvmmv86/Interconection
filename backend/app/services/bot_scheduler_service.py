@@ -17,6 +17,7 @@ from app.services.market_data_ingestion_service import (
     resolve_strategy_symbols,
     resolve_strategy_timeframe,
 )
+from app.services.market_ranking_service import MarketRankingService
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ class BotSchedulerService:
             result = await self.db.execute(query)
             instances = result.scalars().unique().all()
             ingestion = MarketDataIngestionService(self.db)
+            ranking_service = MarketRankingService(self.db)
             engine = BotEngineService(self.db)
 
             for instance in instances:
@@ -106,13 +108,24 @@ class BotSchedulerService:
                 if instance.exchange is None or instance.strategy is None:
                     skipped.append({"instance_id": str(instance.id), "reason": "missing_exchange_or_strategy"})
                     continue
-                symbols = resolve_strategy_symbols(instance.strategy, instance)
+                fallback_symbols = resolve_strategy_symbols(instance.strategy, instance)
+                symbols, basket_metadata = await ranking_service.resolve_instance_basket_symbols(
+                    instance=instance,
+                    fallback_symbols=fallback_symbols,
+                    refresh_snapshot=True,
+                )
                 timeframe = resolve_strategy_timeframe(instance.strategy, instance)
                 market_type = resolve_strategy_market_type(instance.strategy, instance)
                 if not symbols:
-                    skipped.append({"instance_id": str(instance.id), "reason": "missing_symbols"})
+                    skipped.append({
+                        "instance_id": str(instance.id),
+                        "reason": "missing_symbols",
+                        "basket": basket_metadata,
+                    })
                     continue
                 market_snapshot = await engine.build_market_snapshot(instance)
+                market_snapshot["market_basket"] = basket_metadata
+                market_snapshot["allowed_symbols"] = symbols
                 for symbol in symbols:
                     if attempted_cycles >= max_cycles:
                         break
@@ -130,6 +143,7 @@ class BotSchedulerService:
                             exchange=instance.exchange.exchange,
                             symbol=symbol,
                             timeframe=timeframe,
+                            market_type=market_type,
                         )
                         if latest is None:
                             skipped.append({"instance_id": str(instance.id), "symbol": symbol, "reason": "no_closed_candle"})
@@ -138,7 +152,7 @@ class BotSchedulerService:
                         await self.db.commit()
                         cycle_key = (
                             f"paper:{instance.id}:{latest.exchange}:{latest.symbol}:"
-                            f"{latest.timeframe}:{latest.close_time.isoformat()}"
+                            f"{latest.market_type}:{latest.timeframe}:{latest.close_time.isoformat()}"
                         )
                         run = await engine.run_paper_cycle(
                             instance_id=instance.id,

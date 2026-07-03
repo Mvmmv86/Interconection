@@ -389,3 +389,80 @@ class BotSchedulerRunResponse(BaseSchema):
     runs: list[dict[str, Any]] = Field(default_factory=list)
     skipped: list[dict[str, Any]] = Field(default_factory=list)
     errors: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class BotMarketRankingGenerateRequest(BaseSchema):
+    """Admin request to build a market scanner snapshot from stored candles."""
+
+    exchange: str = Field(default="bingx", max_length=32)
+    market_type: str = Field(default="spot", max_length=24)
+    timeframe: str = Field(default="24h", max_length=16)
+    direction: str = Field(default="gainers", max_length=16)
+    top_n: int = Field(default=10, ge=1, le=100)
+    source_timeframe: Optional[str] = Field(default=None, max_length=16)
+    min_quote_volume: float = Field(default=0, ge=0)
+    min_price: Optional[float] = Field(default=None, ge=0)
+    max_price: Optional[float] = Field(default=None, ge=0)
+    quote_asset: Optional[str] = Field(default="USDT", max_length=24)
+    include_symbols: list[str] = Field(default_factory=list)
+    exclude_symbols: list[str] = Field(default_factory=list)
+    only_tradeable: bool = True
+
+
+class BotMarketRankingItemResponse(BaseSchema):
+    """One ranked market asset."""
+
+    id: UUID
+    rank: int
+    symbol: str
+    base_asset: str
+    quote_asset: str
+    price: float
+    change_percent: float
+    volume: float
+    quote_volume: float
+    market_cap: Optional[float] = None
+    candle_close_time: Optional[datetime] = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class BotMarketRankingResponse(BaseSchema):
+    """Latest scanner snapshot for a market/time window."""
+
+    snapshot_id: Optional[UUID] = None
+    source: str = "market_candles"
+    exchange: str
+    market_type: str
+    timeframe: str
+    source_timeframe: Optional[str] = None
+    direction: str
+    metric: str = "price_change_percent"
+    top_n: int = 10
+    generated_at: Optional[datetime] = None
+    candle_time: Optional[datetime] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    items: list[BotMarketRankingItemResponse] = Field(default_factory=list)
+
+
+class BotMarketUniverseAssetResponse(BaseSchema):
+    """One tradable asset in the scanner universe."""
+
+    id: UUID
+    exchange: str
+    market_type: str
+    symbol: str
+    base_asset: str
+    quote_asset: str
+    display_name: Optional[str] = None
+    is_tradeable: bool
+    status: str
+    last_price: Optional[float] = None
+    quote_volume_24h: float
+    change_1h_percent: Optional[float] = None
+    change_24h_percent: Optional[float] = None
+    change_7d_percent: Optional[float] = None
+    change_30d_percent: Optional[float] = None
+    last_seen_at: Optional[datetime] = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime

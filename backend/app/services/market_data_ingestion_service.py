@@ -32,6 +32,14 @@ def normalize_exchange_key(exchange: str) -> str:
     return str(exchange or "").strip().lower()
 
 
+def normalize_market_type(market_type: str | None) -> str:
+    """Normalize exchange market categories to storage keys."""
+    value = str(market_type or "").strip().lower()
+    if value in {"futures", "future", "swap", "linear", "perpetual", "perp"}:
+        return "futures"
+    return "spot"
+
+
 def _coerce_list(value: object) -> list[object]:
     if value is None:
         return []
@@ -50,11 +58,13 @@ def resolve_strategy_symbols(strategy: object | None, instance: object | None = 
     template_defaults = getattr(template, "default_parameters", None) or {}
     instance_risk = getattr(instance, "risk_config", None) or {}
     instance_parameters = getattr(instance, "parameters", None) or {}
+    market_basket = instance_risk.get("market_basket")
+    uses_market_ranking = isinstance(market_basket, dict) and market_basket.get("source") == "market_ranking"
 
     catalog_symbols = [
         normalize_strategy_symbol(str(item))
         for item in _coerce_list(market_config.get("allowed_symbols") or getattr(template, "supported_assets", None))
-    ]
+    ] if not uses_market_ranking else []
 
     raw_symbols = (
         instance_risk.get("allowed_symbols")
@@ -147,7 +157,8 @@ class MarketDataIngestionService:
         """Fetch and upsert candles for one connected exchange."""
         exchange = await self._load_exchange(exchange_id, organization_id)
         adapter = ExchangeService(self.db).get_adapter(exchange)
-        category = "swap" if str(market_type or "").lower() in {"futures", "future", "swap", "linear"} else "spot"
+        normalized_market_type = normalize_market_type(market_type)
+        category = "swap" if normalized_market_type == "futures" else "spot"
         requested_symbols = [item for item in (normalize_strategy_symbol(symbol) for symbol in symbols) if item]
         requested_timeframes = [str(timeframe or "").strip() for timeframe in timeframes if str(timeframe or "").strip()]
         if not requested_symbols or not requested_timeframes:
@@ -173,7 +184,7 @@ class MarketDataIngestionService:
                 except Exception as exc:  # keep ingestion partial and auditable
                     errors.append(f"{exchange.exchange}:{symbol}:{timeframe}:{exc}")
                     continue
-                stored += await self.upsert_candles(candles)
+                stored += await self.upsert_candles(candles, market_type=normalized_market_type)
 
         return {
             "exchange_id": str(exchange_id),
@@ -183,13 +194,16 @@ class MarketDataIngestionService:
             "errors": errors,
         }
 
-    async def upsert_candles(self, candles: Iterable[MarketCandleData]) -> int:
+    async def upsert_candles(self, candles: Iterable[MarketCandleData], market_type: str = "spot") -> int:
         """Bulk upsert candle rows using the unique market-candle key."""
         rows = [
             {
                 "id": uuid4(),
                 "exchange": normalize_exchange_key(candle.exchange),
                 "symbol": normalize_strategy_symbol(candle.symbol),
+                "market_type": normalize_market_type(
+                    getattr(candle, "market_type", None) or (candle.raw_response or {}).get("market_type") or market_type
+                ),
                 "timeframe": candle.timeframe,
                 "open_time": candle.open_time,
                 "close_time": candle.close_time,
@@ -212,6 +226,7 @@ class MarketDataIngestionService:
         statement = insert(MarketCandle).values(rows)
         update_columns = {
             "close_time": statement.excluded.close_time,
+            "market_type": statement.excluded.market_type,
             "open": statement.excluded.open,
             "high": statement.excluded.high,
             "low": statement.excluded.low,
@@ -224,7 +239,7 @@ class MarketDataIngestionService:
         }
         await self.db.execute(
             statement.on_conflict_do_update(
-                constraint="uq_market_candles_exchange_symbol_timeframe_open",
+                constraint="uq_market_candles_exchange_symbol_market_timeframe_open",
                 set_=update_columns,
             )
         )
@@ -236,6 +251,7 @@ class MarketDataIngestionService:
         exchange: str,
         symbol: str,
         timeframe: str,
+        market_type: str = "spot",
     ) -> MarketCandle | None:
         """Return the latest closed candle for a normalized market key."""
         now = datetime.now(timezone.utc)
@@ -244,6 +260,7 @@ class MarketDataIngestionService:
             .where(
                 MarketCandle.exchange == normalize_exchange_key(exchange),
                 MarketCandle.symbol == normalize_strategy_symbol(symbol),
+                MarketCandle.market_type == normalize_market_type(market_type),
                 MarketCandle.timeframe == timeframe,
                 MarketCandle.is_closed == True,
                 MarketCandle.close_time <= now,

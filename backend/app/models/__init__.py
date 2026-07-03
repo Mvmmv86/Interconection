@@ -46,6 +46,7 @@ from app.models.staking_position import StakingPosition
 from app.models.protocol_registry import ProtocolRegistry, ChainRegistry, ExchangeRegistry
 from app.models.price_history import PriceHistory, PoolMetricsHistory
 from app.models.market_candle import MarketCandle
+from app.models.market_ranking import MarketRankingItem, MarketRankingSnapshot, MarketUniverseAsset
 from app.models.integration import Integration, SyncLog
 # New models
 from app.models.ai import AIReport, AISettings
@@ -121,6 +122,9 @@ __all__ = [
     # History
     "PriceHistory",
     "MarketCandle",
+    "MarketRankingSnapshot",
+    "MarketRankingItem",
+    "MarketUniverseAsset",
     "PoolMetricsHistory",
     # Integrations
     "Integration",

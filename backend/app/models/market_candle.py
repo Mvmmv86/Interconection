@@ -19,16 +19,19 @@ class MarketCandle(Base, UUIDMixin):
         UniqueConstraint(
             "exchange",
             "symbol",
+            "market_type",
             "timeframe",
             "open_time",
-            name="uq_market_candles_exchange_symbol_timeframe_open",
+            name="uq_market_candles_exchange_symbol_market_timeframe_open",
         ),
         Index("ix_market_candles_symbol_timeframe_close", "symbol", "timeframe", "close_time"),
         Index("ix_market_candles_exchange_timeframe_close", "exchange", "timeframe", "close_time"),
+        Index("ix_market_candles_exchange_market_timeframe_close", "exchange", "market_type", "timeframe", "close_time"),
     )
 
     exchange: Mapped[str] = mapped_column(String(32), nullable=False)
     symbol: Mapped[str] = mapped_column(String(40), nullable=False)
+    market_type: Mapped[str] = mapped_column(String(24), default="spot", nullable=False)
     timeframe: Mapped[str] = mapped_column(String(16), nullable=False)
     open_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     close_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

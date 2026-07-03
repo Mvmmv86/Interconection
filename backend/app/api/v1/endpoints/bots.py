@@ -37,6 +37,7 @@ from app.models.bot import (
 )
 from app.models.client import Client
 from app.models.exchange import Exchange
+from app.models.market_ranking import MarketRankingSnapshot, MarketUniverseAsset
 from app.models.organization import Organization, PlanType
 from app.schemas.exchange import SUPPORTED_EXCHANGES as ENABLED_EXCHANGE_CONNECTORS
 from app.schemas.bot import (
@@ -52,6 +53,10 @@ from app.schemas.bot import (
     BotLiveEnableRequest,
     BotMarketCandleSyncRequest,
     BotMarketCandleSyncResponse,
+    BotMarketRankingGenerateRequest,
+    BotMarketRankingItemResponse,
+    BotMarketRankingResponse,
+    BotMarketUniverseAssetResponse,
     BotRunRequest,
     BotRunResponse,
     BotSchedulerRunRequest,
@@ -67,7 +72,8 @@ from app.schemas.bot import (
 from app.services.audit_service import record_audit_event, record_audit_event_immediate
 from app.services.bot_engine_service import BotEngineService
 from app.services.bot_scheduler_service import BotSchedulerService
-from app.services.market_data_ingestion_service import MarketDataIngestionService
+from app.services.market_data_ingestion_service import MarketDataIngestionService, normalize_strategy_symbol
+from app.services.market_ranking_service import MarketRankingService
 from app.services.plan_limits import enforce_plan_limit
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("bots"))])
@@ -420,6 +426,117 @@ def _backtest_response(backtest) -> BotBacktestResponse:
     )
 
 
+def _market_ranking_response(
+    snapshot: MarketRankingSnapshot | None,
+    *,
+    exchange: str,
+    market_type: str,
+    timeframe: str,
+    direction: str,
+    top_n: int,
+    min_quote_volume: Decimal | None = None,
+    min_price: Decimal | None = None,
+    max_price: Decimal | None = None,
+    quote_asset: str | None = None,
+    include_symbols: set[str] | None = None,
+    exclude_symbols: set[str] | None = None,
+) -> BotMarketRankingResponse:
+    if snapshot is None:
+        return BotMarketRankingResponse(
+            exchange=exchange,
+            market_type=market_type,
+            timeframe=timeframe,
+            direction=direction,
+            top_n=top_n,
+            items=[],
+        )
+    filtered_items = []
+    normalized_quote_asset = str(quote_asset or "").strip().upper()
+    for item in snapshot.items:
+        if min_quote_volume is not None and item.quote_volume < min_quote_volume:
+            continue
+        if min_price is not None and item.price < min_price:
+            continue
+        if max_price is not None and item.price > max_price:
+            continue
+        if normalized_quote_asset and item.quote_asset != normalized_quote_asset:
+            continue
+        if include_symbols and item.symbol not in include_symbols:
+            continue
+        if exclude_symbols and item.symbol in exclude_symbols:
+            continue
+        filtered_items.append(item)
+
+    items = [
+        BotMarketRankingItemResponse(
+            id=item.id,
+            rank=item.rank,
+            symbol=item.symbol,
+            base_asset=item.base_asset,
+            quote_asset=item.quote_asset,
+            price=float(item.price),
+            change_percent=float(item.change_percent),
+            volume=float(item.volume),
+            quote_volume=float(item.quote_volume),
+            market_cap=float(item.market_cap) if item.market_cap is not None else None,
+            candle_close_time=item.candle_close_time,
+            raw_payload=dict(item.raw_payload or {}),
+        )
+        for item in filtered_items[:top_n]
+    ]
+    metadata = dict(snapshot.metadata_json or {})
+    metadata["response_filters"] = {
+        "min_quote_volume": str(min_quote_volume) if min_quote_volume is not None else None,
+        "min_price": str(min_price) if min_price is not None else None,
+        "max_price": str(max_price) if max_price is not None else None,
+        "quote_asset": normalized_quote_asset or None,
+        "include_symbols": sorted(include_symbols or []),
+        "exclude_symbols": sorted(exclude_symbols or []),
+        "item_count_before_filter": len(snapshot.items),
+        "item_count_after_filter": len(filtered_items),
+        "note": "Response filters are applied to the latest stored snapshot. Scheduler/admin generation produces authoritative filtered snapshots.",
+    }
+    return BotMarketRankingResponse(
+        snapshot_id=snapshot.id,
+        source=snapshot.source,
+        exchange=snapshot.exchange,
+        market_type=snapshot.market_type,
+        timeframe=snapshot.timeframe,
+        source_timeframe=snapshot.source_timeframe,
+        direction=snapshot.direction,
+        metric=snapshot.metric,
+        top_n=top_n,
+        generated_at=snapshot.generated_at,
+        candle_time=snapshot.candle_time,
+        metadata=metadata,
+        items=items,
+    )
+
+
+def _market_universe_asset_response(asset: MarketUniverseAsset) -> BotMarketUniverseAssetResponse:
+    return BotMarketUniverseAssetResponse(
+        id=asset.id,
+        exchange=asset.exchange,
+        market_type=asset.market_type,
+        symbol=asset.symbol,
+        base_asset=asset.base_asset,
+        quote_asset=asset.quote_asset,
+        display_name=asset.display_name,
+        is_tradeable=asset.is_tradeable,
+        status=asset.status,
+        last_price=float(asset.last_price) if asset.last_price is not None else None,
+        quote_volume_24h=float(asset.quote_volume_24h or 0),
+        change_1h_percent=float(asset.change_1h_percent) if asset.change_1h_percent is not None else None,
+        change_24h_percent=float(asset.change_24h_percent) if asset.change_24h_percent is not None else None,
+        change_7d_percent=float(asset.change_7d_percent) if asset.change_7d_percent is not None else None,
+        change_30d_percent=float(asset.change_30d_percent) if asset.change_30d_percent is not None else None,
+        last_seen_at=asset.last_seen_at,
+        raw_payload=dict(asset.raw_payload or {}),
+        created_at=asset.created_at,
+        updated_at=asset.updated_at,
+    )
+
+
 def _indicator_response(indicator: BotIndicator) -> BotIndicatorResponse:
     return BotIndicatorResponse(
         id=indicator.id,
@@ -508,7 +625,85 @@ async def _ensure_strategy_indicators_exist(db: DBSession, indicator_config: dic
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"message": "Unknown or inactive strategy indicators", "keys": missing},
+    )
+
+
+@router.get("/market-rankings", response_model=BotMarketRankingResponse)
+async def get_bot_market_ranking(
+    _permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:view", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+    exchange: str = Query(default="bingx", max_length=32),
+    market_type: str = Query(default="spot", max_length=24),
+    timeframe: str = Query(default="24h", max_length=16),
+    direction: str = Query(default="gainers", max_length=16),
+    top_n: int = Query(default=10, ge=1, le=100),
+    min_quote_volume: Decimal | None = Query(default=None, ge=0),
+    min_price: Decimal | None = Query(default=None, ge=0),
+    max_price: Decimal | None = Query(default=None, ge=0),
+    quote_asset: str | None = Query(default="USDT", max_length=24),
+    include_symbols: list[str] | None = Query(default=None),
+    exclude_symbols: list[str] | None = Query(default=None),
+) -> BotMarketRankingResponse:
+    """Return the latest market scanner snapshot for the bot UI."""
+    service = MarketRankingService(db)
+    try:
+        snapshot = await service.get_latest_snapshot(
+            exchange=exchange,
+            market_type=market_type,
+            timeframe=timeframe,
+            direction=direction,
+            top_n=top_n,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return _market_ranking_response(
+        snapshot,
+        exchange=exchange,
+        market_type=market_type,
+        timeframe=timeframe,
+        direction=direction,
+        top_n=top_n,
+        min_quote_volume=min_quote_volume,
+        min_price=min_price,
+        max_price=max_price,
+        quote_asset=quote_asset,
+        include_symbols={normalize_strategy_symbol(symbol) for symbol in (include_symbols or []) if symbol.strip()},
+        exclude_symbols={normalize_strategy_symbol(symbol) for symbol in (exclude_symbols or []) if symbol.strip()},
+    )
+
+
+@router.get("/market-universe", response_model=list[BotMarketUniverseAssetResponse])
+async def list_bot_market_universe(
+    _permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:view", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+    exchange: str = Query(default="bingx", max_length=32),
+    market_type: str = Query(default="futures", max_length=24),
+    quote_asset: str | None = Query(default="USDT", max_length=24),
+    only_tradeable: bool = Query(default=True),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[BotMarketUniverseAssetResponse]:
+    """List the tradable market universe used by bot scanners."""
+    query = (
+        select(MarketUniverseAsset)
+        .where(
+            MarketUniverseAsset.exchange == exchange.strip().lower(),
+            MarketUniverseAsset.market_type == market_type.strip().lower(),
+        )
+        .order_by(MarketUniverseAsset.quote_volume_24h.desc(), MarketUniverseAsset.symbol.asc())
+        .limit(limit)
+    )
+    if quote_asset:
+        query = query.where(MarketUniverseAsset.quote_asset == quote_asset.strip().upper())
+    if only_tradeable:
+        query = query.where(MarketUniverseAsset.is_tradeable == True, MarketUniverseAsset.status == "active")
+    result = await db.execute(query)
+    return [_market_universe_asset_response(asset) for asset in result.scalars().all()]
 
 
 @router.get("/templates", response_model=list[BotTemplateResponse])
@@ -1157,6 +1352,61 @@ async def sync_admin_market_candles(
         request=request,
     )
     return BotMarketCandleSyncResponse(**result)
+
+
+@admin_router.post("/market-rankings/generate", response_model=BotMarketRankingResponse)
+async def generate_admin_market_ranking(
+    data: BotMarketRankingGenerateRequest,
+    superuser: SuperUser,
+    db: DBSession,
+    request: Request,
+) -> BotMarketRankingResponse:
+    """Generate a market scanner snapshot from normalized exchange candles."""
+    service = MarketRankingService(db)
+    try:
+        snapshot = await service.generate_snapshot(
+            exchange=data.exchange,
+            market_type=data.market_type,
+            timeframe=data.timeframe,
+            direction=data.direction,
+            top_n=data.top_n,
+            source_timeframe=data.source_timeframe,
+            min_quote_volume=Decimal(str(data.min_quote_volume)),
+            min_price=Decimal(str(data.min_price)) if data.min_price is not None else None,
+            max_price=Decimal(str(data.max_price)) if data.max_price is not None else None,
+            quote_asset=data.quote_asset,
+            include_symbols=data.include_symbols,
+            exclude_symbols=data.exclude_symbols,
+            only_tradeable=data.only_tradeable,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    await record_audit_event(
+        db,
+        organization_id=superuser.organization_id,
+        user_id=superuser.id,
+        action=AuditAction.CREATE,
+        resource_type="market_ranking_snapshot",
+        resource_id=snapshot.id,
+        description="Platform admin generated bot market ranking",
+        metadata={
+            "exchange": snapshot.exchange,
+            "market_type": snapshot.market_type,
+            "timeframe": snapshot.timeframe,
+            "direction": snapshot.direction,
+            "top_n": snapshot.top_n,
+            "item_count": len(snapshot.items),
+        },
+        request=request,
+    )
+    return _market_ranking_response(
+        snapshot,
+        exchange=data.exchange,
+        market_type=data.market_type,
+        timeframe=data.timeframe,
+        direction=data.direction,
+        top_n=data.top_n,
+    )
 
 
 @admin_router.post("/scheduler/run-paper", response_model=BotSchedulerRunResponse)
