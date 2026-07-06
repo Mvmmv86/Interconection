@@ -795,18 +795,33 @@ class BingXAdapter(BaseExchangeAdapter):
                 if close_time_raw is not None
                 else open_time + delta
             )
+            open_price = safe_decimal(row.get("open") or row.get("o"))
+            high_price = safe_decimal(row.get("high") or row.get("h"))
+            low_price = safe_decimal(row.get("low") or row.get("l"))
+            close_price = safe_decimal(row.get("close") or row.get("c"))
+            volume = safe_decimal(row.get("volume") or row.get("v"))
+            quote_volume = safe_decimal(
+                row.get("quoteVolume")
+                or row.get("quoteVolume24h")
+                or row.get("turnover")
+                or row.get("amount")
+                or row.get("quoteAssetVolume")
+                or row.get("q")
+            )
+            if quote_volume <= 0 and volume > 0 and close_price > 0:
+                quote_volume = volume * close_price
             return MarketCandleData(
                 exchange=self.exchange_name,
                 symbol=symbol,
                 timeframe=timeframe,
                 open_time=open_time,
                 close_time=close_time,
-                open=safe_decimal(row.get("open") or row.get("o")),
-                high=safe_decimal(row.get("high") or row.get("h")),
-                low=safe_decimal(row.get("low") or row.get("l")),
-                close=safe_decimal(row.get("close") or row.get("c")),
-                volume=safe_decimal(row.get("volume") or row.get("v")),
-                quote_volume=safe_decimal(row.get("quoteVolume") or row.get("q")),
+                open=open_price,
+                high=high_price,
+                low=low_price,
+                close=close_price,
+                volume=volume,
+                quote_volume=quote_volume,
                 trade_count=int(row["tradeNum"]) if str(row.get("tradeNum") or "").isdigit() else None,
                 is_closed=close_time <= now,
                 raw_response=row,
@@ -814,6 +829,11 @@ class BingXAdapter(BaseExchangeAdapter):
         if isinstance(row, list) and len(row) >= 6:
             open_time = datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc)
             close_time = open_time + delta
+            close_price = safe_decimal(row[4])
+            volume = safe_decimal(row[5])
+            quote_volume = safe_decimal(row[6]) if len(row) > 6 else Decimal("0")
+            if quote_volume <= 0 and volume > 0 and close_price > 0:
+                quote_volume = volume * close_price
             return MarketCandleData(
                 exchange=self.exchange_name,
                 symbol=symbol,
@@ -823,9 +843,9 @@ class BingXAdapter(BaseExchangeAdapter):
                 open=safe_decimal(row[1]),
                 high=safe_decimal(row[2]),
                 low=safe_decimal(row[3]),
-                close=safe_decimal(row[4]),
-                volume=safe_decimal(row[5]),
-                quote_volume=safe_decimal(row[6]) if len(row) > 6 else Decimal("0"),
+                close=close_price,
+                volume=volume,
+                quote_volume=quote_volume,
                 trade_count=None,
                 is_closed=close_time <= now,
                 raw_response={"row": row},

@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     bot_market_scanner_market_type: str = "futures"
     bot_market_scanner_quote_asset: str = "USDT"
     bot_market_scanner_universe_limit: int = 120
-    bot_market_scanner_candle_symbol_limit: int = 50
+    bot_market_scanner_candle_symbol_limit: int = 120
     bot_market_scanner_top_n: int = 50
 
     # External APIs
