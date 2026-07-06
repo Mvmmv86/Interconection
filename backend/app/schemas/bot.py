@@ -258,6 +258,8 @@ class BotRunRequest(BaseSchema):
     """Request a deterministic paper evaluation cycle."""
 
     cycle_key: Optional[str] = Field(default=None, max_length=120)
+    symbol: Optional[str] = Field(default=None, max_length=40)
+    timeframe: Optional[str] = Field(default=None, max_length=40)
 
 
 class BotRunResponse(BaseSchema):
@@ -316,6 +318,7 @@ class BotBacktestCreate(BaseSchema):
     initial_capital_usd: float = Field(default=10000, gt=0)
     period_start: Optional[datetime] = None
     period_end: Optional[datetime] = None
+    risk_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
 class BotBacktestResponse(BaseSchema):

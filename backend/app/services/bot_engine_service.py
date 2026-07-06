@@ -486,6 +486,27 @@ class BotEngineService:
             return await self._decide_v2(instance, strategy, market_snapshot)
         return await self._decide_v1_legacy(instance, market_snapshot)
 
+    def _allowed_symbols_for_decision(
+        self,
+        strategy: BotStrategy | None,
+        instance: BotInstance,
+        market_snapshot: dict,
+    ) -> list[str]:
+        """Prefer the scheduler/request basket over static strategy catalogs."""
+        injected_symbols = market_snapshot.get("allowed_symbols")
+        if isinstance(injected_symbols, list):
+            normalized = []
+            seen = set()
+            for raw_symbol in injected_symbols:
+                symbol = normalize_strategy_symbol(str(raw_symbol or ""))
+                if not symbol or symbol in seen:
+                    continue
+                seen.add(symbol)
+                normalized.append(symbol)
+            if normalized:
+                return normalized
+        return resolve_strategy_symbols(strategy, instance)
+
     async def _decide_v1_legacy(self, instance: BotInstance, market_snapshot: dict) -> tuple[dict, dict]:
         template_type = instance.template.type if instance.template else BotTemplateType.CUSTOM
         strategy_type = instance.strategy.type if instance.strategy else template_type
@@ -494,7 +515,7 @@ class BotEngineService:
             **(instance.template.default_parameters if instance.template else {}),
             **(instance.risk_config or {}),
         }
-        supported_assets = resolve_strategy_symbols(instance.strategy, instance)
+        supported_assets = self._allowed_symbols_for_decision(instance.strategy, instance, market_snapshot)
         allowed_symbols = supported_assets
         positions = market_snapshot.get("positions", [])
         top_position = positions[0] if positions else None
@@ -612,7 +633,7 @@ class BotEngineService:
             **(instance.template.default_parameters if instance.template else {}),
             **(instance.risk_config or {}),
         }
-        allowed_symbols = resolve_strategy_symbols(strategy, instance)
+        allowed_symbols = self._allowed_symbols_for_decision(strategy, instance, market_snapshot)
         positions = market_snapshot.get("positions", [])
         top_position = positions[0] if positions else None
         requested_symbol = market_snapshot.get("requested_symbol")
@@ -1634,6 +1655,7 @@ class BotEngineService:
         user_id: UUID | None,
         period_start: datetime | None = None,
         period_end: datetime | None = None,
+        risk_overrides: dict | None = None,
     ) -> BotBacktest:
         """Run a historical paper backtest using configured indicators/rules.
 
@@ -1703,13 +1725,20 @@ class BotEngineService:
         entry_count = 0
         exit_count = 0
         logs: list[dict] = []
-        risk = strategy.risk_defaults or {}
+        risk = {
+            **(strategy.risk_defaults or {}),
+            **(risk_overrides or {}),
+        }
         max_order_usd = Decimal(str(risk.get("max_order_usd", 100) or 100))
         max_position_usd = Decimal(str(risk.get("max_position_usd", 1000) or 1000))
         stop_loss_percent = Decimal(str(risk.get("stop_loss_percent", 0) or 0))
         take_profit_percent = Decimal(str(risk.get("take_profit_percent", 0) or 0))
         trailing_stop_percent = Decimal(str(risk.get("trailing_stop_percent", 0) or 0))
         breakeven_activation_percent = Decimal(str(risk.get("breakeven_activation_percent", 0) or 0))
+        fee_percent = Decimal(str(risk.get("fee_percent", 0) or 0))
+        slippage_percent = Decimal(str(risk.get("slippage_percent", 0) or 0))
+        fee_percent = max(Decimal("0"), min(fee_percent, Decimal("10")))
+        slippage_percent = max(Decimal("0"), min(slippage_percent, Decimal("20")))
         stop_model = str(risk.get("stop_model") or "alpha_trend")
         allow_averaging = str(risk.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
 
@@ -1761,7 +1790,10 @@ class BotEngineService:
                     exit_reason = "breakeven_guard"
 
             if units > 0 and exit_passed:
-                proceeds = units * price
+                execution_price = price * (Decimal("1") - slippage_percent / Decimal("100"))
+                gross_proceeds = units * execution_price
+                fee_usd = gross_proceeds * fee_percent / Decimal("100")
+                proceeds = max(Decimal("0"), gross_proceeds - fee_usd)
                 trade_pnl = proceeds - units * entry_price
                 realized_pnl += trade_pnl
                 cash += proceeds
@@ -1778,6 +1810,8 @@ class BotEngineService:
                         "action": "sell",
                         "reason": exit_reason,
                         "price": _json_number(price),
+                        "execution_price": _json_number(execution_price),
+                        "fee_usd": _json_number(fee_usd),
                         "equity": _json_number(equity),
                         "pnl_usd": _json_number(trade_pnl),
                         "conditions": exit_evaluations,
@@ -1795,8 +1829,13 @@ class BotEngineService:
                 available_capacity = max(Decimal("0"), max_position_usd - position_value)
                 spend = min(cash, max_order_usd, available_capacity)
                 if spend > 0:
-                    bought_units = spend / price
-                    weighted_cost = (entry_price * units + spend) / (units + bought_units) if units > 0 else price
+                    execution_price = price * (Decimal("1") + slippage_percent / Decimal("100"))
+                    fee_usd = spend * fee_percent / Decimal("100")
+                    asset_spend = max(Decimal("0"), spend - fee_usd)
+                    bought_units = asset_spend / execution_price if execution_price > 0 else Decimal("0")
+                    if bought_units <= 0:
+                        continue
+                    weighted_cost = (entry_price * units + spend) / (units + bought_units) if units > 0 else spend / bought_units
                     units += bought_units
                     cash -= spend
                     entry_price = weighted_cost
@@ -1812,7 +1851,9 @@ class BotEngineService:
                             "action": "buy",
                             "reason": "rule_entry",
                             "price": _json_number(price),
+                            "execution_price": _json_number(execution_price),
                             "notional_usd": _json_number(spend),
+                            "fee_usd": _json_number(fee_usd),
                             "equity": _json_number(equity),
                             "conditions": entry_evaluations,
                         }
@@ -1836,6 +1877,18 @@ class BotEngineService:
             "exit_count": exit_count,
             "win_rate_percent": _json_number(win_rate),
             "realized_pnl_usd": _json_number(realized_pnl),
+            "risk_config_applied": {
+                "max_order_usd": _json_number(max_order_usd),
+                "max_position_usd": _json_number(max_position_usd),
+                "stop_loss_percent": _json_number(stop_loss_percent),
+                "take_profit_percent": _json_number(take_profit_percent),
+                "trailing_stop_percent": _json_number(trailing_stop_percent),
+                "breakeven_activation_percent": _json_number(breakeven_activation_percent),
+                "fee_percent": _json_number(fee_percent),
+                "slippage_percent": _json_number(slippage_percent),
+                "stop_model": stop_model,
+                "allow_averaging": allow_averaging,
+            },
             "engine_note": "strategy_rules_v2: evaluated selected indicators and entry/exit rule groups with dedicated handlers for the seeded indicator catalog.",
             "fallback_indicators": fallback_indicators,
             "data_quality": data_quality,

@@ -59,12 +59,15 @@ def resolve_strategy_symbols(strategy: object | None, instance: object | None = 
     instance_risk = getattr(instance, "risk_config", None) or {}
     instance_parameters = getattr(instance, "parameters", None) or {}
     market_basket = instance_risk.get("market_basket")
-    uses_market_ranking = isinstance(market_basket, dict) and market_basket.get("source") == "market_ranking"
+    uses_dynamic_market_basket = (
+        isinstance(market_basket, dict)
+        and market_basket.get("source") in {"market_ranking", "market_extremes"}
+    )
 
     catalog_symbols = [
         normalize_strategy_symbol(str(item))
         for item in _coerce_list(market_config.get("allowed_symbols") or getattr(template, "supported_assets", None))
-    ] if not uses_market_ranking else []
+    ] if not uses_dynamic_market_basket else []
 
     raw_symbols = (
         instance_risk.get("allowed_symbols")

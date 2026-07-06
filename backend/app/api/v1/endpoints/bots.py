@@ -74,7 +74,12 @@ from app.schemas.bot import (
 from app.services.audit_service import record_audit_event, record_audit_event_immediate
 from app.services.bot_engine_service import BotEngineService
 from app.services.bot_scheduler_service import BotSchedulerService
-from app.services.market_data_ingestion_service import MarketDataIngestionService, normalize_strategy_symbol
+from app.services.market_data_ingestion_service import (
+    MarketDataIngestionService,
+    normalize_strategy_symbol,
+    resolve_strategy_symbols,
+    resolve_strategy_timeframe,
+)
 from app.services.market_ranking_service import MarketRankingService
 from app.services.market_scanner_bootstrap_service import MarketScannerBootstrapService
 from app.services.plan_limits import enforce_plan_limit
@@ -965,7 +970,13 @@ async def run_bot_instance_paper_cycle(
 ) -> BotRunResponse:
     """Run one idempotent paper cycle and persist the generated signal."""
     instance = await db.scalar(
-        select(BotInstance).where(
+        select(BotInstance)
+        .options(
+            selectinload(BotInstance.template),
+            selectinload(BotInstance.strategy),
+            selectinload(BotInstance.exchange),
+        )
+        .where(
             BotInstance.id == instance_id,
             BotInstance.organization_id == permission_ctx.organization_id,
         )
@@ -981,12 +992,51 @@ async def run_bot_instance_paper_cycle(
             detail="Forbidden by membership client scope",
         )
 
+    if instance.strategy is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bot instance has no strategy configured",
+        )
+    ranking_service = MarketRankingService(db)
+    fallback_symbols = resolve_strategy_symbols(instance.strategy, instance)
+    symbols, basket_metadata = await ranking_service.resolve_instance_basket_symbols(
+        instance=instance,
+        fallback_symbols=fallback_symbols,
+        refresh_snapshot=True,
+    )
+    if not symbols:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Bot instance has no symbols to evaluate",
+                "basket": basket_metadata,
+            },
+        )
+    requested_symbol = normalize_strategy_symbol(data.symbol) if data.symbol else symbols[0]
+    if requested_symbol not in symbols:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested symbol is outside the bot basket",
+        )
+    requested_timeframe = data.timeframe or resolve_strategy_timeframe(instance.strategy, instance)
+
     engine = BotEngineService(db)
+    market_snapshot = await engine.build_market_snapshot(instance)
+    market_snapshot["market_basket"] = basket_metadata
+    market_snapshot["allowed_symbols"] = symbols
+    cycle_key = data.cycle_key or (
+        f"paper:{instance.id}:{requested_symbol}:{requested_timeframe}:"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}"
+    )
     run = await engine.run_paper_cycle(
         instance_id=instance_id,
         organization_id=permission_ctx.organization_id,
         user_id=permission_ctx.user.id,
-        cycle_key=data.cycle_key,
+        cycle_key=cycle_key,
+        symbol=requested_symbol,
+        timeframe=requested_timeframe,
+        triggered_by="manual",
+        market_snapshot=market_snapshot,
     )
     await record_audit_event(
         db,
@@ -1295,6 +1345,7 @@ async def run_admin_bot_strategy_backtest(
         initial_capital_usd=Decimal(str(data.initial_capital_usd)),
         period_start=data.period_start,
         period_end=data.period_end,
+        risk_overrides=data.risk_overrides,
         user_id=superuser.id,
     )
     await record_audit_event(

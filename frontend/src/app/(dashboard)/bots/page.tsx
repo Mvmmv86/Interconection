@@ -27,8 +27,15 @@ type TemplateConfig = {
   maxPositionUsd: string;
   maxDailySignals: string;
   allowedSymbols: string;
+  basketMode: BasketMode;
+  basketTimeframe: RankingTimeframe;
+  basketTopGainers: string;
+  basketTopLosers: string;
+  basketRefreshDays: string;
+  basketRefreshTime: string;
 };
 
+type BasketMode = 'market_extremes' | 'scanner';
 type RankingDirection = 'gainers' | 'losers';
 type RankingTimeframe = '1h' | '24h' | '7d' | '30d';
 
@@ -40,6 +47,12 @@ const defaultTemplateConfig: TemplateConfig = {
   maxPositionUsd: '1000',
   maxDailySignals: '20',
   allowedSymbols: '',
+  basketMode: 'market_extremes',
+  basketTimeframe: '7d',
+  basketTopGainers: '10',
+  basketTopLosers: '10',
+  basketRefreshDays: '7',
+  basketRefreshTime: '09:00',
 };
 
 function splitCsv(value: string) {
@@ -83,6 +96,63 @@ function formatPercent(value: number | null | undefined) {
   const amount = Number(value || 0);
   if (!Number.isFinite(amount)) return '0.00%';
   return `${amount >= 0 ? '+' : ''}${amount.toFixed(2)}%`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function botBasketView(instance: BotInstance) {
+  const riskConfig = isRecord(instance.risk_config) ? instance.risk_config : {};
+  const activeBasket = isRecord(riskConfig.active_basket) ? riskConfig.active_basket : {};
+  const basketPolicy = isRecord(riskConfig.basket_policy) ? riskConfig.basket_policy : {};
+  const marketBasket = isRecord(riskConfig.market_basket) ? riskConfig.market_basket : {};
+  const activeSymbols = asStringArray(activeBasket.symbols);
+  const manualSymbols = asStringArray(riskConfig.allowed_symbols);
+  const symbols = activeSymbols.length ? activeSymbols : manualSymbols;
+  const source = String(activeBasket.source || basketPolicy.source || marketBasket.source || (manualSymbols.length ? 'manual' : 'static'));
+  const legs = Array.isArray(activeBasket.legs) ? activeBasket.legs.filter(isRecord) : [];
+  return {
+    source,
+    symbols,
+    nextRefreshAt: typeof activeBasket.next_refresh_at === 'string' ? activeBasket.next_refresh_at : null,
+    generatedAt: typeof activeBasket.generated_at === 'string' ? activeBasket.generated_at : null,
+    legs,
+  };
+}
+
+function botGateRows(signal: BotSignal | undefined) {
+  const riskSnapshot = isRecord(signal?.risk_snapshot) ? signal!.risk_snapshot : {};
+  const blocks = asStringArray(riskSnapshot.blocks);
+  const warnings = asStringArray(riskSnapshot.data_warnings);
+  const rows = [
+    {
+      label: 'Entrada',
+      status: riskSnapshot.entry_passed === true ? 'pass' : riskSnapshot.entry_passed === false ? 'wait' : 'idle',
+      detail: riskSnapshot.entry_passed === true ? 'Condicoes aprovadas' : 'Aguardando setup',
+    },
+    {
+      label: 'Saida',
+      status: riskSnapshot.exit_passed === true ? 'pass' : riskSnapshot.exit_passed === false ? 'idle' : 'idle',
+      detail: riskSnapshot.exit_passed === true ? 'Condicoes de saida ativas' : 'Sem saida agora',
+    },
+    {
+      label: 'Risco',
+      status: blocks.length ? 'block' : signal ? 'pass' : 'idle',
+      detail: blocks.length ? blocks.join(', ') : signal ? 'Sem bloqueios' : 'Sem ciclo ainda',
+    },
+    {
+      label: 'Dados',
+      status: warnings.length ? 'wait' : signal ? 'pass' : 'idle',
+      detail: warnings.length ? warnings.join(', ') : signal ? String(riskSnapshot.candle_source || 'dados ok') : 'Aguardando analise',
+    },
+  ];
+  return rows;
 }
 
 export default function BotsPage() {
@@ -266,12 +336,40 @@ export default function BotsPage() {
       return;
     }
     const manualSymbols = splitCsv(config.allowedSymbols).map((item) => item.toUpperCase());
+    const usesScannerBasket = manualSymbols.length === 0 && config.basketMode === 'scanner';
+    const usesExtremeBasket = manualSymbols.length === 0 && config.basketMode === 'market_extremes';
     const rankingSymbols = (marketRanking?.items || []).map((item) => item.base_asset.toUpperCase());
-    if (manualSymbols.length === 0 && (!marketRanking?.snapshot_id || rankingSymbols.length === 0)) {
+    const selectedExchange = (exchangesByClient[config.clientId] || []).find((exchange) => exchange.id === config.exchangeId);
+    const executionExchange = selectedExchange?.exchange?.toLowerCase() || rankingExchange;
+    if (usesScannerBasket && (!marketRanking?.snapshot_id || rankingSymbols.length === 0)) {
       setError('Gere ou carregue um ranking antes de ativar o bot com cesta dinamica, ou informe simbolos manuais.');
       return;
     }
-    const allowedSymbols = manualSymbols.length > 0 ? manualSymbols : rankingSymbols;
+    if (usesScannerBasket && selectedExchange && executionExchange !== rankingExchange) {
+      setError('O scanner carregado pertence a outra exchange. Aplique filtros para a exchange selecionada no bot antes de ativar.');
+      return;
+    }
+    const allowedSymbols = manualSymbols.length > 0 ? manualSymbols : (usesScannerBasket ? rankingSymbols : []);
+    const basketPolicy = usesExtremeBasket
+      ? {
+          source: 'market_extremes',
+          exchange: executionExchange,
+          market_type: rankingMarketType,
+          quote_asset: rankingQuoteAsset,
+          timeframe: config.basketTimeframe,
+          refresh_every_days: Math.max(1, Math.floor(asNumber(config.basketRefreshDays, 7))),
+          refresh_time: config.basketRefreshTime || '09:00',
+          timezone: 'America/Sao_Paulo',
+          min_quote_volume: Number.parseFloat(rankingMinVolume.replace(',', '.')) || 0,
+          min_price: rankingMinPrice ? Number.parseFloat(rankingMinPrice.replace(',', '.')) : null,
+          max_price: rankingMaxPrice ? Number.parseFloat(rankingMaxPrice.replace(',', '.')) : null,
+          only_tradeable: true,
+          legs: [
+            { direction: 'losers', top_n: Math.max(0, Math.floor(asNumber(config.basketTopLosers, 10))) },
+            { direction: 'gainers', top_n: Math.max(0, Math.floor(asNumber(config.basketTopGainers, 10))) },
+          ].filter((leg) => leg.top_n > 0),
+        }
+      : undefined;
     const result = await api.createBotInstance({
       template_id: template.id,
       client_id: config.clientId,
@@ -285,8 +383,17 @@ export default function BotsPage() {
         max_position_usd: asNumber(config.maxPositionUsd, 1000),
         max_daily_signals: Math.max(0, Math.floor(asNumber(config.maxDailySignals, 20))),
         allowed_symbols: allowedSymbols,
+        basket_policy: basketPolicy,
         market_basket: manualSymbols.length > 0
           ? { source: 'manual' }
+          : usesExtremeBasket
+            ? {
+                source: 'market_extremes',
+                exchange: executionExchange,
+                market_type: rankingMarketType,
+                quote_asset: rankingQuoteAsset,
+                timeframe: config.basketTimeframe,
+              }
           : {
               source: 'market_ranking',
               snapshot_id: marketRanking?.snapshot_id || null,
@@ -599,6 +706,7 @@ export default function BotsPage() {
                 const requiresExchange = supportedExchangeKeys.length > 0;
                 const hasManualSymbols = splitCsv(config.allowedSymbols).length > 0;
                 const hasScannerBasket = Boolean(marketRanking?.snapshot_id && marketRanking.items.length > 0);
+                const needsScannerBasket = !hasManualSymbols && config.basketMode === 'scanner';
                 const exchangeOptions = [
                   { value: '', label: supportedExchangeKeys.length ? `Selecione ${supportedExchangeLabel}` : 'Exchange opcional' },
                   ...compatibleExchanges.map((exchange) => ({
@@ -639,7 +747,7 @@ export default function BotsPage() {
                             !can('bots:activate')
                             || !config.clientId
                             || (requiresExchange && !config.exchangeId)
-                            || (!hasManualSymbols && !hasScannerBasket)
+                            || (needsScannerBasket && !hasScannerBasket)
                           }
                           onClick={() => activateBot(template)}
                         >
@@ -689,15 +797,82 @@ export default function BotsPage() {
                       <input
                         value={config.allowedSymbols}
                         onChange={(event) => updateTemplateConfig(template.id, { allowedSymbols: event.target.value })}
-                        placeholder="Simbolos manuais. Vazio usa a cesta do scanner atual. Ex: BTC, ETH, SOL"
+                        placeholder="Simbolos manuais opcionais. Vazio deixa o bot montar a cesta automaticamente. Ex: BTC, ETH, SOL"
                         className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                       />
+                      {!hasManualSymbols && (
+                        <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-3">
+                          <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-body-sm font-semibold text-text-primary">Cesta automatica do bot</p>
+                              <p className="text-caption text-text-tertiary">
+                                O bot recalcula os extremos no horario configurado e monitora altas + quedas.
+                              </p>
+                            </div>
+                            <Select
+                              value={config.basketMode}
+                              options={[
+                                { value: 'market_extremes', label: 'Auto: altas + quedas' },
+                                { value: 'scanner', label: 'Usar scanner carregado' },
+                              ]}
+                              onChange={(event) => updateTemplateConfig(template.id, { basketMode: event.target.value as BasketMode })}
+                              className="h-9 min-w-[190px] py-0 text-caption"
+                            />
+                          </div>
+                          {config.basketMode === 'market_extremes' ? (
+                            <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+                              <Select
+                                value={config.basketTimeframe}
+                                options={[
+                                  { value: '1h', label: 'Janela 1h' },
+                                  { value: '24h', label: 'Janela 24h' },
+                                  { value: '7d', label: 'Janela 7d' },
+                                  { value: '30d', label: 'Janela 30d' },
+                                ]}
+                                onChange={(event) => updateTemplateConfig(template.id, { basketTimeframe: event.target.value as RankingTimeframe })}
+                                className="h-9 py-0 text-caption"
+                              />
+                              <input
+                                value={config.basketTopLosers}
+                                onChange={(event) => updateTemplateConfig(template.id, { basketTopLosers: event.target.value })}
+                                placeholder="Top quedas"
+                                className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+                              />
+                              <input
+                                value={config.basketTopGainers}
+                                onChange={(event) => updateTemplateConfig(template.id, { basketTopGainers: event.target.value })}
+                                placeholder="Top altas"
+                                className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+                              />
+                              <input
+                                value={config.basketRefreshDays}
+                                onChange={(event) => updateTemplateConfig(template.id, { basketRefreshDays: event.target.value })}
+                                placeholder="Atualizar a cada dias"
+                                className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+                              />
+                              <input
+                                type="time"
+                                value={config.basketRefreshTime}
+                                onChange={(event) => updateTemplateConfig(template.id, { basketRefreshTime: event.target.value })}
+                                className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+                              />
+                              <div className="rounded-lg border border-accent-blue/20 bg-accent-blue/10 px-3 py-2 text-caption text-accent-blue">
+                                Ex.: 10 quedas + 10 altas
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-caption text-status-warning">
+                              Este modo fixa a cesta no ranking que esta carregado na tabela visual agora.
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {config.clientId && supportedExchangeKeys.length > 0 && compatibleExchanges.length === 0 && (
                         <p className="text-caption text-status-warning">
                           Esta carteira ainda nao tem conexao ativa {supportedExchangeLabel}. Conecte uma exchange compativel em Positions &gt; Exchanges antes de vincular o bot.
                         </p>
                       )}
-                      {!hasManualSymbols && !hasScannerBasket && (
+                      {needsScannerBasket && !hasScannerBasket && (
                         <p className="text-caption text-status-warning">
                           Carregue um ranking no Scanner de mercado ou informe simbolos manuais para ativar este bot.
                         </p>
@@ -720,7 +895,11 @@ export default function BotsPage() {
                   <p className="text-body-sm text-text-secondary">Nenhum bot ativado nesta conta.</p>
                 </div>
               )}
-              {instances.map((instance) => (
+              {instances.map((instance) => {
+                const basket = botBasketView(instance);
+                const latestSignal = (signalsByInstance[instance.id] || [])[0];
+                const gateRows = botGateRows(latestSignal);
+                return (
                 <div key={instance.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-heading-sm text-text-primary">{instance.name}</p>
@@ -736,10 +915,71 @@ export default function BotsPage() {
                   <p className="mt-1 text-caption text-text-tertiary">
                     Exchange: {instance.exchange_name || 'Nao vinculada'} - Ultimo ciclo: {formatDateTime(instance.last_run_at)}
                   </p>
-                  <div className="mt-3 grid gap-2 rounded-lg border border-border-subtle bg-background-primary/60 p-3 text-caption text-text-secondary">
-                    <p>Max ordem: ${String(instance.risk_config.max_order_usd || 0)}</p>
-                    <p>Max posicao: ${String(instance.risk_config.max_position_usd || 0)}</p>
-                    <p>Simbolos: {Array.isArray(instance.risk_config.allowed_symbols) && instance.risk_config.allowed_symbols.length ? instance.risk_config.allowed_symbols.join(', ') : 'sem restricao'}</p>
+                  <div className="mt-3 grid gap-3 rounded-lg border border-border-subtle bg-background-primary/60 p-3 text-caption text-text-secondary">
+                    <div className="grid gap-2 md:grid-cols-3">
+                      <p>Max ordem: ${String(instance.risk_config.max_order_usd || 0)}</p>
+                      <p>Max posicao: ${String(instance.risk_config.max_position_usd || 0)}</p>
+                      <p>Cesta: {basket.source === 'market_extremes' ? 'Auto altas + quedas' : basket.source}</p>
+                    </div>
+                    <div>
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-text-primary">Ativos monitorados</span>
+                        {basket.generatedAt && <Badge variant="blue" size="sm">gerada {formatDateTime(basket.generatedAt)}</Badge>}
+                        {basket.nextRefreshAt && <Badge variant="purple" size="sm">proxima {formatDateTime(basket.nextRefreshAt)}</Badge>}
+                      </div>
+                      {basket.symbols.length ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {basket.symbols.slice(0, 24).map((symbol) => (
+                            <Badge key={symbol} variant="default" size="sm">{symbol}</Badge>
+                          ))}
+                          {basket.symbols.length > 24 && <Badge variant="yellow" size="sm">+{basket.symbols.length - 24}</Badge>}
+                        </div>
+                      ) : (
+                        <p className="text-text-tertiary">Cesta ainda nao gerada. O proximo ciclo paper vai resolver os ativos.</p>
+                      )}
+                    </div>
+                    {basket.legs.length > 0 && (
+                      <div className="grid gap-2 md:grid-cols-2">
+                        {basket.legs.map((leg, index) => (
+                          <div key={`${String(leg.direction)}-${index}`} className="rounded-lg border border-border-subtle bg-background-secondary/70 p-2">
+                            <p className="font-semibold text-text-primary">
+                              {leg.direction === 'losers' ? 'Quedas monitoradas' : 'Altas monitoradas'}
+                            </p>
+                            <p className="mt-1 text-text-tertiary">
+                              {Array.isArray(leg.symbols) ? leg.symbols.slice(0, 8).join(', ') : 'Aguardando snapshot'}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div>
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-text-primary">Gates do ultimo ciclo</span>
+                        {latestSignal?.symbol && <Badge variant="blue" size="sm">{latestSignal.symbol}</Badge>}
+                        {latestSignal?.action && <Badge variant={latestSignal.action === 'buy' ? 'success' : latestSignal.action === 'sell' ? 'error' : 'default'} size="sm">{latestSignal.action}</Badge>}
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-4">
+                        {gateRows.map((gate) => (
+                          <div key={gate.label} className="rounded-lg border border-border-subtle bg-background-secondary/70 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-semibold text-text-primary">{gate.label}</p>
+                              <span className={
+                                gate.status === 'pass'
+                                  ? 'text-status-success'
+                                  : gate.status === 'block'
+                                    ? 'text-status-error'
+                                    : gate.status === 'wait'
+                                      ? 'text-status-warning'
+                                      : 'text-text-tertiary'
+                              }>
+                                {gate.status === 'pass' ? 'check' : gate.status === 'block' ? 'block' : gate.status === 'wait' ? 'wait' : 'idle'}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-text-tertiary">{gate.detail}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                   {instance.last_error && (
                     <p className="mt-2 text-caption text-status-error">{instance.last_error}</p>
@@ -810,7 +1050,8 @@ export default function BotsPage() {
                     </div>
                   ))}
                 </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
         </div>

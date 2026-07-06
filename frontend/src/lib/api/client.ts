@@ -1273,6 +1273,7 @@ class ApiClient {
       initial_capital_usd?: number;
       period_start?: string | null;
       period_end?: string | null;
+      risk_overrides?: Record<string, unknown>;
     }
   ): Promise<ApiResponse<BotBacktest>> {
     return this.request<BotBacktest>(`/api/v1/admin/bots/strategies/${strategyId}/backtests`, {
@@ -1535,10 +1536,18 @@ class ApiClient {
     });
   }
 
-  async runBotInstancePaper(instanceId: string, cycleKey?: string): Promise<ApiResponse<BotRun>> {
+  async runBotInstancePaper(
+    instanceId: string,
+    cycleKey?: string,
+    options?: { symbol?: string; timeframe?: string }
+  ): Promise<ApiResponse<BotRun>> {
     return this.request<BotRun>(`/api/v1/bots/instances/${instanceId}/run-paper`, {
       method: 'POST',
-      body: JSON.stringify({ cycle_key: cycleKey || null }),
+      body: JSON.stringify({
+        cycle_key: cycleKey || null,
+        symbol: options?.symbol || null,
+        timeframe: options?.timeframe || null,
+      }),
     });
   }
 

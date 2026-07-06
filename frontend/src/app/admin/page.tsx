@@ -299,7 +299,16 @@ export default function PlatformAdminPage() {
   const [backtestForm, setBacktestForm] = useState({
     strategyId: '',
     symbol: 'BTC',
+    timeframe: '1h',
     initialCapital: '10000',
+    maxOrderUsd: '100',
+    maxPositionUsd: '1000',
+    stopLossPercent: '3',
+    takeProfitPercent: '8',
+    trailingStopPercent: '2',
+    breakevenPercent: '4',
+    feePercent: '0.1',
+    slippagePercent: '0.05',
   });
   const [indicatorSearch, setIndicatorSearch] = useState('');
   const [indicatorCategoryFilter, setIndicatorCategoryFilter] = useState('all');
@@ -761,10 +770,24 @@ export default function PlatformAdminPage() {
       return;
     }
     const initialCapital = Number.parseFloat(backtestForm.initialCapital.replace(',', '.'));
+    const numberOrZero = (value: string) => {
+      const parsed = Number.parseFloat(value.replace(',', '.'));
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
     const result = await api.runAdminBotBacktest(backtestForm.strategyId, {
       symbol: backtestForm.symbol.toUpperCase(),
-      timeframe: '1d',
+      timeframe: backtestForm.timeframe,
       initial_capital_usd: Number.isFinite(initialCapital) ? initialCapital : 10000,
+      risk_overrides: {
+        max_order_usd: numberOrZero(backtestForm.maxOrderUsd),
+        max_position_usd: numberOrZero(backtestForm.maxPositionUsd),
+        stop_loss_percent: numberOrZero(backtestForm.stopLossPercent),
+        take_profit_percent: numberOrZero(backtestForm.takeProfitPercent),
+        trailing_stop_percent: numberOrZero(backtestForm.trailingStopPercent),
+        breakeven_activation_percent: numberOrZero(backtestForm.breakevenPercent),
+        fee_percent: numberOrZero(backtestForm.feePercent),
+        slippage_percent: numberOrZero(backtestForm.slippagePercent),
+      },
     });
     if (!result.success) {
       setError(result.error || 'Nao foi possivel rodar o backtest');
@@ -2062,7 +2085,7 @@ export default function PlatformAdminPage() {
                         }))}
                         className="h-10 py-0 text-body-sm"
                       />
-                      <div className="grid gap-3 md:grid-cols-2">
+                      <div className="grid gap-3 md:grid-cols-3">
                         <input
                           value={backtestForm.symbol}
                           onChange={(event) => setBacktestForm((current) => ({
@@ -2071,6 +2094,20 @@ export default function PlatformAdminPage() {
                           }))}
                           placeholder="BTC"
                           className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                        <Select
+                          value={backtestForm.timeframe}
+                          options={[
+                            { value: '15m', label: '15 minutos' },
+                            { value: '1h', label: '1 hora' },
+                            { value: '4h', label: '4 horas' },
+                            { value: '1d', label: '1 dia' },
+                          ]}
+                          onChange={(event) => setBacktestForm((current) => ({
+                            ...current,
+                            timeframe: event.target.value,
+                          }))}
+                          className="h-10 py-0 text-body-sm"
                         />
                         <input
                           value={backtestForm.initialCapital}
@@ -2081,6 +2118,35 @@ export default function PlatformAdminPage() {
                           placeholder="Capital inicial USD"
                           className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                         />
+                      </div>
+                      <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-3">
+                        <p className="mb-3 text-caption font-semibold uppercase tracking-[0.2em] text-text-tertiary">
+                          Risco e execucao do backtest
+                        </p>
+                        <div className="grid gap-3 md:grid-cols-4">
+                          {[
+                            ['maxOrderUsd', 'Max ordem USD'],
+                            ['maxPositionUsd', 'Max posicao USD'],
+                            ['stopLossPercent', 'Stop loss %'],
+                            ['takeProfitPercent', 'Take profit %'],
+                            ['trailingStopPercent', 'Trailing %'],
+                            ['breakevenPercent', 'Breakeven apos %'],
+                            ['feePercent', 'Taxa %'],
+                            ['slippagePercent', 'Slippage %'],
+                          ].map(([key, label]) => (
+                            <label key={key} className="grid gap-1 text-caption text-text-tertiary">
+                              {label}
+                              <input
+                                value={String(backtestForm[key as keyof typeof backtestForm])}
+                                onChange={(event) => setBacktestForm((current) => ({
+                                  ...current,
+                                  [key]: event.target.value,
+                                }))}
+                                className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
+                              />
+                            </label>
+                          ))}
+                        </div>
                       </div>
                       <Button type="submit">Executar backtest</Button>
                     </form>
@@ -2096,6 +2162,9 @@ export default function PlatformAdminPage() {
                           </div>
                           <p className="mt-2 text-caption text-text-secondary">
                             Retorno: {String(backtest.result_summary.total_return_percent ?? 'n/a')}% - Trades: {String(backtest.result_summary.trade_count ?? 0)}
+                          </p>
+                          <p className="mt-1 text-caption text-text-tertiary">
+                            Drawdown: {String(backtest.metrics.max_drawdown_percent ?? 'n/a')}% - Fonte: {String(backtest.result_summary.candle_source ?? 'n/a')}
                           </p>
                           {backtest.error && <p className="mt-1 text-caption text-status-error">{backtest.error}</p>}
                         </div>

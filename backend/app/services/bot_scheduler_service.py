@@ -33,7 +33,7 @@ class BotSchedulerService:
     async def _try_acquire_scheduler_lock(self) -> bool:
         """Avoid duplicate scheduler loops when the API runs multiple workers."""
         try:
-            return bool(await self.db.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": self.SCHEDULER_LOCK_KEY}))
+            return bool(await self.db.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": self.SCHEDULER_LOCK_KEY}))
         except Exception as exc:
             await self.db.rollback()
             logger.warning("Bot scheduler advisory lock unavailable; continuing without global lock: %s", exc)
@@ -41,7 +41,10 @@ class BotSchedulerService:
 
     async def _release_scheduler_lock(self) -> None:
         try:
-            await self.db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": self.SCHEDULER_LOCK_KEY})
+            # The scheduler uses pg_try_advisory_xact_lock so the lock cannot
+            # leak into an idle pooled connection. A final rollback is harmless
+            # after per-cycle commits and releases the lock if no cycle committed.
+            await self.db.rollback()
         except Exception as exc:
             await self.db.rollback()
             logger.warning("Bot scheduler advisory lock release failed: %s", exc)

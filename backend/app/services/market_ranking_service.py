@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm import selectinload
 
 from app.models.market_candle import MarketCandle
@@ -73,6 +75,123 @@ def _validate_direction(direction: str) -> str:
     if normalized not in {"gainers", "losers"}:
         raise ValueError("ranking_direction_not_supported")
     return normalized
+
+
+def _coerce_int(value: Any, default: int, *, minimum: int = 1, maximum: int = 100) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_refresh_time(value: Any) -> time:
+    raw = str(value or "09:00").strip()
+    try:
+        hour_text, minute_text = raw.split(":", 1)
+        hour = max(0, min(int(hour_text), 23))
+        minute = max(0, min(int(minute_text), 59))
+    except (TypeError, ValueError):
+        hour, minute = 9, 0
+    return time(hour=hour, minute=minute)
+
+
+def _coerce_symbol_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    return []
+
+
+def _next_refresh_at(*, now: datetime, refresh_every_days: int, refresh_time: time, timezone_name: str) -> datetime:
+    try:
+        local_tz = ZoneInfo(timezone_name)
+    except Exception:
+        local_tz = timezone.utc
+    now_local = now.astimezone(local_tz)
+    target_today = datetime.combine(now_local.date(), refresh_time, tzinfo=local_tz)
+    if now_local < target_today:
+        next_local = target_today
+    else:
+        next_local = target_today + timedelta(days=refresh_every_days)
+    return next_local.astimezone(timezone.utc)
+
+
+def _normalize_basket_policy_key(policy: dict[str, Any], *, exchange: str, market_type: str, timeframe: str) -> dict[str, Any]:
+    legs = policy.get("legs")
+    normalized_legs: list[dict[str, int | str]] = []
+    if isinstance(legs, list):
+        for leg in legs:
+            if not isinstance(leg, dict):
+                continue
+            direction = str(leg.get("direction") or "").strip().lower()
+            if direction not in {"gainers", "losers"}:
+                continue
+            normalized_legs.append({"direction": direction, "top_n": _coerce_int(leg.get("top_n"), 10)})
+    if not normalized_legs:
+        normalized_legs = [{"direction": "losers", "top_n": 10}, {"direction": "gainers", "top_n": 10}]
+    return {
+        "source": "market_extremes",
+        "exchange": normalize_exchange_key(exchange),
+        "market_type": normalize_market_type(market_type),
+        "quote_asset": str(policy.get("quote_asset") or "USDT").strip().upper(),
+        "timeframe": _validate_timeframe(timeframe),
+        "source_timeframe": policy.get("source_timeframe"),
+        "min_quote_volume": str(policy.get("min_quote_volume") or 0),
+        "min_price": str(policy.get("min_price")) if policy.get("min_price") not in {None, ""} else None,
+        "max_price": str(policy.get("max_price")) if policy.get("max_price") not in {None, ""} else None,
+        "only_tradeable": policy.get("only_tradeable", True) is not False,
+        "max_snapshot_age_minutes": _coerce_int(policy.get("max_snapshot_age_minutes"), 180, minimum=5, maximum=10080),
+        "include_symbols": sorted(normalize_strategy_symbol(item) for item in _coerce_symbol_list(policy.get("include_symbols"))),
+        "exclude_symbols": sorted(normalize_strategy_symbol(item) for item in _coerce_symbol_list(policy.get("exclude_symbols"))),
+        "legs": normalized_legs,
+    }
+
+
+def _snapshot_matches_policy(snapshot: MarketRankingSnapshot, policy_key: dict[str, Any]) -> bool:
+    filters = (snapshot.metadata_json or {}).get("filters") or {}
+    expected_pairs = {
+        "quote_asset": policy_key["quote_asset"] or None,
+        "min_quote_volume": policy_key["min_quote_volume"],
+        "min_price": policy_key["min_price"],
+        "max_price": policy_key["max_price"],
+        "only_tradeable": policy_key["only_tradeable"],
+    }
+    for key, expected in expected_pairs.items():
+        if filters.get(key) != expected:
+            return False
+    if sorted(filters.get("include_symbols") or []) != policy_key["include_symbols"]:
+        return False
+    if sorted(filters.get("exclude_symbols") or []) != policy_key["exclude_symbols"]:
+        return False
+    return True
+
+
+def _snapshot_is_recent(snapshot: MarketRankingSnapshot, now: datetime, max_age_minutes: int) -> bool:
+    generated_at = snapshot.generated_at
+    if generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=timezone.utc)
+    else:
+        generated_at = generated_at.astimezone(timezone.utc)
+    return generated_at >= now - timedelta(minutes=max_age_minutes)
 
 
 class MarketRankingService:
@@ -403,8 +522,26 @@ class MarketRankingService:
         refresh_snapshot: bool = False,
     ) -> tuple[list[str], dict]:
         """Resolve dynamic market-ranking baskets for a bot instance."""
-        risk_config = getattr(instance, "risk_config", None) or {}
+        risk_config = getattr(instance, "risk_config", None)
+        if not isinstance(risk_config, dict):
+            risk_config = {}
         market_basket = risk_config.get("market_basket")
+        basket_policy = risk_config.get("basket_policy")
+        if isinstance(basket_policy, dict) and basket_policy.get("source") == "market_extremes":
+            return await self._resolve_market_extremes_basket(
+                instance=instance,
+                policy=basket_policy,
+                fallback_symbols=fallback_symbols,
+                refresh_snapshot=refresh_snapshot,
+            )
+        if isinstance(market_basket, dict) and market_basket.get("source") == "market_extremes":
+            return await self._resolve_market_extremes_basket(
+                instance=instance,
+                policy=market_basket,
+                fallback_symbols=fallback_symbols,
+                refresh_snapshot=refresh_snapshot,
+            )
+
         if not isinstance(market_basket, dict) or market_basket.get("source") != "market_ranking":
             return fallback_symbols, {"source": "static", "symbol_count": len(fallback_symbols)}
 
@@ -476,4 +613,167 @@ class MarketRankingService:
             "timeframe": snapshot.timeframe,
             "direction": snapshot.direction,
             "symbol_count": len(symbols),
+        }
+
+    async def _resolve_market_extremes_basket(
+        self,
+        *,
+        instance: Any,
+        policy: dict[str, Any],
+        fallback_symbols: list[str],
+        refresh_snapshot: bool,
+    ) -> tuple[list[str], dict]:
+        """Build or reuse a bot-owned basket from top gainers and losers."""
+        risk_config = getattr(instance, "risk_config", None)
+        if not isinstance(risk_config, dict):
+            risk_config = {}
+            instance.risk_config = risk_config
+        exchange = policy.get("exchange") or getattr(getattr(instance, "exchange", None), "exchange", None)
+        if not exchange:
+            return [], {"source": "market_extremes", "error": "missing_exchange"}
+
+        market_type = policy.get("market_type") or "futures"
+        timeframe = policy.get("timeframe") or "7d"
+        try:
+            policy_key = _normalize_basket_policy_key(
+                policy,
+                exchange=str(exchange),
+                market_type=str(market_type),
+                timeframe=str(timeframe),
+            )
+        except ValueError as exc:
+            return [], {"source": "market_extremes", "error": str(exc)}
+
+        now = datetime.now(timezone.utc)
+        active_basket = risk_config.get("active_basket")
+        if isinstance(active_basket, dict):
+            active_symbols = [
+                normalize_strategy_symbol(symbol)
+                for symbol in (active_basket.get("symbols") or [])
+                if str(symbol or "").strip()
+            ]
+            next_refresh_at = _parse_datetime(active_basket.get("next_refresh_at"))
+            if (
+                active_basket.get("source") == "market_extremes"
+                and active_basket.get("policy_key") == policy_key
+                and active_symbols
+                and next_refresh_at is not None
+                and next_refresh_at > now
+            ):
+                return active_symbols, {
+                    "source": "market_extremes",
+                    "status": "cached",
+                    "symbol_count": len(active_symbols),
+                    "generated_at": active_basket.get("generated_at"),
+                    "next_refresh_at": active_basket.get("next_refresh_at"),
+                    "legs": active_basket.get("legs") or [],
+                }
+
+        symbols: list[str] = []
+        seen_symbols: set[str] = set()
+        leg_metadata: list[dict[str, Any]] = []
+        max_snapshot_age_minutes = int(policy_key["max_snapshot_age_minutes"])
+        for leg in policy_key["legs"]:
+            direction = str(leg["direction"])
+            top_n = int(leg["top_n"])
+            snapshot = await self.get_latest_snapshot(
+                exchange=policy_key["exchange"],
+                market_type=policy_key["market_type"],
+                timeframe=policy_key["timeframe"],
+                direction=direction,
+                top_n=top_n,
+            )
+            if (
+                snapshot is not None
+                and (
+                    not _snapshot_matches_policy(snapshot, policy_key)
+                    or not _snapshot_is_recent(snapshot, now, max_snapshot_age_minutes)
+                )
+            ):
+                snapshot = None
+
+            if snapshot is None and refresh_snapshot:
+                try:
+                    snapshot = await self.generate_snapshot(
+                        exchange=policy_key["exchange"],
+                        market_type=policy_key["market_type"],
+                        timeframe=policy_key["timeframe"],
+                        direction=direction,
+                        top_n=top_n,
+                        source_timeframe=policy_key["source_timeframe"],
+                        min_quote_volume=policy_key["min_quote_volume"],
+                        min_price=policy_key["min_price"],
+                        max_price=policy_key["max_price"],
+                        quote_asset=policy_key["quote_asset"],
+                        include_symbols=policy_key["include_symbols"],
+                        exclude_symbols=policy_key["exclude_symbols"],
+                        only_tradeable=bool(policy_key["only_tradeable"]),
+                    )
+                except ValueError:
+                    snapshot = None
+            leg_symbols: list[str] = []
+            if snapshot is not None:
+                for item in snapshot.items[:top_n]:
+                    symbol = normalize_strategy_symbol(item.symbol)
+                    if not symbol:
+                        continue
+                    leg_symbols.append(symbol)
+                    if symbol in seen_symbols:
+                        continue
+                    seen_symbols.add(symbol)
+                    symbols.append(symbol)
+            leg_metadata.append(
+                {
+                    "direction": direction,
+                    "top_n": top_n,
+                    "snapshot_id": str(snapshot.id) if snapshot is not None else None,
+                    "generated_at": snapshot.generated_at.isoformat() if snapshot is not None else None,
+                    "symbols": leg_symbols,
+                    "symbol_count": len(leg_symbols),
+                }
+            )
+
+        if not symbols:
+            return [], {
+                "source": "market_extremes",
+                "error": "missing_snapshot",
+                "exchange": policy_key["exchange"],
+                "market_type": policy_key["market_type"],
+                "timeframe": policy_key["timeframe"],
+                "legs": leg_metadata,
+            }
+
+        refresh_every_days = _coerce_int(policy.get("refresh_every_days"), 7, minimum=1, maximum=90)
+        refresh_at = _parse_refresh_time(policy.get("refresh_time"))
+        timezone_name = str(policy.get("timezone") or "America/Sao_Paulo")
+        next_refresh_at = _next_refresh_at(
+            now=now,
+            refresh_every_days=refresh_every_days,
+            refresh_time=refresh_at,
+            timezone_name=timezone_name,
+        )
+        risk_config["active_basket"] = {
+            "source": "market_extremes",
+            "policy_key": policy_key,
+            "symbols": symbols,
+            "generated_at": now.isoformat(),
+            "next_refresh_at": next_refresh_at.isoformat(),
+            "refresh_every_days": refresh_every_days,
+            "refresh_time": refresh_at.strftime("%H:%M"),
+            "timezone": timezone_name,
+            "legs": leg_metadata,
+            "symbol_count": len(symbols),
+        }
+        try:
+            flag_modified(instance, "risk_config")
+        except Exception:
+            pass
+
+        return symbols, {
+            "source": "market_extremes",
+            "status": "generated",
+            "symbol_count": len(symbols),
+            "generated_at": now.isoformat(),
+            "next_refresh_at": next_refresh_at.isoformat(),
+            "legs": leg_metadata,
         }
