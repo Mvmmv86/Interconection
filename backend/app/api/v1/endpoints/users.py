@@ -76,6 +76,7 @@ async def list_my_memberships(
                 id=membership.organization.id,
                 name=membership.organization.name,
                 slug=membership.organization.slug,
+                plan=membership.organization.plan.value,
             ),
             role_id=membership.role_id,
             role_name=membership.role.name if membership.role else "",

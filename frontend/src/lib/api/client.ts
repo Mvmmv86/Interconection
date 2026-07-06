@@ -267,6 +267,7 @@ interface AccountMembership {
     id: string;
     name: string;
     slug: string;
+    plan: 'free' | 'pro' | 'enterprise';
   };
   role_id: string;
   role_name: string;

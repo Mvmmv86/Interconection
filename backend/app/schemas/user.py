@@ -64,6 +64,7 @@ class UserMembershipOrganization(BaseSchema):
     id: UUID
     name: str
     slug: str
+    plan: str
 
 
 class UserMembershipResponse(BaseSchema):

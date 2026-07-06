@@ -38,6 +38,13 @@ type TemplateConfig = {
 type BasketMode = 'market_extremes' | 'scanner';
 type RankingDirection = 'gainers' | 'losers';
 type RankingTimeframe = '1h' | '24h' | '7d' | '30d';
+type PlanName = 'free' | 'pro' | 'enterprise';
+
+const planRank: Record<PlanName, number> = {
+  free: 0,
+  pro: 1,
+  enterprise: 2,
+};
 
 const defaultTemplateConfig: TemplateConfig = {
   clientId: '',
@@ -65,6 +72,17 @@ function splitCsv(value: string) {
 function asNumber(value: string, fallback: number) {
   const parsed = Number.parseFloat(value.replace(',', '.'));
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizePlan(value: string | null | undefined): PlanName {
+  const normalized = String(value || 'free').toLowerCase();
+  if (normalized === 'enterprise') return 'enterprise';
+  if (normalized === 'pro') return 'pro';
+  return 'free';
+}
+
+function planAllows(currentPlan: string | null | undefined, requiredPlan: string | null | undefined) {
+  return planRank[normalizePlan(currentPlan)] >= planRank[normalizePlan(requiredPlan)];
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -156,7 +174,7 @@ function botGateRows(signal: BotSignal | undefined) {
 }
 
 export default function BotsPage() {
-  const { can } = useAuth();
+  const { can, activeMembership } = useAuth();
   const [templates, setTemplates] = useState<BotTemplate[]>([]);
   const [strategies, setStrategies] = useState<BotStrategy[]>([]);
   const [instances, setInstances] = useState<BotInstance[]>([]);
@@ -178,6 +196,7 @@ export default function BotsPage() {
   const [isRankingLoading, setIsRankingLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunningId, setIsRunningId] = useState<string | null>(null);
+  const [isActivatingId, setIsActivatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const didLoadInitialRanking = useRef(false);
 
@@ -330,7 +349,16 @@ export default function BotsPage() {
   };
 
   const activateBot = async (template: BotTemplate) => {
+    setError(null);
     const config = getTemplateConfig(template.id);
+    if (!can('bots:activate')) {
+      setError('Seu papel atual nao permite ativar bots. Peça para um owner/admin liberar bots:activate ou ativar por voce.');
+      return;
+    }
+    if (!planAllows(activeMembership?.organization.plan, template.required_plan)) {
+      setError(`Este bot exige plano ${template.required_plan.toUpperCase()}, mas a conta ativa esta no plano ${normalizePlan(activeMembership?.organization.plan).toUpperCase()}.`);
+      return;
+    }
     if (!config.clientId) {
       setError('Selecione uma carteira para ativar o bot');
       return;
@@ -370,6 +398,7 @@ export default function BotsPage() {
           ].filter((leg) => leg.top_n > 0),
         }
       : undefined;
+    setIsActivatingId(template.id);
     const result = await api.createBotInstance({
       template_id: template.id,
       client_id: config.clientId,
@@ -394,21 +423,22 @@ export default function BotsPage() {
                 quote_asset: rankingQuoteAsset,
                 timeframe: config.basketTimeframe,
               }
-          : {
-              source: 'market_ranking',
-              snapshot_id: marketRanking?.snapshot_id || null,
-              exchange: rankingExchange,
-              market_type: rankingMarketType,
-              timeframe: rankingTimeframe,
-              direction: rankingDirection,
-              top_n: Number(rankingTopN),
-              min_quote_volume: Number.parseFloat(rankingMinVolume.replace(',', '.')) || 0,
-              min_price: rankingMinPrice ? Number.parseFloat(rankingMinPrice.replace(',', '.')) : null,
-              max_price: rankingMaxPrice ? Number.parseFloat(rankingMaxPrice.replace(',', '.')) : null,
-              quote_asset: rankingQuoteAsset,
-            },
+            : {
+                source: 'market_ranking',
+                snapshot_id: marketRanking?.snapshot_id || null,
+                exchange: rankingExchange,
+                market_type: rankingMarketType,
+                timeframe: rankingTimeframe,
+                direction: rankingDirection,
+                top_n: Number(rankingTopN),
+                min_quote_volume: Number.parseFloat(rankingMinVolume.replace(',', '.')) || 0,
+                min_price: rankingMinPrice ? Number.parseFloat(rankingMinPrice.replace(',', '.')) : null,
+                max_price: rankingMaxPrice ? Number.parseFloat(rankingMaxPrice.replace(',', '.')) : null,
+                quote_asset: rankingQuoteAsset,
+              },
       },
     });
+    setIsActivatingId(null);
     if (!result.success) {
       setError(result.error || 'Nao foi possivel ativar o bot');
       return;
@@ -709,6 +739,15 @@ export default function BotsPage() {
                 const hasManualSymbols = splitCsv(config.allowedSymbols).length > 0;
                 const hasScannerBasket = Boolean(marketRanking?.snapshot_id && marketRanking.items.length > 0);
                 const needsScannerBasket = !hasManualSymbols && config.basketMode === 'scanner';
+                const activationBlockReasons = [
+                  !can('bots:activate') ? 'Seu papel atual nao permite ativar bots nesta conta.' : '',
+                  !planAllows(activeMembership?.organization.plan, template.required_plan)
+                    ? `Este bot exige plano ${template.required_plan.toUpperCase()}; conta ativa: ${normalizePlan(activeMembership?.organization.plan).toUpperCase()}.`
+                    : '',
+                  !config.clientId ? 'Selecione uma carteira para ativar.' : '',
+                  requiresExchange && !config.exchangeId ? `Selecione uma conexao ${supportedExchangeLabel}.` : '',
+                  needsScannerBasket && !hasScannerBasket ? 'Carregue um ranking no scanner ou use a cesta automatica.' : '',
+                ].filter(Boolean);
                 const exchangeOptions = [
                   { value: '', label: supportedExchangeKeys.length ? `Selecione ${supportedExchangeLabel}` : 'Exchange opcional' },
                   ...compatibleExchanges.map((exchange) => ({
@@ -746,17 +785,20 @@ export default function BotsPage() {
                         <Button
                           type="button"
                           disabled={
-                            !can('bots:activate')
-                            || !config.clientId
-                            || (requiresExchange && !config.exchangeId)
-                            || (needsScannerBasket && !hasScannerBasket)
+                            activationBlockReasons.length > 0
+                            || isActivatingId === template.id
                           }
                           onClick={() => activateBot(template)}
                         >
                           <Zap className="h-4 w-4" />
-                          Ativar paper
+                          {isActivatingId === template.id ? 'Ativando...' : 'Ativar paper'}
                         </Button>
                       </div>
+                      {activationBlockReasons.length > 0 && (
+                        <div className="rounded-lg border border-status-warning/30 bg-status-warning/10 px-3 py-2 text-caption text-status-warning">
+                          {activationBlockReasons.join(' ')}
+                        </div>
+                      )}
 
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <Select
@@ -895,6 +937,10 @@ export default function BotsPage() {
                 <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-8 text-center">
                   <ShieldCheck className="mx-auto mb-3 h-8 w-8 text-text-muted" />
                   <p className="text-body-sm text-text-secondary">Nenhum bot ativado nesta conta.</p>
+                  <p className="mx-auto mt-2 max-w-md text-caption text-text-tertiary">
+                    Depois da ativacao, o bot aparece aqui. A cesta de ativos monitorados fica no card da instancia
+                    e é preenchida no primeiro ciclo paper ou no proximo ciclo automatico do scheduler.
+                  </p>
                 </div>
               )}
               {instances.map((instance) => {
