@@ -19,6 +19,54 @@ interface TokenResponse {
   expires_in: number;
 }
 
+function stringifyApiErrorValue(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+
+  if (Array.isArray(value)) {
+    const messages = value
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object') {
+          const record = item as Record<string, unknown>;
+          return stringifyApiErrorValue(record.msg || record.message || record.detail || record.error);
+        }
+        return stringifyApiErrorValue(item);
+      })
+      .filter((item): item is string => Boolean(item));
+
+    return messages.length ? messages.join('; ') : null;
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const nested = stringifyApiErrorValue(record.message || record.detail || record.error || record.msg);
+    if (nested) return nested;
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return 'Erro inesperado';
+    }
+  }
+
+  return null;
+}
+
+function normalizeApiError(errorData: unknown, status: number): string {
+  if (errorData && typeof errorData === 'object') {
+    const record = errorData as Record<string, unknown>;
+    return (
+      stringifyApiErrorValue(record.message)
+      || stringifyApiErrorValue(record.detail)
+      || stringifyApiErrorValue(record.error)
+      || `HTTP ${status}`
+    );
+  }
+
+  return stringifyApiErrorValue(errorData) || `HTTP ${status}`;
+}
+
 interface WalletData {
   id: string;
   address: string;
@@ -776,7 +824,7 @@ class ApiClient {
         const errorData = await response.json().catch(() => ({}));
         return {
           success: false,
-          error: errorData.message || errorData.detail || `HTTP ${response.status}`,
+          error: normalizeApiError(errorData, response.status),
         };
       }
 
@@ -784,7 +832,7 @@ class ApiClient {
         const errorData = await response.json().catch(() => ({}));
         return {
           success: false,
-          error: errorData.message || errorData.detail || `HTTP ${response.status}`,
+          error: normalizeApiError(errorData, response.status),
         };
       }
 
