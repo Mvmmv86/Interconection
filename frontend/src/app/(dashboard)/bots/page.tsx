@@ -695,7 +695,9 @@ export default function BotsPage() {
               )}
               {templates.map((template) => {
                 const config = getTemplateConfig(template.id);
-                const supportedExchangeKeys = template.supported_exchanges.map((item) => item.toLowerCase());
+                const supportedExchanges = asStringArray(template.supported_exchanges);
+                const supportedAssets = asStringArray(template.supported_assets);
+                const supportedExchangeKeys = supportedExchanges.map((item) => item.toLowerCase());
                 const compatibleExchanges = (exchangesByClient[config.clientId] || []).filter((exchange) => (
                   exchange.is_active !== false
                   && (supportedExchangeKeys.length === 0 || supportedExchangeKeys.includes(exchange.exchange.toLowerCase()))
@@ -730,10 +732,10 @@ export default function BotsPage() {
                             {template.description || 'Bot produto publicado pela plataforma.'}
                           </p>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {(template.supported_exchanges.length ? template.supported_exchanges : ['exchange opcional']).map((item) => (
+                            {(supportedExchanges.length ? supportedExchanges : ['exchange opcional']).map((item) => (
                               <Badge key={item} variant="default" size="sm">{item}</Badge>
                             ))}
-                            {template.supported_assets.map((item) => (
+                            {supportedAssets.map((item) => (
                               <Badge key={item} variant="success" size="sm">{item}</Badge>
                             ))}
                           </div>
@@ -897,6 +899,7 @@ export default function BotsPage() {
               )}
               {instances.map((instance) => {
                 const basket = botBasketView(instance);
+                const riskConfig = isRecord(instance.risk_config) ? instance.risk_config : {};
                 const latestSignal = (signalsByInstance[instance.id] || [])[0];
                 const gateRows = botGateRows(latestSignal);
                 return (
@@ -917,8 +920,8 @@ export default function BotsPage() {
                   </p>
                   <div className="mt-3 grid gap-3 rounded-lg border border-border-subtle bg-background-primary/60 p-3 text-caption text-text-secondary">
                     <div className="grid gap-2 md:grid-cols-3">
-                      <p>Max ordem: ${String(instance.risk_config.max_order_usd || 0)}</p>
-                      <p>Max posicao: ${String(instance.risk_config.max_position_usd || 0)}</p>
+                      <p>Max ordem: {formatCompactUsd(Number(riskConfig.max_order_usd || 0))}</p>
+                      <p>Max posicao: {formatCompactUsd(Number(riskConfig.max_position_usd || 0))}</p>
                       <p>Cesta: {basket.source === 'market_extremes' ? 'Auto altas + quedas' : basket.source}</p>
                     </div>
                     <div>
