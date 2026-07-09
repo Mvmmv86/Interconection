@@ -7,7 +7,8 @@ simulation outside the FastAPI event loop.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -90,9 +91,11 @@ class BotBacktestService:
             ascending=True,
         )
         data_quality = self.engine._data_quality(candles)
-        data_warnings = self.engine._data_quality_warnings(data_quality)
+        coverage_quality = self._coverage_quality(candles, run.timeframe, run.period_start, run.period_end)
+        data_warnings = self.engine._data_quality_warnings(data_quality) + coverage_quality["warnings"]
         data_quality = {
             **data_quality,
+            **coverage_quality,
             "requested_limit": limit,
             "candle_source": candle_source,
             "warnings": data_warnings,
@@ -153,7 +156,18 @@ class BotBacktestService:
         losing_trades = 0
         peak_equity = cash
         max_drawdown = Decimal("0")
+        max_drawdown_usd = Decimal("0")
         trade_count = 0
+        trade_returns: list[Decimal] = []
+        bars_in_market = 0
+        best_trade_return: Decimal | None = None
+        worst_trade_return: Decimal | None = None
+        current_win_streak = 0
+        current_loss_streak = 0
+        max_win_streak = 0
+        max_loss_streak = 0
+        previous_equity: Decimal | None = None
+        equity_returns: list[float] = []
 
         for index, candle in enumerate(candles):
             price = Decimal(str(_candle_close_value(candle)))
@@ -169,7 +183,12 @@ class BotBacktestService:
             equity = cash + units * price
             peak_equity = max(peak_equity, equity)
             drawdown = (peak_equity - equity) / peak_equity * Decimal("100") if peak_equity > 0 else Decimal("0")
+            drawdown_usd = peak_equity - equity
             max_drawdown = max(max_drawdown, drawdown)
+            max_drawdown_usd = max(max_drawdown_usd, drawdown_usd)
+            if previous_equity is not None and previous_equity > 0:
+                equity_returns.append(float((equity - previous_equity) / previous_equity))
+            previous_equity = equity
             equity_curve.append({"time": timestamp.isoformat(), "equity": _json_number(equity)})
             drawdown_curve.append({"time": timestamp.isoformat(), "drawdown_percent": _json_number(drawdown)})
 
@@ -207,7 +226,8 @@ class BotBacktestService:
                     exit_reason = "breakeven_guard"
 
             if units > 0 and exit_passed:
-                net_pnl, gross_pnl, fee_paid, slippage_paid = self._close_trade(
+                bars_held = max(1, index - entry_index)
+                net_pnl, gross_pnl, fee_paid, slippage_paid, return_percent = self._close_trade(
                     run=run,
                     timestamp=timestamp,
                     price=price,
@@ -220,23 +240,33 @@ class BotBacktestService:
                     highest_since_entry=highest_since_entry,
                     entry_reason=entry_reason,
                     exit_reason=exit_reason,
-                    bars_held=max(1, index - entry_index),
+                    bars_held=bars_held,
                     exit_evaluations=exit_evaluations,
                     fee_percent=fee_percent,
                     slippage_percent=slippage_percent,
                 )
+                bars_in_market += bars_held
                 gross_proceeds = units * (price * (Decimal("1") - slippage_percent / Decimal("100")))
                 cash += max(Decimal("0"), gross_proceeds - fee_paid)
                 realized_net_pnl += net_pnl
                 realized_gross_pnl += gross_pnl
                 total_fees += fee_paid
                 total_slippage += slippage_paid
+                trade_returns.append(return_percent)
+                best_trade_return = return_percent if best_trade_return is None else max(best_trade_return, return_percent)
+                worst_trade_return = return_percent if worst_trade_return is None else min(worst_trade_return, return_percent)
                 if net_pnl >= 0:
                     winning_trades += 1
                     gross_profit += net_pnl
+                    current_win_streak += 1
+                    current_loss_streak = 0
+                    max_win_streak = max(max_win_streak, current_win_streak)
                 else:
                     losing_trades += 1
                     gross_loss += net_pnl
+                    current_loss_streak += 1
+                    current_win_streak = 0
+                    max_loss_streak = max(max_loss_streak, current_loss_streak)
                 trade_count += 1
                 units = Decimal("0")
                 entry_price = Decimal("0")
@@ -304,7 +334,8 @@ class BotBacktestService:
         if units > 0:
             last_candle = candles[-1]
             last_price = Decimal(str(_candle_close_value(last_candle)))
-            net_pnl, gross_pnl, fee_paid, slippage_paid = self._close_trade(
+            bars_held = max(1, len(candles) - 1 - entry_index)
+            net_pnl, gross_pnl, fee_paid, slippage_paid, return_percent = self._close_trade(
                 run=run,
                 timestamp=_candle_timestamp(last_candle),
                 price=last_price,
@@ -317,29 +348,57 @@ class BotBacktestService:
                 highest_since_entry=highest_since_entry,
                 entry_reason=entry_reason,
                 exit_reason="end_of_period",
-                bars_held=max(1, len(candles) - 1 - entry_index),
+                bars_held=bars_held,
                 exit_evaluations=[],
                 fee_percent=fee_percent,
                 slippage_percent=slippage_percent,
             )
+            bars_in_market += bars_held
             gross_proceeds = units * (last_price * (Decimal("1") - slippage_percent / Decimal("100")))
             cash += max(Decimal("0"), gross_proceeds - fee_paid)
             realized_net_pnl += net_pnl
             realized_gross_pnl += gross_pnl
             total_fees += fee_paid
             total_slippage += slippage_paid
+            trade_returns.append(return_percent)
+            best_trade_return = return_percent if best_trade_return is None else max(best_trade_return, return_percent)
+            worst_trade_return = return_percent if worst_trade_return is None else min(worst_trade_return, return_percent)
             if net_pnl >= 0:
                 winning_trades += 1
                 gross_profit += net_pnl
+                current_win_streak += 1
+                current_loss_streak = 0
+                max_win_streak = max(max_win_streak, current_win_streak)
             else:
                 losing_trades += 1
                 gross_loss += net_pnl
+                current_loss_streak += 1
+                current_win_streak = 0
+                max_loss_streak = max(max_loss_streak, current_loss_streak)
             trade_count += 1
 
         ending_equity = cash
         roi_percent = (ending_equity - initial_capital) / initial_capital * Decimal("100") if initial_capital > 0 else Decimal("0")
         win_rate = Decimal(winning_trades) / Decimal(trade_count) * Decimal("100") if trade_count else Decimal("0")
         profit_factor = gross_profit / abs(gross_loss) if gross_loss < 0 else (gross_profit if gross_profit > 0 else Decimal("0"))
+        avg_win = gross_profit / Decimal(winning_trades) if winning_trades else Decimal("0")
+        avg_loss = gross_loss / Decimal(losing_trades) if losing_trades else Decimal("0")
+        payoff_ratio = avg_win / abs(avg_loss) if avg_loss < 0 else (avg_win if avg_win > 0 else Decimal("0"))
+        expectancy = realized_net_pnl / Decimal(trade_count) if trade_count else Decimal("0")
+        expectancy_percent = sum(trade_returns, Decimal("0")) / Decimal(trade_count) if trade_count else Decimal("0")
+        exposure_percent = Decimal(bars_in_market) / Decimal(max(1, len(candles))) * Decimal("100")
+        avg_bars_held = Decimal(bars_in_market) / Decimal(trade_count) if trade_count else Decimal("0")
+        buy_hold_roi = self._buy_hold_roi(candles)
+        buy_hold_pnl = initial_capital * buy_hold_roi / Decimal("100")
+        alpha_vs_buy_hold = roi_percent - buy_hold_roi
+        annualization = self._annualization_metrics(
+            equity_returns=equity_returns,
+            timeframe=run.timeframe,
+            initial_capital=initial_capital,
+            ending_equity=ending_equity,
+            max_drawdown=max_drawdown,
+        )
+        recovery_factor = realized_net_pnl / max_drawdown_usd if max_drawdown_usd > 0 else Decimal("0")
         metrics = {
             "initial_capital_usd": _json_number(initial_capital),
             "ending_equity_usd": _json_number(ending_equity),
@@ -355,6 +414,23 @@ class BotBacktestService:
             "fees_paid_usd": _json_number(total_fees),
             "slippage_paid_usd": _json_number(total_slippage),
             "sample_count": len(candles),
+            "avg_win_usd": _json_number(avg_win),
+            "avg_loss_usd": _json_number(avg_loss),
+            "payoff_ratio": _json_number(payoff_ratio),
+            "expectancy_usd": _json_number(expectancy),
+            "expectancy_percent": _json_number(expectancy_percent),
+            "exposure_percent": _json_number(exposure_percent),
+            "avg_bars_held": _json_number(avg_bars_held),
+            "best_trade_percent": _json_number(best_trade_return or Decimal("0")),
+            "worst_trade_percent": _json_number(worst_trade_return or Decimal("0")),
+            "max_consecutive_wins": max_win_streak,
+            "max_consecutive_losses": max_loss_streak,
+            "max_drawdown_usd": _json_number(max_drawdown_usd),
+            "recovery_factor": _json_number(recovery_factor),
+            "buy_hold_roi_percent": _json_number(buy_hold_roi),
+            "buy_hold_pnl_usd": _json_number(buy_hold_pnl),
+            "alpha_vs_buy_hold_percent": _json_number(alpha_vs_buy_hold),
+            **annualization,
         }
         run.status = BotBacktestStatus.SUCCEEDED
         run.progress = 100
@@ -400,7 +476,7 @@ class BotBacktestService:
         exit_evaluations: list[dict],
         fee_percent: Decimal,
         slippage_percent: Decimal,
-    ) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    ) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal]:
         execution_price = price * (Decimal("1") - slippage_percent / Decimal("100"))
         gross_pnl = (execution_price - entry_price) * units
         gross_proceeds = units * execution_price
@@ -443,7 +519,108 @@ class BotBacktestService:
                 raw_payload={"exit_conditions": exit_evaluations},
             )
         )
-        return net_pnl, gross_pnl, exit_fee, exit_slippage
+        return net_pnl, gross_pnl, exit_fee, exit_slippage, return_percent
+
+    def _coverage_quality(
+        self,
+        candles: list,
+        timeframe: str,
+        period_start: datetime | None,
+        period_end: datetime | None,
+    ) -> dict:
+        warnings: list[str] = []
+        if period_start is None or period_end is None:
+            return {
+                "expected_rows": len(candles),
+                "period_coverage_percent": 100,
+                "first_candle_at": self._candle_open_time(candles[0]).isoformat() if candles and self._candle_open_time(candles[0]) else None,
+                "last_candle_at": self._candle_open_time(candles[-1]).isoformat() if candles and self._candle_open_time(candles[-1]) else None,
+                "warnings": warnings,
+            }
+        seconds = self._timeframe_seconds(timeframe)
+        normalized_start = self._coerce_utc(period_start)
+        normalized_end = self._coerce_utc(period_end)
+        expected_rows = max(1, int((period_end - period_start).total_seconds() // seconds))
+        first_at = self._candle_open_time(candles[0]) if candles else None
+        last_at = self._candle_open_time(candles[-1]) if candles else None
+        coverage_percent = Decimal(len(candles)) / Decimal(expected_rows) * Decimal("100") if expected_rows else Decimal("100")
+        if first_at is not None and first_at > normalized_start + self._timeframe_tolerance(timeframe):
+            warnings.append("requested_period_starts_before_available_history")
+        if last_at is not None and last_at < normalized_end - self._timeframe_tolerance(timeframe):
+            warnings.append("requested_period_ends_after_available_history")
+        if coverage_percent < Decimal("90"):
+            warnings.append("period_coverage_below_90_percent")
+        return {
+            "expected_rows": expected_rows,
+            "period_coverage_percent": _json_number(min(coverage_percent, Decimal("100"))),
+            "first_candle_at": first_at.isoformat() if first_at else None,
+            "last_candle_at": last_at.isoformat() if last_at else None,
+            "warnings": warnings,
+        }
+
+    def _candle_open_time(self, candle: object) -> datetime | None:
+        value = getattr(candle, "open_time", None)
+        if value is None and isinstance(candle, dict):
+            value = candle.get("open_time") or candle.get("time")
+        if isinstance(value, datetime):
+            return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return None
+
+    def _timeframe_tolerance(self, timeframe: str):
+        return timedelta(seconds=self._timeframe_seconds(timeframe) * 2)
+
+    def _coerce_utc(self, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _buy_hold_roi(self, candles: list) -> Decimal:
+        if len(candles) < 2:
+            return Decimal("0")
+        first = Decimal(str(_candle_close_value(candles[0])))
+        last = Decimal(str(_candle_close_value(candles[-1])))
+        if first <= 0:
+            return Decimal("0")
+        return (last - first) / first * Decimal("100")
+
+    def _annualization_metrics(
+        self,
+        *,
+        equity_returns: list[float],
+        timeframe: str,
+        initial_capital: Decimal,
+        ending_equity: Decimal,
+        max_drawdown: Decimal,
+    ) -> dict:
+        periods_per_year = 365 * 24 * 3600 / self._timeframe_seconds(timeframe)
+        mean_return = sum(equity_returns) / len(equity_returns) if equity_returns else 0.0
+        volatility = self._stddev(equity_returns)
+        downside = self._stddev([item for item in equity_returns if item < 0])
+        sharpe = mean_return / volatility * math.sqrt(periods_per_year) if volatility > 0 else 0.0
+        sortino = mean_return / downside * math.sqrt(periods_per_year) if downside > 0 else 0.0
+        total_return = float(ending_equity / initial_capital) if initial_capital > 0 else 0.0
+        annualized_return = 0.0
+        if total_return > 0 and equity_returns:
+            annualized_return = (total_return ** (periods_per_year / len(equity_returns)) - 1) * 100
+        calmar = annualized_return / float(max_drawdown) if max_drawdown > 0 else 0.0
+        return {
+            "annualized_return_percent": self._finite_number(annualized_return),
+            "annualized_volatility_percent": self._finite_number(volatility * math.sqrt(periods_per_year) * 100),
+            "sharpe_ratio": self._finite_number(sharpe),
+            "sortino_ratio": self._finite_number(sortino),
+            "calmar_ratio": self._finite_number(calmar),
+        }
+
+    def _stddev(self, values: list[float]) -> float:
+        clean_values = [item for item in values if math.isfinite(item)]
+        if len(clean_values) < 2:
+            return 0.0
+        mean = sum(clean_values) / len(clean_values)
+        variance = sum((item - mean) ** 2 for item in clean_values) / (len(clean_values) - 1)
+        return math.sqrt(max(0.0, variance))
+
+    def _finite_number(self, value: float) -> float:
+        return value if math.isfinite(value) else 0.0
 
     def _bounded_percent(self, value: object, ceiling: int) -> Decimal:
         parsed = Decimal(str(value or 0))

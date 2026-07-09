@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bot, Pause, Play, RefreshCw, ShieldCheck, Sparkles, Zap } from 'lucide-react';
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bot, Pause, Play, RefreshCw, ShieldCheck, Sparkles, X, Zap } from 'lucide-react';
 import {
   api,
   type BotInstance,
+  type BotBacktestRun,
   type BotMarketRanking,
   type BotMarketUniverseAsset,
   type BotSignal,
@@ -39,6 +40,17 @@ type BasketMode = 'market_extremes' | 'scanner';
 type RankingDirection = 'gainers' | 'losers';
 type RankingTimeframe = '1h' | '24h' | '7d' | '30d';
 type PlanName = 'free' | 'pro' | 'enterprise';
+type BacktestForm = {
+  timeframe: string;
+  months: string;
+  initialCapitalUsd: string;
+  feePercent: string;
+  slippagePercent: string;
+};
+type BacktestSelection = {
+  instance: BotInstance;
+  symbol: string;
+};
 
 const planRank: Record<PlanName, number> = {
   free: 0,
@@ -60,6 +72,14 @@ const defaultTemplateConfig: TemplateConfig = {
   basketTopLosers: '10',
   basketRefreshDays: '7',
   basketRefreshTime: '09:00',
+};
+
+const defaultBacktestForm: BacktestForm = {
+  timeframe: '4h',
+  months: '6',
+  initialCapitalUsd: '10000',
+  feePercent: '0.1',
+  slippagePercent: '0.05',
 };
 
 function splitCsv(value: string) {
@@ -114,6 +134,19 @@ function formatPercent(value: number | null | undefined) {
   const amount = Number(value || 0);
   if (!Number.isFinite(amount)) return '0.00%';
   return `${amount >= 0 ? '+' : ''}${amount.toFixed(2)}%`;
+}
+
+function metricNumber(run: BotBacktestRun | null, key: string) {
+  const value = run?.metrics?.[key] ?? run?.result_summary?.[key];
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function metricLabel(run: BotBacktestRun | null, key: string, kind: 'usd' | 'percent' | 'number' = 'number') {
+  const value = metricNumber(run, key);
+  if (kind === 'usd') return formatCompactUsd(value);
+  if (kind === 'percent') return formatPercent(value);
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -197,6 +230,11 @@ export default function BotsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRunningId, setIsRunningId] = useState<string | null>(null);
   const [isActivatingId, setIsActivatingId] = useState<string | null>(null);
+  const [backtestSelection, setBacktestSelection] = useState<BacktestSelection | null>(null);
+  const [backtestForm, setBacktestForm] = useState<BacktestForm>(defaultBacktestForm);
+  const [backtestRun, setBacktestRun] = useState<BotBacktestRun | null>(null);
+  const [isBacktestSubmitting, setIsBacktestSubmitting] = useState(false);
+  const [backtestError, setBacktestError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const didLoadInitialRanking = useRef(false);
 
@@ -306,6 +344,19 @@ export default function BotsPage() {
   useEffect(() => {
     loadMarketUniverse();
   }, [loadMarketUniverse]);
+
+  useEffect(() => {
+    if (!backtestRun || !['running', 'queued', 'pending'].includes(String(backtestRun.status).toLowerCase())) {
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      const result = await api.getBotBacktestRun(backtestRun.id);
+      if (result.success && result.data) {
+        setBacktestRun(result.data);
+      }
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [backtestRun]);
 
   const getTemplateConfig = (templateId: string): TemplateConfig => (
     configByTemplate[templateId] || defaultTemplateConfig
@@ -477,6 +528,43 @@ export default function BotsPage() {
       return;
     }
     await loadBots();
+  };
+
+  const openBacktest = (instance: BotInstance, symbol: string) => {
+    setError(null);
+    setBacktestSelection({ instance, symbol });
+    setBacktestRun(null);
+    setBacktestError(null);
+    setBacktestForm(defaultBacktestForm);
+  };
+
+  const updateBacktestForm = (patch: Partial<BacktestForm>) => {
+    setBacktestForm((current) => ({ ...current, ...patch }));
+  };
+
+  const runAssetBacktest = async () => {
+    if (!backtestSelection) return;
+    setIsBacktestSubmitting(true);
+    setError(null);
+    setBacktestError(null);
+    const periodEnd = new Date();
+    const periodStart = new Date(periodEnd);
+    periodStart.setMonth(periodStart.getMonth() - Math.max(1, Math.floor(asNumber(backtestForm.months, 6))));
+    const result = await api.createBotInstanceBacktest(backtestSelection.instance.id, {
+      symbol: backtestSelection.symbol,
+      timeframe: backtestForm.timeframe,
+      initial_capital_usd: asNumber(backtestForm.initialCapitalUsd, 10000),
+      period_start: periodStart.toISOString(),
+      period_end: periodEnd.toISOString(),
+      fee_percent: asNumber(backtestForm.feePercent, 0.1),
+      slippage_percent: asNumber(backtestForm.slippagePercent, 0.05),
+    });
+    setIsBacktestSubmitting(false);
+    if (!result.success || !result.data) {
+      setBacktestError(result.error || 'Nao foi possivel enfileirar o backtest deste ativo');
+      return;
+    }
+    setBacktestRun(result.data);
   };
 
   return (
@@ -979,7 +1067,15 @@ export default function BotsPage() {
                       {basket.symbols.length ? (
                         <div className="flex flex-wrap gap-1.5">
                           {basket.symbols.slice(0, 24).map((symbol) => (
-                            <Badge key={symbol} variant="default" size="sm">{symbol}</Badge>
+                            <button
+                              key={symbol}
+                              type="button"
+                              onClick={() => openBacktest(instance, symbol)}
+                              className="rounded-md border border-accent-blue/20 bg-accent-blue/10 px-2 py-1 text-[10px] font-semibold text-accent-blue transition hover:border-accent-blue/60 hover:bg-accent-blue/20"
+                              title={`Rodar backtest em ${symbol}`}
+                            >
+                              {symbol}
+                            </button>
                           ))}
                           {basket.symbols.length > 24 && <Badge variant="yellow" size="sm">+{basket.symbols.length - 24}</Badge>}
                         </div>
@@ -1105,6 +1201,164 @@ export default function BotsPage() {
           </Card>
         </div>
       </div>
+      {backtestSelection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+          <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-border-subtle bg-background-primary shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-border-subtle bg-background-primary/95 p-5 backdrop-blur">
+              <div>
+                <p className="text-overline uppercase tracking-[0.22em] text-accent-blue">Backtest institucional</p>
+                <h2 className="mt-1 text-heading-md text-text-primary">{backtestSelection.symbol}</h2>
+                <p className="mt-1 text-caption text-text-muted">
+                  Bot: {backtestSelection.instance.name} - carteira {backtestSelection.instance.client_name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBacktestSelection(null)}
+                className="rounded-xl border border-border-subtle p-2 text-text-muted transition hover:border-accent-blue/40 hover:text-text-primary"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid gap-4 p-5 lg:grid-cols-[0.85fr_1.15fr]">
+              <div className="space-y-4">
+                <Card variant="glass" className="p-4">
+                  <p className="text-body-sm font-semibold text-text-primary">Parametros do teste</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1 text-caption text-text-secondary">
+                      Timeframe
+                      <Select
+                        value={backtestForm.timeframe}
+                        options={[
+                          { value: '1h', label: '1h' },
+                          { value: '4h', label: '4h' },
+                          { value: '1d', label: '1d' },
+                        ]}
+                        onChange={(event) => updateBacktestForm({ timeframe: event.target.value })}
+                        className="h-10 py-0"
+                      />
+                    </label>
+                    <label className="space-y-1 text-caption text-text-secondary">
+                      Janela em meses
+                      <input
+                        value={backtestForm.months}
+                        onChange={(event) => updateBacktestForm({ months: event.target.value })}
+                        className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                    </label>
+                    <label className="space-y-1 text-caption text-text-secondary">
+                      Capital inicial USD
+                      <input
+                        value={backtestForm.initialCapitalUsd}
+                        onChange={(event) => updateBacktestForm({ initialCapitalUsd: event.target.value })}
+                        className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                    </label>
+                    <label className="space-y-1 text-caption text-text-secondary">
+                      Taxa %
+                      <input
+                        value={backtestForm.feePercent}
+                        onChange={(event) => updateBacktestForm({ feePercent: event.target.value })}
+                        className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                    </label>
+                    <label className="space-y-1 text-caption text-text-secondary">
+                      Slippage %
+                      <input
+                        value={backtestForm.slippagePercent}
+                        onChange={(event) => updateBacktestForm({ slippagePercent: event.target.value })}
+                        className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                      />
+                    </label>
+                  </div>
+                  <Button
+                    type="button"
+                    className="mt-4 w-full"
+                    disabled={isBacktestSubmitting || !can('bots:backtest')}
+                    onClick={runAssetBacktest}
+                  >
+                    <BarChart3 className="h-4 w-4" />
+                    {isBacktestSubmitting ? 'Enfileirando...' : 'Rodar backtest'}
+                  </Button>
+                  {!can('bots:backtest') && (
+                    <p className="mt-2 text-caption text-status-error">Seu papel nao tem permissao bots:backtest.</p>
+                  )}
+                </Card>
+
+                <Card variant="glass" className="p-4">
+                  <p className="text-body-sm font-semibold text-text-primary">Qualidade dos dados</p>
+                  <div className="mt-3 space-y-2 text-caption text-text-secondary">
+                    <p>Status: <span className="font-semibold text-text-primary">{backtestRun?.status || 'Aguardando execucao'}</span></p>
+                    <p>Progresso: {Math.round(Number(backtestRun?.progress || 0))}%</p>
+                    <p>Cobertura: {backtestRun ? `${Number(backtestRun.data_quality?.period_coverage_percent || 0).toFixed(2)}%` : '-'}</p>
+                    <p>Amostras: {backtestRun ? String(backtestRun.metrics?.sample_count || backtestRun.data_quality?.rows_total || 0) : '-'}</p>
+                    {backtestError && (
+                      <div className="rounded-lg border border-status-error/30 bg-status-error/10 p-2 text-status-error">
+                        {backtestError}
+                      </div>
+                    )}
+                    {asStringArray(backtestRun?.data_quality?.warnings).length > 0 && (
+                      <div className="rounded-lg border border-status-warning/30 bg-status-warning/10 p-2 text-status-warning">
+                        {asStringArray(backtestRun?.data_quality?.warnings).join(', ')}
+                      </div>
+                    )}
+                    {backtestRun?.error_message && (
+                      <div className="rounded-lg border border-status-error/30 bg-status-error/10 p-2 text-status-error">
+                        {backtestRun.error_message}
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {[
+                    ['P&L liquido', metricLabel(backtestRun, 'net_pnl_usd', 'usd')],
+                    ['ROI', metricLabel(backtestRun, 'roi_percent', 'percent')],
+                    ['Max drawdown', metricLabel(backtestRun, 'max_drawdown_percent', 'percent')],
+                    ['Sharpe', metricLabel(backtestRun, 'sharpe_ratio')],
+                    ['Sortino', metricLabel(backtestRun, 'sortino_ratio')],
+                    ['Calmar', metricLabel(backtestRun, 'calmar_ratio')],
+                    ['Win rate', metricLabel(backtestRun, 'win_rate_percent', 'percent')],
+                    ['Profit factor', metricLabel(backtestRun, 'profit_factor')],
+                    ['Expectancy', metricLabel(backtestRun, 'expectancy_usd', 'usd')],
+                    ['Exposicao', metricLabel(backtestRun, 'exposure_percent', 'percent')],
+                    ['Buy & hold', metricLabel(backtestRun, 'buy_hold_roi_percent', 'percent')],
+                    ['Alpha vs hold', metricLabel(backtestRun, 'alpha_vs_buy_hold_percent', 'percent')],
+                  ].map(([label, value]) => (
+                    <Card key={label} variant="glass" className="p-3">
+                      <p className="text-[10px] uppercase tracking-[0.16em] text-text-tertiary">{label}</p>
+                      <p className="mt-2 text-heading-sm text-text-primary">{value}</p>
+                    </Card>
+                  ))}
+                </div>
+
+                <Card variant="glass" className="p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-body-sm font-semibold text-text-primary">Diagnostico operacional</p>
+                    {backtestRun && <Badge variant="blue" size="sm">{backtestRun.timeframe}</Badge>}
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 text-caption text-text-secondary">
+                    <p>Trades: {metricNumber(backtestRun, 'trade_count')}</p>
+                    <p>Avg bars held: {metricLabel(backtestRun, 'avg_bars_held')}</p>
+                    <p>Best trade: {metricLabel(backtestRun, 'best_trade_percent', 'percent')}</p>
+                    <p>Worst trade: {metricLabel(backtestRun, 'worst_trade_percent', 'percent')}</p>
+                    <p>Max wins seq.: {metricNumber(backtestRun, 'max_consecutive_wins')}</p>
+                    <p>Max losses seq.: {metricNumber(backtestRun, 'max_consecutive_losses')}</p>
+                    <p>Fees: {metricLabel(backtestRun, 'fees_paid_usd', 'usd')}</p>
+                    <p>Slippage: {metricLabel(backtestRun, 'slippage_paid_usd', 'usd')}</p>
+                  </div>
+                  <p className="mt-3 text-caption text-text-tertiary">
+                    O calculo roda no worker, usa velas normalizadas da exchange vinculada e aplica as regras reais do bot para o ativo selecionado.
+                  </p>
+                </Card>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

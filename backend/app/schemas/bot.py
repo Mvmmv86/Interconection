@@ -439,8 +439,10 @@ class BotMarketCandleSyncRequest(BaseSchema):
     exchange_id: UUID
     symbols: list[str] = Field(min_length=1)
     timeframes: list[str] = Field(default_factory=lambda: ["1h"])
-    limit: int = Field(default=300, ge=1, le=1000)
+    limit: int = Field(default=300, ge=1, le=250000)
     market_type: str = Field(default="spot", max_length=32)
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
 
 
 class BotMarketCandleSyncResponse(BaseSchema):

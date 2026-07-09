@@ -1422,21 +1422,28 @@ class BybitAdapter(BaseExchangeAdapter):
         timeframe: str = "1h",
         limit: int = 200,
         category: str = "spot",
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
     ) -> List[MarketCandleData]:
         """Fetch public Bybit OHLCV candles using v5 market kline."""
         normalized_timeframe = timeframe if timeframe in BYBIT_KLINE_INTERVALS else "1h"
         interval = BYBIT_KLINE_INTERVALS[normalized_timeframe]
         delta = TIMEFRAME_DELTAS[normalized_timeframe]
         normalized_symbol = self._market_symbol(symbol)
+        params = {
+            "category": self._market_category(category),
+            "symbol": normalized_symbol,
+            "interval": interval,
+            "limit": max(1, min(int(limit or 200), 1000)),
+        }
+        if start_time is not None:
+            params["start"] = int(start_time.timestamp() * 1000)
+        if end_time is not None:
+            params["end"] = int(end_time.timestamp() * 1000)
         result = await self._request(
             "GET",
             "/v5/market/kline",
-            params={
-                "category": self._market_category(category),
-                "symbol": normalized_symbol,
-                "interval": interval,
-                "limit": max(1, min(int(limit or 200), 1000)),
-            },
+            params=params,
             signed=False,
         )
         rows = result.get("list", []) if isinstance(result, dict) else []

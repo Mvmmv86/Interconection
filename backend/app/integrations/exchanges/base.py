@@ -418,6 +418,8 @@ class BaseExchangeAdapter(ABC):
         timeframe: str = "1h",
         limit: int = 200,
         category: str = "spot",
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ) -> List[MarketCandleData]:
         """
         Fetch normalized OHLCV candles for strategy engines.

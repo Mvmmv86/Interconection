@@ -669,6 +669,69 @@ interface BotBacktest {
   updated_at: string;
 }
 
+interface BotBacktestRun {
+  id: string;
+  organization_id: string;
+  user_id: string | null;
+  instance_id: string;
+  strategy_id: string;
+  strategy_version: number;
+  client_id: string;
+  exchange_id: string | null;
+  symbol: string;
+  exchange: string;
+  market_type: string;
+  timeframe: string;
+  period_start: string;
+  period_end: string;
+  status: string;
+  progress: number;
+  initial_capital_usd: number;
+  config_hash: string;
+  config_snapshot: Record<string, unknown>;
+  strategy_snapshot: Record<string, unknown>;
+  risk_snapshot: Record<string, unknown>;
+  cost_snapshot: Record<string, unknown>;
+  data_quality: Record<string, unknown>;
+  result_summary: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  equity_curve: unknown[];
+  drawdown_curve: unknown[];
+  diagnostics: Record<string, unknown>;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotBacktestTrade {
+  id: string;
+  run_id: string;
+  organization_id: string;
+  instance_id: string;
+  symbol: string;
+  side: string;
+  entry_time: string;
+  exit_time: string | null;
+  entry_price: number;
+  exit_price: number | null;
+  quantity: number;
+  gross_pnl: number;
+  fee_paid: number;
+  slippage_paid: number;
+  net_pnl: number;
+  return_percent: number;
+  mae_percent: number;
+  mfe_percent: number;
+  entry_reason: string | null;
+  exit_reason: string | null;
+  bars_held: number;
+  raw_payload: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 interface BotMarketRankingItem {
   id: string;
   rank: number;
@@ -1608,6 +1671,33 @@ class ApiClient {
     return this.request<BotSignal[]>(`/api/v1/bots/instances/${instanceId}/signals`);
   }
 
+  async createBotInstanceBacktest(
+    instanceId: string,
+    data: {
+      symbol: string;
+      timeframe?: string;
+      initial_capital_usd?: number;
+      period_start?: string | null;
+      period_end?: string | null;
+      fee_percent?: number;
+      slippage_percent?: number;
+      risk_overrides?: Record<string, unknown>;
+    }
+  ): Promise<ApiResponse<BotBacktestRun>> {
+    return this.request<BotBacktestRun>(`/api/v1/bots/instances/${instanceId}/backtests`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getBotBacktestRun(runId: string): Promise<ApiResponse<BotBacktestRun>> {
+    return this.request<BotBacktestRun>(`/api/v1/bots/backtests/${runId}`);
+  }
+
+  async getBotBacktestTrades(runId: string): Promise<ApiResponse<BotBacktestTrade[]>> {
+    return this.request<BotBacktestTrade[]>(`/api/v1/bots/backtests/${runId}/trades`);
+  }
+
   async requestBotLiveEnable(
     instanceId: string,
     data: { confirm_risk: boolean; reason?: string | null }
@@ -1860,6 +1950,8 @@ export type {
   BotRun,
   BotSignal,
   BotBacktest,
+  BotBacktestRun,
+  BotBacktestTrade,
   BotMarketRanking,
   BotMarketRankingItem,
   BotMarketScannerBootstrap,

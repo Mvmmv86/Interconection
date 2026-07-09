@@ -1781,6 +1781,8 @@ async def sync_admin_market_candles(
         timeframes=data.timeframes,
         limit=data.limit,
         market_type=data.market_type,
+        period_start=data.period_start,
+        period_end=data.period_end,
     )
     await record_audit_event(
         db,

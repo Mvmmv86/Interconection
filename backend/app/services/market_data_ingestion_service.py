@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 from uuid import UUID, uuid4
 
@@ -156,6 +156,8 @@ class MarketDataIngestionService:
         timeframes: Iterable[str],
         limit: int = 300,
         market_type: str = "spot",
+        period_start: datetime | None = None,
+        period_end: datetime | None = None,
     ) -> dict:
         """Fetch and upsert candles for one connected exchange."""
         exchange = await self._load_exchange(exchange_id, organization_id)
@@ -178,11 +180,14 @@ class MarketDataIngestionService:
         for symbol in requested_symbols:
             for timeframe in requested_timeframes:
                 try:
-                    candles = await adapter.get_ohlcv_candles(
+                    candles = await self._fetch_candles_paginated(
+                        adapter=adapter,
                         symbol=symbol,
                         timeframe=timeframe,
                         limit=limit,
                         category=category,
+                        period_start=period_start,
+                        period_end=period_end,
                     )
                 except Exception as exc:  # keep ingestion partial and auditable
                     errors.append(f"{exchange.exchange}:{symbol}:{timeframe}:{exc}")
@@ -196,6 +201,89 @@ class MarketDataIngestionService:
             "stored": stored,
             "errors": errors,
         }
+
+    async def _fetch_candles_paginated(
+        self,
+        *,
+        adapter: object,
+        symbol: str,
+        timeframe: str,
+        limit: int,
+        category: str,
+        period_start: datetime | None,
+        period_end: datetime | None,
+    ) -> list[MarketCandleData]:
+        """Fetch multiple exchange OHLCV pages without duplicating candles."""
+        max_candles = max(1, int(limit or 300))
+        page_limit = min(max_candles, 1000)
+        start = self._coerce_utc(period_start)
+        end = self._coerce_utc(period_end) or datetime.now(timezone.utc)
+        if start is None and max_candles <= 1000:
+            return await adapter.get_ohlcv_candles(
+                symbol=symbol,
+                timeframe=timeframe,
+                limit=max_candles,
+                category=category,
+                end_time=end if period_end is not None else None,
+            )
+
+        collected: dict[datetime, MarketCandleData] = {}
+        delta = self._timeframe_delta(timeframe)
+        cursor_end = end
+        previous_edge: datetime | None = None
+        max_pages = 300
+
+        for _ in range(max_pages):
+            candles = await adapter.get_ohlcv_candles(
+                symbol=symbol,
+                timeframe=timeframe,
+                limit=page_limit,
+                category=category,
+                start_time=None,
+                end_time=cursor_end,
+            )
+            if not candles:
+                break
+
+            page = sorted(candles, key=lambda candle: candle.open_time)
+            for candle in page:
+                if start is not None and candle.open_time < start:
+                    continue
+                if cursor_end is not None and candle.open_time > cursor_end:
+                    continue
+                collected[candle.open_time] = candle
+                if len(collected) >= max_candles:
+                    break
+
+            if len(collected) >= max_candles:
+                break
+
+            earliest_open = page[0].open_time
+            if start is not None and earliest_open <= start + delta:
+                break
+            if earliest_open == previous_edge or len(page) < page_limit:
+                break
+            previous_edge = earliest_open
+            cursor_end = earliest_open - timedelta(milliseconds=1)
+
+        return sorted(collected.values(), key=lambda candle: candle.open_time)[-max_candles:]
+
+    def _coerce_utc(self, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _timeframe_delta(self, timeframe: str) -> timedelta:
+        value = str(timeframe or "1h").lower()
+        if value.endswith("m"):
+            return timedelta(minutes=max(1, int(value[:-1] or "1")))
+        if value.endswith("h"):
+            return timedelta(hours=max(1, int(value[:-1] or "1")))
+        if value.endswith("d"):
+            return timedelta(days=max(1, int(value[:-1] or "1")))
+        return timedelta(hours=1)
 
     async def upsert_candles(self, candles: Iterable[MarketCandleData], market_type: str = "spot") -> int:
         """Bulk upsert candle rows using the unique market-candle key."""

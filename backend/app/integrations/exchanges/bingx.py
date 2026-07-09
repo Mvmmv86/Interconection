@@ -858,6 +858,8 @@ class BingXAdapter(BaseExchangeAdapter):
         timeframe: str = "1h",
         limit: int = 200,
         category: str = "spot",
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
     ) -> list[MarketCandleData]:
         """Fetch public BingX OHLCV candles for spot or USDT-M swap markets."""
         normalized_timeframe = timeframe if timeframe in BINGX_KLINE_INTERVALS else "1h"
@@ -868,14 +870,19 @@ class BingXAdapter(BaseExchangeAdapter):
             if endpoint_category == "swap"
             else "/openApi/spot/v1/market/kline"
         )
+        params = {
+            "symbol": normalized_symbol,
+            "interval": BINGX_KLINE_INTERVALS[normalized_timeframe],
+            "limit": max(1, min(int(limit or 200), 1000)),
+        }
+        if start_time is not None:
+            params["startTime"] = int(start_time.timestamp() * 1000)
+        if end_time is not None:
+            params["endTime"] = int(end_time.timestamp() * 1000)
         payload = await self._request(
             "GET",
             endpoint,
-            params={
-                "symbol": normalized_symbol,
-                "interval": BINGX_KLINE_INTERVALS[normalized_timeframe],
-                "limit": max(1, min(int(limit or 200), 1000)),
-            },
+            params=params,
             signed=False,
         )
         rows = _as_list(payload)
