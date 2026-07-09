@@ -6,7 +6,7 @@ import asyncio
 from uuid import UUID
 
 from app.celery_app import celery_app
-from app.db.session import async_session_maker
+from app.db.session import async_session_maker, engine
 from app.services.bot_backtest_service import BotBacktestService
 
 
@@ -26,8 +26,16 @@ else:
 
 
 async def _run_bot_backtest(run_id: str) -> dict:
-    async with async_session_maker() as session:
-        service = BotBacktestService(session)
-        run = await service.run_backtest_run(UUID(str(run_id)))
-        await session.commit()
-        return {"run_id": str(run.id), "status": run.status.value}
+    try:
+        async with async_session_maker() as session:
+            service = BotBacktestService(session)
+            run = await service.run_backtest_run(UUID(str(run_id)))
+            await session.commit()
+            return {"run_id": str(run.id), "status": run.status.value}
+    finally:
+        # Celery runs each async task through asyncio.run(), which creates a
+        # fresh event loop per invocation. asyncpg connections are loop-bound,
+        # so pooled connections from a previous task can fail with "Future
+        # attached to a different loop" on the next task. Disposing here keeps
+        # the worker deterministic at the cost of reopening DB connections.
+        await engine.dispose()
