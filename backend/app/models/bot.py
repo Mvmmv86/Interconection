@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, List, Optional
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -161,6 +161,7 @@ class BotStrategy(Base, UUIDMixin, TimestampMixin):
     templates: Mapped[List["BotTemplate"]] = relationship("BotTemplate", back_populates="strategy")
     instances: Mapped[List["BotInstance"]] = relationship("BotInstance", back_populates="strategy")
     backtests: Mapped[List["BotBacktest"]] = relationship("BotBacktest", back_populates="strategy")
+    backtest_runs: Mapped[List["BotBacktestRun"]] = relationship("BotBacktestRun", back_populates="strategy")
     created_by: Mapped[Optional["User"]] = relationship("User")
 
 
@@ -298,6 +299,7 @@ class BotInstance(Base, UUIDMixin, TimestampMixin):
     created_by: Mapped[Optional["User"]] = relationship("User")
     runs: Mapped[List["BotRun"]] = relationship("BotRun", back_populates="instance")
     signals: Mapped[List["BotSignal"]] = relationship("BotSignal", back_populates="instance")
+    backtest_runs: Mapped[List["BotBacktestRun"]] = relationship("BotBacktestRun", back_populates="instance")
 
 
 class BotRun(Base, UUIDMixin, TimestampMixin):
@@ -356,6 +358,97 @@ class BotSignal(Base, UUIDMixin, TimestampMixin):
 
     instance: Mapped["BotInstance"] = relationship("BotInstance", back_populates="signals")
     run: Mapped[Optional["BotRun"]] = relationship("BotRun", back_populates="signals")
+
+
+class BotBacktestRun(Base, UUIDMixin, TimestampMixin):
+    """Institutional backtest execution for one customer bot instance and symbol."""
+
+    __tablename__ = "bot_backtest_runs"
+    __table_args__ = (
+        UniqueConstraint("config_hash", name="uq_bot_backtest_runs_config_hash"),
+        Index("ix_bot_backtest_runs_org_created", "organization_id", "created_at"),
+        Index("ix_bot_backtest_runs_instance_symbol_created", "instance_id", "symbol", "created_at"),
+        Index("ix_bot_backtest_runs_status", "status"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    instance_id: Mapped[UUID] = mapped_column(ForeignKey("bot_instances.id", ondelete="CASCADE"), nullable=False)
+    strategy_id: Mapped[UUID] = mapped_column(ForeignKey("bot_strategies.id", ondelete="CASCADE"), nullable=False)
+    strategy_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    exchange_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("exchanges.id", ondelete="SET NULL"), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(40), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(32), nullable=False)
+    market_type: Mapped[str] = mapped_column(String(24), default="futures", nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(16), nullable=False)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[BotBacktestStatus] = mapped_column(
+        SAEnum(BotBacktestStatus),
+        default=BotBacktestStatus.RUNNING,
+        nullable=False,
+    )
+    progress: Mapped[float] = mapped_column(Numeric(5, 2), default=0, nullable=False)
+    initial_capital_usd: Mapped[float] = mapped_column(Numeric(24, 2), nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(96), nullable=False)
+    config_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    strategy_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    risk_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    cost_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    data_quality: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    result_summary: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    metrics: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    equity_curve: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    drawdown_curve: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    diagnostics: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    instance: Mapped["BotInstance"] = relationship("BotInstance", back_populates="backtest_runs")
+    strategy: Mapped["BotStrategy"] = relationship("BotStrategy", back_populates="backtest_runs")
+    trades: Mapped[List["BotBacktestTrade"]] = relationship(
+        "BotBacktestTrade",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="BotBacktestTrade.entry_time",
+    )
+    user: Mapped[Optional["User"]] = relationship("User")
+
+
+class BotBacktestTrade(Base, UUIDMixin, TimestampMixin):
+    """One normalized simulated trade generated by a bot backtest run."""
+
+    __tablename__ = "bot_backtest_trades"
+    __table_args__ = (
+        Index("ix_bot_backtest_trades_run_entry", "run_id", "entry_time"),
+        Index("ix_bot_backtest_trades_org_symbol_entry", "organization_id", "symbol", "entry_time"),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("bot_backtest_runs.id", ondelete="CASCADE"), nullable=False)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[UUID] = mapped_column(ForeignKey("bot_instances.id", ondelete="CASCADE"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(40), nullable=False)
+    side: Mapped[str] = mapped_column(String(16), default="long", nullable=False)
+    entry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    exit_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_price: Mapped[float] = mapped_column(Numeric(28, 12), nullable=False)
+    exit_price: Mapped[Optional[float]] = mapped_column(Numeric(28, 12), nullable=True)
+    quantity: Mapped[float] = mapped_column(Numeric(32, 18), nullable=False)
+    gross_pnl: Mapped[float] = mapped_column(Numeric(24, 8), default=0, nullable=False)
+    fee_paid: Mapped[float] = mapped_column(Numeric(24, 8), default=0, nullable=False)
+    slippage_paid: Mapped[float] = mapped_column(Numeric(24, 8), default=0, nullable=False)
+    net_pnl: Mapped[float] = mapped_column(Numeric(24, 8), default=0, nullable=False)
+    return_percent: Mapped[float] = mapped_column(Numeric(12, 6), default=0, nullable=False)
+    mae_percent: Mapped[float] = mapped_column(Numeric(12, 6), default=0, nullable=False)
+    mfe_percent: Mapped[float] = mapped_column(Numeric(12, 6), default=0, nullable=False)
+    entry_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    exit_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    bars_held: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    raw_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+    run: Mapped["BotBacktestRun"] = relationship("BotBacktestRun", back_populates="trades")
 
 
 class BotBacktest(Base, UUIDMixin, TimestampMixin):

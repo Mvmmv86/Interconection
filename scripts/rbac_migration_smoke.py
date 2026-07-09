@@ -42,6 +42,11 @@ FALLBACK_REQUIRED_OWNER_PERMISSIONS = {
     "manual_assets:edit",
     "manual_assets:delete",
     "positions:view",
+    "bots:activate",
+    "bots:backtest",
+    "bots:edit",
+    "bots:run",
+    "bots:view",
 }
 
 

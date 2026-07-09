@@ -24,6 +24,7 @@ from app.models import (
     ExchangeBalance, ExchangeFuturesPosition, ExchangeEarnPosition, ExchangeSubaccount,
     ExchangeTransaction, WalletToken, WalletTransaction,
     DefiPositionCache, NotificationHistory,
+    BotBacktestRun, BotBacktestTrade,
     # Team/RBAC
     Role, RolePermission, Membership, MembershipPermissionOverride, MembershipClient, Invitation,
 )

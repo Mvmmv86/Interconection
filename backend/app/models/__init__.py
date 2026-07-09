@@ -22,7 +22,9 @@ from app.models.billing import (
 )
 from app.models.bot import (
     BotBacktest,
+    BotBacktestRun,
     BotBacktestStatus,
+    BotBacktestTrade,
     BotIndicator,
     BotInstance,
     BotInstanceMode,
@@ -109,6 +111,8 @@ __all__ = [
     "BotRun",
     "BotSignal",
     "BotBacktest",
+    "BotBacktestRun",
+    "BotBacktestTrade",
     # DeFi Positions
     "ManualAsset",
     "PoolPosition",

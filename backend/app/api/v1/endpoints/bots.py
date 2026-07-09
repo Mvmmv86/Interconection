@@ -1,6 +1,8 @@
 """Bot catalog and customer activation endpoints."""
 
-from datetime import datetime, timezone
+import hashlib
+import json
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
@@ -23,6 +25,9 @@ from app.api.deps import (
 from app.models.audit_log import AuditAction
 from app.models.bot import (
     BotBacktest,
+    BotBacktestRun,
+    BotBacktestStatus,
+    BotBacktestTrade,
     BotIndicator,
     BotInstance,
     BotInstanceMode,
@@ -45,8 +50,11 @@ from app.schemas.bot import (
     AdminBotTemplateCreate,
     AdminBotTemplateUpdate,
     BotBacktestCreate,
+    BotBacktestRunResponse,
     BotBacktestResponse,
+    BotBacktestTradeResponse,
     BotIndicatorResponse,
+    BotInstanceBacktestCreate,
     BotInstanceCreate,
     BotInstanceResponse,
     BotInstanceUpdate,
@@ -76,13 +84,17 @@ from app.services.bot_engine_service import BotEngineService
 from app.services.bot_scheduler_service import BotSchedulerService
 from app.services.market_data_ingestion_service import (
     MarketDataIngestionService,
+    normalize_exchange_key,
+    normalize_market_type,
     normalize_strategy_symbol,
+    resolve_strategy_market_type,
     resolve_strategy_symbols,
     resolve_strategy_timeframe,
 )
 from app.services.market_ranking_service import MarketRankingService
 from app.services.market_scanner_bootstrap_service import MarketScannerBootstrapService
 from app.services.plan_limits import enforce_plan_limit
+from app.workers.bot_backtest_tasks import run_bot_backtest_task
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("bots"))])
 admin_router = APIRouter(dependencies=[Depends(require_superuser)])
@@ -96,6 +108,10 @@ PLAN_RANK = {
 
 def _enum_value(value: object) -> str:
     return value.value if hasattr(value, "value") else str(value)
+
+
+def _stable_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
 
 
 def _template_parameter_response(parameter: BotTemplateParameter) -> BotTemplateParameterResponse:
@@ -431,6 +447,73 @@ def _backtest_response(backtest) -> BotBacktestResponse:
         completed_at=backtest.completed_at,
         created_at=backtest.created_at,
         updated_at=backtest.updated_at,
+    )
+
+
+def _backtest_run_response(run: BotBacktestRun) -> BotBacktestRunResponse:
+    return BotBacktestRunResponse(
+        id=run.id,
+        organization_id=run.organization_id,
+        user_id=run.user_id,
+        instance_id=run.instance_id,
+        strategy_id=run.strategy_id,
+        strategy_version=run.strategy_version,
+        client_id=run.client_id,
+        exchange_id=run.exchange_id,
+        symbol=run.symbol,
+        exchange=run.exchange,
+        market_type=run.market_type,
+        timeframe=run.timeframe,
+        period_start=run.period_start,
+        period_end=run.period_end,
+        status=_enum_value(run.status),
+        progress=float(run.progress or 0),
+        initial_capital_usd=float(run.initial_capital_usd),
+        config_hash=run.config_hash,
+        config_snapshot=dict(run.config_snapshot or {}),
+        strategy_snapshot=dict(run.strategy_snapshot or {}),
+        risk_snapshot=dict(run.risk_snapshot or {}),
+        cost_snapshot=dict(run.cost_snapshot or {}),
+        data_quality=dict(run.data_quality or {}),
+        result_summary=dict(run.result_summary or {}),
+        metrics=dict(run.metrics or {}),
+        equity_curve=list(run.equity_curve or []),
+        drawdown_curve=list(run.drawdown_curve or []),
+        diagnostics=dict(run.diagnostics or {}),
+        error_message=run.error_message,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+    )
+
+
+def _backtest_trade_response(trade: BotBacktestTrade) -> BotBacktestTradeResponse:
+    return BotBacktestTradeResponse(
+        id=trade.id,
+        run_id=trade.run_id,
+        organization_id=trade.organization_id,
+        instance_id=trade.instance_id,
+        symbol=trade.symbol,
+        side=trade.side,
+        entry_time=trade.entry_time,
+        exit_time=trade.exit_time,
+        entry_price=float(trade.entry_price),
+        exit_price=float(trade.exit_price) if trade.exit_price is not None else None,
+        quantity=float(trade.quantity),
+        gross_pnl=float(trade.gross_pnl),
+        fee_paid=float(trade.fee_paid),
+        slippage_paid=float(trade.slippage_paid),
+        net_pnl=float(trade.net_pnl),
+        return_percent=float(trade.return_percent),
+        mae_percent=float(trade.mae_percent),
+        mfe_percent=float(trade.mfe_percent),
+        entry_reason=trade.entry_reason,
+        exit_reason=trade.exit_reason,
+        bars_held=trade.bars_held,
+        raw_payload=dict(trade.raw_payload or {}),
+        created_at=trade.created_at,
+        updated_at=trade.updated_at,
     )
 
 
@@ -1050,6 +1133,311 @@ async def run_bot_instance_paper_cycle(
         request=request,
     )
     return _run_response(run)
+
+
+@router.post("/instances/{instance_id}/backtests", response_model=BotBacktestRunResponse, status_code=status.HTTP_202_ACCEPTED)
+async def queue_bot_instance_backtest(
+    instance_id: UUID,
+    data: BotInstanceBacktestCreate,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:backtest", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+    request: Request,
+) -> BotBacktestRunResponse:
+    """Queue a heavy instance-scoped backtest in the Celery worker."""
+    instance = await db.scalar(
+        select(BotInstance)
+        .options(
+            selectinload(BotInstance.template).selectinload(BotTemplate.parameters),
+            selectinload(BotInstance.strategy),
+            selectinload(BotInstance.exchange),
+        )
+        .where(
+            BotInstance.id == instance_id,
+            BotInstance.organization_id == permission_ctx.organization_id,
+        )
+    )
+    if instance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bot instance not found")
+    if (
+        is_scope_specific_enforcement_enabled("bots")
+        and not permission_ctx.can_access_client(instance.client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+    if instance.strategy is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bot instance has no strategy configured")
+
+    strategy = instance.strategy
+    symbol = normalize_strategy_symbol(data.symbol)
+    if not symbol:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid symbol")
+    ranking_service = MarketRankingService(db)
+    fallback_symbols = resolve_strategy_symbols(strategy, instance)
+    symbols, basket_metadata = await ranking_service.resolve_instance_basket_symbols(
+        instance=instance,
+        fallback_symbols=fallback_symbols,
+        refresh_snapshot=False,
+    )
+    if not symbols:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "Bot instance has no symbols to backtest", "basket": basket_metadata},
+        )
+    if symbol not in symbols:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested symbol is outside the bot basket",
+        )
+
+    period_end = data.period_end or datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    period_start = data.period_start or (period_end - timedelta(days=365))
+    if period_start >= period_end:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="period_start must be before period_end")
+
+    exchange_key = normalize_exchange_key(
+        str(instance.exchange.exchange if instance.exchange else (strategy.market_config or {}).get("default_exchange") or "bingx")
+    )
+    market_type = normalize_market_type(resolve_strategy_market_type(strategy, instance))
+    timeframe = data.timeframe or resolve_strategy_timeframe(strategy, instance)
+    engine = BotEngineService(db)
+    risk_snapshot = engine._merged_risk_config(strategy, instance=instance, overrides=data.risk_overrides)
+    cost_snapshot = {
+        "fee_percent": data.fee_percent,
+        "slippage_percent": data.slippage_percent,
+    }
+    risk_snapshot.update(cost_snapshot)
+    strategy_snapshot = {
+        "id": str(strategy.id),
+        "name": strategy.name,
+        "slug": strategy.slug,
+        "version": strategy.version,
+        "market_config": strategy.market_config or {},
+        "indicator_config": strategy.indicator_config or {},
+        "rule_config": strategy.rule_config or {},
+        "risk_defaults": strategy.risk_defaults or {},
+    }
+    config_snapshot = {
+        "organization_id": str(permission_ctx.organization_id),
+        "instance_id": str(instance.id),
+        "strategy_id": str(strategy.id),
+        "strategy_version": strategy.version,
+        "client_id": str(instance.client_id),
+        "exchange_id": str(instance.exchange_id) if instance.exchange_id else None,
+        "exchange": exchange_key,
+        "market_type": market_type,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "initial_capital_usd": data.initial_capital_usd,
+        "allowed_symbols": symbols,
+        "basket": basket_metadata,
+        "risk_snapshot": risk_snapshot,
+        "engine_version": "instance_backtest_v1",
+    }
+    config_hash = hashlib.sha256(_stable_json(config_snapshot).encode("utf-8")).hexdigest()
+    existing = await db.scalar(select(BotBacktestRun).where(BotBacktestRun.config_hash == config_hash))
+    if existing is not None:
+        if existing.status == BotBacktestStatus.FAILED:
+            existing.status = BotBacktestStatus.RUNNING
+            existing.progress = 0
+            existing.error_message = None
+            existing.started_at = None
+            existing.finished_at = None
+            existing.data_quality = {}
+            existing.result_summary = {}
+            existing.metrics = {}
+            existing.equity_curve = []
+            existing.drawdown_curve = []
+            existing.diagnostics = {
+                **(existing.diagnostics or {}),
+                "retry_requested_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await record_audit_event(
+                db,
+                organization_id=permission_ctx.organization_id,
+                user_id=permission_ctx.user.id,
+                action=AuditAction.UPDATE,
+                resource_type="bot_backtest_run",
+                resource_id=existing.id,
+                description="Customer retried failed bot instance backtest",
+                metadata={"instance_id": instance.id, "symbol": symbol, "timeframe": timeframe, "config_hash": config_hash},
+                request=request,
+            )
+            await db.commit()
+            try:
+                run_bot_backtest_task.delay(str(existing.id))
+            except Exception as exc:
+                existing.status = BotBacktestStatus.FAILED
+                existing.error_message = f"Failed to enqueue Celery backtest task: {exc}"
+                existing.progress = 100
+                existing.finished_at = datetime.now(timezone.utc)
+                await db.commit()
+        return _backtest_run_response(existing)
+
+    run = BotBacktestRun(
+        id=uuid4(),
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        instance_id=instance.id,
+        strategy_id=strategy.id,
+        strategy_version=strategy.version,
+        client_id=instance.client_id,
+        exchange_id=instance.exchange_id,
+        symbol=symbol,
+        exchange=exchange_key,
+        market_type=market_type,
+        timeframe=timeframe,
+        period_start=period_start,
+        period_end=period_end,
+        status=BotBacktestStatus.RUNNING,
+        progress=0,
+        initial_capital_usd=Decimal(str(data.initial_capital_usd)),
+        config_hash=config_hash,
+        config_snapshot=config_snapshot,
+        strategy_snapshot=strategy_snapshot,
+        risk_snapshot=risk_snapshot,
+        cost_snapshot=cost_snapshot,
+        data_quality={},
+        result_summary={},
+        metrics={},
+        equity_curve=[],
+        drawdown_curve=[],
+        diagnostics={"queue": "backtests"},
+    )
+    db.add(run)
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        existing = await db.scalar(select(BotBacktestRun).where(BotBacktestRun.config_hash == config_hash))
+        if existing is None:
+            raise
+        return _backtest_run_response(existing)
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.CREATE,
+        resource_type="bot_backtest_run",
+        resource_id=run.id,
+        description="Customer queued bot instance backtest",
+        metadata={"instance_id": instance.id, "symbol": symbol, "timeframe": timeframe, "config_hash": config_hash},
+        request=request,
+    )
+    await db.commit()
+    try:
+        run_bot_backtest_task.delay(str(run.id))
+    except Exception as exc:
+        run.status = BotBacktestStatus.FAILED
+        run.error_message = f"Failed to enqueue Celery backtest task: {exc}"
+        run.progress = 100
+        run.finished_at = datetime.now(timezone.utc)
+        await db.commit()
+    return _backtest_run_response(run)
+
+
+@router.get("/backtests/{run_id}", response_model=BotBacktestRunResponse)
+async def get_bot_backtest_run(
+    run_id: UUID,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:view", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+) -> BotBacktestRunResponse:
+    """Get one instance-scoped backtest run."""
+    run = await db.scalar(
+        select(BotBacktestRun).where(
+            BotBacktestRun.id == run_id,
+            BotBacktestRun.organization_id == permission_ctx.organization_id,
+        )
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backtest run not found")
+    if (
+        is_scope_specific_enforcement_enabled("bots")
+        and not permission_ctx.can_access_client(run.client_id)
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden by membership client scope")
+    return _backtest_run_response(run)
+
+
+@router.get("/backtests/{run_id}/trades", response_model=list[BotBacktestTradeResponse])
+async def list_bot_backtest_trades(
+    run_id: UUID,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:view", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[BotBacktestTradeResponse]:
+    """List normalized trades for one instance-scoped backtest run."""
+    run = await db.scalar(
+        select(BotBacktestRun).where(
+            BotBacktestRun.id == run_id,
+            BotBacktestRun.organization_id == permission_ctx.organization_id,
+        )
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backtest run not found")
+    if (
+        is_scope_specific_enforcement_enabled("bots")
+        and not permission_ctx.can_access_client(run.client_id)
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden by membership client scope")
+    result = await db.execute(
+        select(BotBacktestTrade)
+        .where(BotBacktestTrade.run_id == run_id)
+        .order_by(BotBacktestTrade.entry_time.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return [_backtest_trade_response(trade) for trade in result.scalars().all()]
+
+
+@router.get("/instances/{instance_id}/backtests", response_model=list[BotBacktestRunResponse])
+async def list_bot_instance_backtests(
+    instance_id: UUID,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:view", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+    symbol: Optional[str] = Query(default=None, max_length=40),
+    limit: int = Query(20, ge=1, le=100),
+) -> list[BotBacktestRunResponse]:
+    """List recent backtests for one customer bot instance."""
+    instance = await db.scalar(
+        select(BotInstance).where(
+            BotInstance.id == instance_id,
+            BotInstance.organization_id == permission_ctx.organization_id,
+        )
+    )
+    if instance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bot instance not found")
+    if (
+        is_scope_specific_enforcement_enabled("bots")
+        and not permission_ctx.can_access_client(instance.client_id)
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden by membership client scope")
+    query = (
+        select(BotBacktestRun)
+        .where(BotBacktestRun.instance_id == instance_id)
+        .order_by(BotBacktestRun.created_at.desc())
+        .limit(limit)
+    )
+    if symbol:
+        query = query.where(BotBacktestRun.symbol == normalize_strategy_symbol(symbol))
+    result = await db.execute(query)
+    return [_backtest_run_response(run) for run in result.scalars().all()]
 
 
 @router.get("/instances/{instance_id}/runs", response_model=list[BotRunResponse])

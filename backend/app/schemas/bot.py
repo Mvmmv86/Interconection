@@ -346,6 +346,86 @@ class BotBacktestResponse(BaseSchema):
     updated_at: datetime
 
 
+class BotInstanceBacktestCreate(BaseSchema):
+    """Queue a heavy backtest for one activated bot instance and symbol."""
+
+    symbol: str = Field(min_length=1, max_length=40)
+    timeframe: str = Field(default="1h", max_length=16)
+    initial_capital_usd: float = Field(default=10000, gt=0)
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    fee_percent: float = Field(default=0.1, ge=0, le=10)
+    slippage_percent: float = Field(default=0.05, ge=0, le=20)
+    risk_overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class BotBacktestRunResponse(BaseSchema):
+    """Instance-scoped heavy backtest run."""
+
+    id: UUID
+    organization_id: UUID
+    user_id: Optional[UUID] = None
+    instance_id: UUID
+    strategy_id: UUID
+    strategy_version: int
+    client_id: UUID
+    exchange_id: Optional[UUID] = None
+    symbol: str
+    exchange: str
+    market_type: str
+    timeframe: str
+    period_start: datetime
+    period_end: datetime
+    status: str
+    progress: float
+    initial_capital_usd: float
+    config_hash: str
+    config_snapshot: dict[str, Any]
+    strategy_snapshot: dict[str, Any]
+    risk_snapshot: dict[str, Any]
+    cost_snapshot: dict[str, Any]
+    data_quality: dict[str, Any]
+    result_summary: dict[str, Any]
+    metrics: dict[str, Any]
+    equity_curve: list[Any]
+    drawdown_curve: list[Any]
+    diagnostics: dict[str, Any]
+    error_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BotBacktestTradeResponse(BaseSchema):
+    """One normalized simulated trade in a heavy backtest."""
+
+    id: UUID
+    run_id: UUID
+    organization_id: UUID
+    instance_id: UUID
+    symbol: str
+    side: str
+    entry_time: datetime
+    exit_time: Optional[datetime] = None
+    entry_price: float
+    exit_price: Optional[float] = None
+    quantity: float
+    gross_pnl: float
+    fee_paid: float
+    slippage_paid: float
+    net_pnl: float
+    return_percent: float
+    mae_percent: float
+    mfe_percent: float
+    entry_reason: Optional[str] = None
+    exit_reason: Optional[str] = None
+    bars_held: int
+    raw_payload: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
 class BotLiveEnableRequest(BaseSchema):
     """Explicit request to enable future live mode."""
 

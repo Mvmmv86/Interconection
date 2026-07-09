@@ -507,6 +507,89 @@ class BotEngineService:
                 return normalized
         return resolve_strategy_symbols(strategy, instance)
 
+    def _merged_risk_config(
+        self,
+        strategy: BotStrategy | None,
+        *,
+        instance: BotInstance | None = None,
+        overrides: dict | None = None,
+    ) -> dict:
+        """Resolve risk settings in the same order used by paper/backtest."""
+        risk_config: dict = {}
+        if strategy is not None:
+            risk_config.update(strategy.risk_defaults or {})
+        if instance is not None and instance.template is not None:
+            risk_config.update(instance.template.default_parameters or {})
+        if instance is not None:
+            risk_config.update(instance.risk_config or {})
+        risk_config.update(overrides or {})
+        return risk_config
+
+    def _sizing_snapshot(
+        self,
+        risk_config: dict,
+        *,
+        latest_price: Decimal,
+        current_symbol_value: Decimal,
+        sizing_capital: Decimal,
+        alpha_stop: float | None,
+    ) -> dict:
+        """Shared risk-distance sizing used by live paper decisions and backtests."""
+        max_order_usd = Decimal(str(risk_config.get("max_order_usd", 100) or 100))
+        max_position_usd = Decimal(str(risk_config.get("max_position_usd", 1000) or 1000))
+        risk_per_trade_percent = Decimal(str(risk_config.get("risk_per_trade_percent", 0) or 0))
+        max_exposure_per_trade_percent = Decimal(str(risk_config.get("max_exposure_per_trade_percent", 0) or 0))
+        allow_averaging = str(risk_config.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
+        stop_price = Decimal(str(alpha_stop)) if alpha_stop is not None and alpha_stop > 0 else Decimal("0")
+        stop_distance_percent = (
+            abs(latest_price - stop_price) / latest_price * Decimal("100")
+            if latest_price > 0 and stop_price > 0
+            else Decimal("0")
+        )
+        resolved_capital = sizing_capital
+        sizing_capital_source = "portfolio_snapshot"
+        if resolved_capital <= 0:
+            resolved_capital = max_position_usd if max_position_usd > 0 else max_order_usd
+            sizing_capital_source = "risk_limit_fallback"
+        risk_amount = (
+            resolved_capital * risk_per_trade_percent / Decimal("100")
+            if risk_per_trade_percent > 0
+            else Decimal("0")
+        )
+        risk_sized_notional = (
+            risk_amount / (stop_distance_percent / Decimal("100"))
+            if risk_amount > 0 and stop_distance_percent > 0
+            else max_order_usd
+        )
+        exposure_cap = (
+            resolved_capital * max_exposure_per_trade_percent / Decimal("100")
+            if max_exposure_per_trade_percent > 0 and resolved_capital > 0
+            else max_order_usd
+        )
+        available_capacity = (
+            max(Decimal("0"), max_position_usd - current_symbol_value)
+            if max_position_usd > 0
+            else max_order_usd
+        )
+        notional_cap = min(max_order_usd, risk_sized_notional, exposure_cap, available_capacity)
+        return {
+            "max_order_usd": max_order_usd,
+            "max_position_usd": max_position_usd,
+            "risk_per_trade_percent": risk_per_trade_percent,
+            "max_exposure_per_trade_percent": max_exposure_per_trade_percent,
+            "allow_averaging": allow_averaging,
+            "stop_price": stop_price,
+            "stop_distance_percent": stop_distance_percent,
+            "sizing_capital": resolved_capital,
+            "sizing_capital_source": sizing_capital_source,
+            "risk_amount": risk_amount,
+            "risk_sized_notional": risk_sized_notional,
+            "exposure_cap": exposure_cap,
+            "available_capacity": available_capacity,
+            "notional_cap": notional_cap,
+            "sizing_model": "risk_distance" if risk_amount > 0 and stop_distance_percent > 0 else "max_order_fallback",
+        }
+
     async def _decide_v1_legacy(self, instance: BotInstance, market_snapshot: dict) -> tuple[dict, dict]:
         template_type = instance.template.type if instance.template else BotTemplateType.CUSTOM
         strategy_type = instance.strategy.type if instance.strategy else template_type
@@ -628,11 +711,7 @@ class BotEngineService:
         strategy: BotStrategy,
         market_snapshot: dict,
     ) -> tuple[dict, dict]:
-        risk_config = {
-            **(strategy.risk_defaults or {}),
-            **(instance.template.default_parameters if instance.template else {}),
-            **(instance.risk_config or {}),
-        }
+        risk_config = self._merged_risk_config(strategy, instance=instance)
         allowed_symbols = self._allowed_symbols_for_decision(strategy, instance, market_snapshot)
         positions = market_snapshot.get("positions", [])
         top_position = positions[0] if positions else None
@@ -694,11 +773,6 @@ class BotEngineService:
         entry_passed, entry_evaluations = self._evaluate_rule_group(strategy.rule_config or {}, "entry", frames, latest_index)
         exit_passed, exit_evaluations = self._evaluate_rule_group(strategy.rule_config or {}, "exit", frames, latest_index)
         latest_price = Decimal(str(_candle_close_value(candles[-1])))
-        max_order_usd = Decimal(str(risk_config.get("max_order_usd", 100) or 100))
-        max_position_usd = Decimal(str(risk_config.get("max_position_usd", 1000) or 1000))
-        risk_per_trade_percent = Decimal(str(risk_config.get("risk_per_trade_percent", 0) or 0))
-        max_exposure_per_trade_percent = Decimal(str(risk_config.get("max_exposure_per_trade_percent", 0) or 0))
-        allow_averaging = str(risk_config.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
         max_daily_signals = int(risk_config.get("max_daily_signals", 20) or 0)
         today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
         signal_count_today = int(
@@ -717,29 +791,18 @@ class BotEngineService:
             if normalize_strategy_symbol(str(item.get("symbol") or "")) == symbol
         )
         alpha_stop = self._condition_value(frames, "bc_alpha_trend", "stop", latest_index)
-        stop_price = Decimal(str(alpha_stop)) if alpha_stop is not None and alpha_stop > 0 else Decimal("0")
-        stop_distance_percent = (
-            abs(latest_price - stop_price) / latest_price * Decimal("100")
-            if latest_price > 0 and stop_price > 0
-            else Decimal("0")
-        )
         portfolio_capital = Decimal(str(market_snapshot.get("total_value_usd") or 0))
-        sizing_capital = portfolio_capital
-        sizing_capital_source = "portfolio_snapshot"
-        if sizing_capital <= 0:
-            sizing_capital = max_position_usd if max_position_usd > 0 else max_order_usd
-            sizing_capital_source = "risk_limit_fallback"
-        risk_amount = sizing_capital * risk_per_trade_percent / Decimal("100") if risk_per_trade_percent > 0 else Decimal("0")
-        risk_sized_notional = (
-            risk_amount / (stop_distance_percent / Decimal("100"))
-            if risk_amount > 0 and stop_distance_percent > 0
-            else max_order_usd
+        sizing = self._sizing_snapshot(
+            risk_config,
+            latest_price=latest_price,
+            current_symbol_value=current_symbol_value,
+            sizing_capital=portfolio_capital,
+            alpha_stop=alpha_stop,
         )
-        exposure_cap = (
-            sizing_capital * max_exposure_per_trade_percent / Decimal("100")
-            if max_exposure_per_trade_percent > 0 and sizing_capital > 0
-            else max_order_usd
-        )
+        max_order_usd = sizing["max_order_usd"]
+        max_position_usd = sizing["max_position_usd"]
+        allow_averaging = sizing["allow_averaging"]
+        stop_price = sizing["stop_price"]
         action = BotSignalAction.HOLD
         reason = "Strategy v2 conditions did not pass"
         confidence = Decimal("0.25")
@@ -763,8 +826,7 @@ class BotEngineService:
             reason = "Strategy v2 exit conditions passed"
         elif entry_passed and (current_symbol_value <= 0 or allow_averaging):
             action = BotSignalAction.BUY
-            available_capacity = max(Decimal("0"), max_position_usd - current_symbol_value) if max_position_usd > 0 else max_order_usd
-            notional = min(max_order_usd, risk_sized_notional, exposure_cap, available_capacity)
+            notional = sizing["notional_cap"]
             confidence = Decimal("0.74")
             reason = "Strategy v2 entry conditions passed"
         elif entry_passed:
@@ -798,12 +860,12 @@ class BotEngineService:
             "candle_source": candle_source,
             "stop_model": stop_model,
             "alpha_trend_stop": _json_number(stop_price),
-            "stop_distance_percent": _json_number(stop_distance_percent),
-            "risk_per_trade_percent": _json_number(risk_per_trade_percent),
-            "sizing_capital_usd": _json_number(sizing_capital),
-            "sizing_capital_source": sizing_capital_source,
-            "risk_amount_usd": _json_number(risk_amount),
-            "sizing_model": "risk_distance" if risk_amount > 0 and stop_distance_percent > 0 else "max_order_fallback",
+            "stop_distance_percent": _json_number(sizing["stop_distance_percent"]),
+            "risk_per_trade_percent": _json_number(sizing["risk_per_trade_percent"]),
+            "sizing_capital_usd": _json_number(sizing["sizing_capital"]),
+            "sizing_capital_source": sizing["sizing_capital_source"],
+            "risk_amount_usd": _json_number(sizing["risk_amount"]),
+            "sizing_model": sizing["sizing_model"],
             "entry_passed": entry_passed,
             "exit_passed": exit_passed,
             "stop_exit": stop_exit,
