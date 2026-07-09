@@ -168,6 +168,7 @@ class BotBacktestService:
         max_loss_streak = 0
         previous_equity: Decimal | None = None
         equity_returns: list[float] = []
+        active_equity_returns: list[float] = []
 
         for index, candle in enumerate(candles):
             price = Decimal(str(_candle_close_value(candle)))
@@ -187,7 +188,10 @@ class BotBacktestService:
             max_drawdown = max(max_drawdown, drawdown)
             max_drawdown_usd = max(max_drawdown_usd, drawdown_usd)
             if previous_equity is not None and previous_equity > 0:
-                equity_returns.append(float((equity - previous_equity) / previous_equity))
+                bar_return = float((equity - previous_equity) / previous_equity)
+                equity_returns.append(bar_return)
+                if units > 0:
+                    active_equity_returns.append(bar_return)
             previous_equity = equity
             equity_curve.append({"time": timestamp.isoformat(), "equity": _json_number(equity)})
             drawdown_curve.append({"time": timestamp.isoformat(), "drawdown_percent": _json_number(drawdown)})
@@ -392,11 +396,14 @@ class BotBacktestService:
         buy_hold_pnl = initial_capital * buy_hold_roi / Decimal("100")
         alpha_vs_buy_hold = roi_percent - buy_hold_roi
         annualization = self._annualization_metrics(
-            equity_returns=equity_returns,
+            active_equity_returns=active_equity_returns,
+            time_weighted_equity_returns=equity_returns,
             timeframe=run.timeframe,
             initial_capital=initial_capital,
             ending_equity=ending_equity,
             max_drawdown=max_drawdown,
+            period_start=run.period_start,
+            period_end=run.period_end,
         )
         recovery_factor = realized_net_pnl / max_drawdown_usd if max_drawdown_usd > 0 else Decimal("0")
         metrics = {
@@ -586,30 +593,77 @@ class BotBacktestService:
     def _annualization_metrics(
         self,
         *,
-        equity_returns: list[float],
+        active_equity_returns: list[float],
+        time_weighted_equity_returns: list[float],
         timeframe: str,
         initial_capital: Decimal,
         ending_equity: Decimal,
         max_drawdown: Decimal,
+        period_start: datetime | None,
+        period_end: datetime | None,
     ) -> dict:
+        minimum_days = 30
         periods_per_year = 365 * 24 * 3600 / self._timeframe_seconds(timeframe)
-        mean_return = sum(equity_returns) / len(equity_returns) if equity_returns else 0.0
-        volatility = self._stddev(equity_returns)
-        downside = self._stddev([item for item in equity_returns if item < 0])
-        sharpe = mean_return / volatility * math.sqrt(periods_per_year) if volatility > 0 else 0.0
-        sortino = mean_return / downside * math.sqrt(periods_per_year) if downside > 0 else 0.0
+        period_days = self._period_days(
+            period_start=period_start,
+            period_end=period_end,
+            fallback_bar_count=len(time_weighted_equity_returns),
+            timeframe=timeframe,
+        )
+        active_ratios = self._annualized_return_ratios(active_equity_returns, periods_per_year)
+        time_weighted_ratios = self._annualized_return_ratios(time_weighted_equity_returns, periods_per_year)
         total_return = float(ending_equity / initial_capital) if initial_capital > 0 else 0.0
-        annualized_return = 0.0
-        if total_return > 0 and equity_returns:
-            annualized_return = (total_return ** (periods_per_year / len(equity_returns)) - 1) * 100
-        calmar = annualized_return / float(max_drawdown) if max_drawdown > 0 else 0.0
+        can_annualize = period_days >= minimum_days and total_return > 0
+        annualized_return = ((total_return ** (365 / period_days) - 1) * 100) if can_annualize else None
+        calmar = (
+            annualized_return / float(max_drawdown)
+            if annualized_return is not None and max_drawdown > 0
+            else None
+        )
         return {
-            "annualized_return_percent": self._finite_number(annualized_return),
-            "annualized_volatility_percent": self._finite_number(volatility * math.sqrt(periods_per_year) * 100),
-            "sharpe_ratio": self._finite_number(sharpe),
-            "sortino_ratio": self._finite_number(sortino),
-            "calmar_ratio": self._finite_number(calmar),
+            "annualized_return_percent": self._finite_number_or_none(annualized_return),
+            "annualized_volatility_percent": active_ratios["volatility_percent"],
+            "sharpe_ratio": active_ratios["sharpe"],
+            "sortino_ratio": active_ratios["sortino"],
+            "calmar_ratio": self._finite_number_or_none(calmar),
+            "return_sampling": "position_bars",
+            "position_bar_count": len(active_equity_returns),
+            "time_weighted_bar_count": len(time_weighted_equity_returns),
+            "time_weighted_annualized_volatility_percent": time_weighted_ratios["volatility_percent"],
+            "time_weighted_sharpe_ratio": time_weighted_ratios["sharpe"],
+            "time_weighted_sortino_ratio": time_weighted_ratios["sortino"],
+            "annualization_period_days": self._finite_number(period_days),
+            "annualization_min_days": minimum_days,
+            "annualization_status": "ok" if can_annualize else "insufficient_period",
+            "risk_free_rate_assumption": 0,
         }
+
+    def _annualized_return_ratios(self, returns: list[float], periods_per_year: float) -> dict:
+        clean_returns = [item for item in returns if math.isfinite(item)]
+        if len(clean_returns) < 2:
+            return {"volatility_percent": None, "sharpe": None, "sortino": None}
+        mean_return = sum(clean_returns) / len(clean_returns)
+        volatility = self._stddev(clean_returns)
+        downside = self._stddev([item for item in clean_returns if item < 0])
+        sharpe = mean_return / volatility * math.sqrt(periods_per_year) if volatility > 0 else None
+        sortino = mean_return / downside * math.sqrt(periods_per_year) if downside > 0 else None
+        return {
+            "volatility_percent": self._finite_number_or_none(volatility * math.sqrt(periods_per_year) * 100),
+            "sharpe": self._finite_number_or_none(sharpe),
+            "sortino": self._finite_number_or_none(sortino),
+        }
+
+    def _period_days(
+        self,
+        *,
+        period_start: datetime | None,
+        period_end: datetime | None,
+        fallback_bar_count: int,
+        timeframe: str,
+    ) -> float:
+        if period_start is not None and period_end is not None:
+            return max(0.0, (period_end - period_start).total_seconds() / 86400)
+        return fallback_bar_count * self._timeframe_seconds(timeframe) / 86400
 
     def _stddev(self, values: list[float]) -> float:
         clean_values = [item for item in values if math.isfinite(item)]
@@ -621,6 +675,11 @@ class BotBacktestService:
 
     def _finite_number(self, value: float) -> float:
         return value if math.isfinite(value) else 0.0
+
+    def _finite_number_or_none(self, value: float | None) -> float | None:
+        if value is None:
+            return None
+        return value if math.isfinite(value) else None
 
     def _bounded_percent(self, value: object, ceiling: int) -> Decimal:
         parsed = Decimal(str(value or 0))

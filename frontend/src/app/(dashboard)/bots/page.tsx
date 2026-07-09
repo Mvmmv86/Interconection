@@ -136,14 +136,20 @@ function formatPercent(value: number | null | undefined) {
   return `${amount >= 0 ? '+' : ''}${amount.toFixed(2)}%`;
 }
 
-function metricNumber(run: BotBacktestRun | null, key: string) {
+function metricRawNumber(run: BotBacktestRun | null, key: string) {
   const value = run?.metrics?.[key] ?? run?.result_summary?.[key];
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
+  return Number.isFinite(number) ? number : null;
+}
+
+function metricNumber(run: BotBacktestRun | null, key: string) {
+  return metricRawNumber(run, key) ?? 0;
 }
 
 function metricLabel(run: BotBacktestRun | null, key: string, kind: 'usd' | 'percent' | 'number' = 'number') {
-  const value = metricNumber(run, key);
+  const value = metricRawNumber(run, key);
+  if (value === null) return 'N/A';
   if (kind === 'usd') return formatCompactUsd(value);
   if (kind === 'percent') return formatPercent(value);
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(value);
