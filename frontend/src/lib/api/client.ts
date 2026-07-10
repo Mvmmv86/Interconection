@@ -623,6 +623,23 @@ interface BotRun {
   updated_at: string;
 }
 
+interface BotRunBatch {
+  instance_id: string;
+  symbol_count: number;
+  run_count: number;
+  skipped_count: number;
+  runs: BotRun[];
+  skipped: Array<Record<string, unknown>>;
+  basket: Record<string, unknown>;
+}
+
+interface BotBasketRefresh {
+  instance: BotInstance;
+  symbols: string[];
+  symbol_count: number;
+  basket: Record<string, unknown>;
+}
+
 interface BotSignal {
   id: string;
   instance_id: string;
@@ -1663,12 +1680,33 @@ class ApiClient {
     });
   }
 
+  async runBotInstancePaperBasket(
+    instanceId: string,
+    options?: { symbol?: string; timeframe?: string }
+  ): Promise<ApiResponse<BotRunBatch>> {
+    return this.request<BotRunBatch>(`/api/v1/bots/instances/${instanceId}/run-paper-basket`, {
+      method: 'POST',
+      body: JSON.stringify({
+        cycle_key: null,
+        symbol: options?.symbol || null,
+        timeframe: options?.timeframe || null,
+      }),
+    });
+  }
+
+  async refreshBotInstanceBasket(instanceId: string): Promise<ApiResponse<BotBasketRefresh>> {
+    return this.request<BotBasketRefresh>(`/api/v1/bots/instances/${instanceId}/basket/refresh`, {
+      method: 'POST',
+    });
+  }
+
   async getBotInstanceRuns(instanceId: string): Promise<ApiResponse<BotRun[]>> {
     return this.request<BotRun[]>(`/api/v1/bots/instances/${instanceId}/runs`);
   }
 
-  async getBotInstanceSignals(instanceId: string): Promise<ApiResponse<BotSignal[]>> {
-    return this.request<BotSignal[]>(`/api/v1/bots/instances/${instanceId}/signals`);
+  async getBotInstanceSignals(instanceId: string, limit?: number): Promise<ApiResponse<BotSignal[]>> {
+    const qs = limit ? `?limit=${encodeURIComponent(String(limit))}` : '';
+    return this.request<BotSignal[]>(`/api/v1/bots/instances/${instanceId}/signals${qs}`);
   }
 
   async createBotInstanceBacktest(
@@ -1948,6 +1986,8 @@ export type {
   BotStrategy,
   BotIndicator,
   BotRun,
+  BotRunBatch,
+  BotBasketRefresh,
   BotSignal,
   BotBacktest,
   BotBacktestRun,

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
@@ -53,6 +54,7 @@ from app.schemas.bot import (
     BotBacktestRunResponse,
     BotBacktestResponse,
     BotBacktestTradeResponse,
+    BotBasketRefreshResponse,
     BotIndicatorResponse,
     BotInstanceBacktestCreate,
     BotInstanceCreate,
@@ -68,6 +70,7 @@ from app.schemas.bot import (
     BotMarketScannerBootstrapResponse,
     BotMarketUniverseAssetResponse,
     BotRunRequest,
+    BotRunBatchResponse,
     BotRunResponse,
     BotSchedulerRunRequest,
     BotSchedulerRunResponse,
@@ -98,6 +101,7 @@ from app.workers.bot_backtest_tasks import run_bot_backtest_task
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("bots"))])
 admin_router = APIRouter(dependencies=[Depends(require_superuser)])
+logger = logging.getLogger(__name__)
 
 PLAN_RANK = {
     PlanType.FREE: 0,
@@ -422,6 +426,121 @@ def _signal_response(signal: BotSignal) -> BotSignalResponse:
         generated_at=signal.generated_at,
         created_at=signal.created_at,
         updated_at=signal.updated_at,
+    )
+
+
+async def _load_customer_bot_instance_for_action(
+    db: DBSession,
+    permission_ctx: MembershipAuthContext,
+    instance_id: UUID,
+) -> BotInstance:
+    instance = await db.scalar(
+        select(BotInstance)
+        .options(
+            selectinload(BotInstance.template),
+            selectinload(BotInstance.strategy),
+            selectinload(BotInstance.exchange),
+            selectinload(BotInstance.client),
+        )
+        .where(
+            BotInstance.id == instance_id,
+            BotInstance.organization_id == permission_ctx.organization_id,
+        )
+    )
+    if instance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bot instance not found")
+    if (
+        is_scope_specific_enforcement_enabled("bots")
+        and not permission_ctx.can_access_client(instance.client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+    if instance.strategy is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bot instance has no strategy configured",
+        )
+    return instance
+
+
+async def _resolve_instance_basket_for_action(
+    db: DBSession,
+    instance: BotInstance,
+    *,
+    refresh_snapshot: bool,
+    force_refresh: bool = False,
+) -> tuple[list[str], dict]:
+    ranking_service = MarketRankingService(db)
+    fallback_symbols = resolve_strategy_symbols(instance.strategy, instance)
+    symbols, basket_metadata = await ranking_service.resolve_instance_basket_symbols(
+        instance=instance,
+        fallback_symbols=fallback_symbols,
+        refresh_snapshot=refresh_snapshot,
+        force_refresh=force_refresh,
+    )
+    if not symbols:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Bot instance has no symbols to evaluate",
+                "basket": basket_metadata,
+            },
+        )
+    return symbols, basket_metadata
+
+
+async def _run_paper_symbol(
+    db: DBSession,
+    *,
+    instance: BotInstance,
+    organization_id: UUID,
+    user_id: UUID,
+    symbol: str,
+    timeframe: str,
+    market_snapshot: dict,
+    cycle_key: str | None,
+    triggered_by: str,
+    candle_limit: int = 500,
+) -> BotRun:
+    requested_symbol = normalize_strategy_symbol(symbol)
+    market_type = resolve_strategy_market_type(instance.strategy, instance)
+    if instance.exchange_id is not None and instance.exchange is not None:
+        ingestion = MarketDataIngestionService(db)
+        await ingestion.sync_exchange_candles(
+            exchange_id=instance.exchange_id,
+            organization_id=instance.organization_id,
+            symbols=[requested_symbol],
+            timeframes=[timeframe],
+            limit=max(100, min(candle_limit, 1000)),
+            market_type=market_type,
+        )
+        latest = await ingestion.latest_closed_candle(
+            exchange=instance.exchange.exchange,
+            symbol=requested_symbol,
+            timeframe=timeframe,
+            market_type=market_type,
+        )
+        if latest is not None:
+            cycle_key = cycle_key or (
+                f"paper:{instance.id}:{latest.exchange}:{latest.symbol}:"
+                f"{latest.market_type}:{latest.timeframe}:{latest.close_time.isoformat()}"
+            )
+    cycle_key = cycle_key or (
+        f"paper:{instance.id}:{requested_symbol}:{timeframe}:"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}"
+    )
+    engine = BotEngineService(db)
+    return await engine.run_paper_cycle(
+        instance_id=instance.id,
+        organization_id=organization_id,
+        user_id=user_id,
+        cycle_key=cycle_key,
+        symbol=requested_symbol,
+        timeframe=timeframe,
+        triggered_by=triggered_by,
+        market_snapshot=market_snapshot,
     )
 
 
@@ -914,10 +1033,52 @@ async def create_bot_instance(
 
     organization = await _get_organization(db, permission_ctx.organization_id)
     _ensure_plan_allows_template(organization, template)
-    await enforce_plan_limit(db, permission_ctx.organization_id, "bots")
     client = await _get_customer_client(db, permission_ctx, data.client_id)
     exchange = await _get_customer_exchange(db, data.client_id, data.exchange_id)
     _ensure_exchange_supported(template, exchange)
+    existing = await db.scalar(
+        select(BotInstance)
+        .options(
+            selectinload(BotInstance.template).selectinload(BotTemplate.parameters),
+            selectinload(BotInstance.strategy),
+            selectinload(BotInstance.organization),
+            selectinload(BotInstance.client),
+            selectinload(BotInstance.exchange),
+        )
+        .where(
+            BotInstance.organization_id == permission_ctx.organization_id,
+            BotInstance.client_id == client.id,
+            BotInstance.template_id == template.id,
+            BotInstance.exchange_id == (exchange.id if exchange else None),
+            BotInstance.strategy_id == (selected_strategy.id if selected_strategy else None),
+            BotInstance.mode == data.mode,
+            BotInstance.live_enabled == False,
+            BotInstance.status != BotInstanceStatus.DISABLED,
+        )
+        .with_for_update()
+    )
+    if existing is not None:
+        existing.name = data.name or existing.name or template.name
+        existing.parameters = _merge_parameters(template, data.parameters)
+        existing.risk_config = {**(selected_strategy.risk_defaults if selected_strategy else {}), **data.risk_config}
+        if existing.status in {BotInstanceStatus.PAUSED, BotInstanceStatus.ERROR}:
+            _apply_status_timestamps(existing, BotInstanceStatus.CONFIGURED)
+            existing.status = BotInstanceStatus.CONFIGURED
+        await db.flush()
+        await record_audit_event(
+            db,
+            organization_id=permission_ctx.organization_id,
+            user_id=permission_ctx.user.id,
+            action=AuditAction.UPDATE,
+            resource_type="bot_instance",
+            resource_id=existing.id,
+            description="Customer reused existing bot instance activation",
+            metadata={"template_id": template.id, "client_id": client.id, "exchange_id": data.exchange_id},
+            request=request,
+        )
+        return _instance_response(await _load_instance_for_response(db, existing.id))
+
+    await enforce_plan_limit(db, permission_ctx.organization_id, "bots")
 
     instance = BotInstance(
         id=uuid4(),
@@ -1052,49 +1213,12 @@ async def run_bot_instance_paper_cycle(
     request: Request,
 ) -> BotRunResponse:
     """Run one idempotent paper cycle and persist the generated signal."""
-    instance = await db.scalar(
-        select(BotInstance)
-        .options(
-            selectinload(BotInstance.template),
-            selectinload(BotInstance.strategy),
-            selectinload(BotInstance.exchange),
-        )
-        .where(
-            BotInstance.id == instance_id,
-            BotInstance.organization_id == permission_ctx.organization_id,
-        )
-    )
-    if instance is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bot instance not found")
-    if (
-        is_scope_specific_enforcement_enabled("bots")
-        and not permission_ctx.can_access_client(instance.client_id)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden by membership client scope",
-        )
-
-    if instance.strategy is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Bot instance has no strategy configured",
-        )
-    ranking_service = MarketRankingService(db)
-    fallback_symbols = resolve_strategy_symbols(instance.strategy, instance)
-    symbols, basket_metadata = await ranking_service.resolve_instance_basket_symbols(
-        instance=instance,
-        fallback_symbols=fallback_symbols,
+    instance = await _load_customer_bot_instance_for_action(db, permission_ctx, instance_id)
+    symbols, basket_metadata = await _resolve_instance_basket_for_action(
+        db,
+        instance,
         refresh_snapshot=True,
     )
-    if not symbols:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "Bot instance has no symbols to evaluate",
-                "basket": basket_metadata,
-            },
-        )
     requested_symbol = normalize_strategy_symbol(data.symbol) if data.symbol else symbols[0]
     if requested_symbol not in symbols:
         raise HTTPException(
@@ -1107,19 +1231,16 @@ async def run_bot_instance_paper_cycle(
     market_snapshot = await engine.build_market_snapshot(instance)
     market_snapshot["market_basket"] = basket_metadata
     market_snapshot["allowed_symbols"] = symbols
-    cycle_key = data.cycle_key or (
-        f"paper:{instance.id}:{requested_symbol}:{requested_timeframe}:"
-        f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}"
-    )
-    run = await engine.run_paper_cycle(
-        instance_id=instance_id,
+    run = await _run_paper_symbol(
+        db,
+        instance=instance,
         organization_id=permission_ctx.organization_id,
         user_id=permission_ctx.user.id,
-        cycle_key=cycle_key,
         symbol=requested_symbol,
         timeframe=requested_timeframe,
-        triggered_by="manual",
         market_snapshot=market_snapshot,
+        cycle_key=data.cycle_key,
+        triggered_by="manual",
     )
     await record_audit_event(
         db,
@@ -1133,6 +1254,132 @@ async def run_bot_instance_paper_cycle(
         request=request,
     )
     return _run_response(run)
+
+
+@router.post("/instances/{instance_id}/run-paper-basket", response_model=BotRunBatchResponse)
+async def run_bot_instance_paper_basket(
+    instance_id: UUID,
+    data: BotRunRequest,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:run", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+    request: Request,
+) -> BotRunBatchResponse:
+    """Run paper evaluation over the current operational basket."""
+    instance = await _load_customer_bot_instance_for_action(db, permission_ctx, instance_id)
+    symbols, basket_metadata = await _resolve_instance_basket_for_action(
+        db,
+        instance,
+        refresh_snapshot=True,
+    )
+    requested_timeframe = data.timeframe or resolve_strategy_timeframe(instance.strategy, instance)
+    requested_symbol = normalize_strategy_symbol(data.symbol) if data.symbol else None
+    if requested_symbol is not None and requested_symbol not in symbols:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested symbol is outside the bot basket",
+        )
+    target_symbols = [requested_symbol] if requested_symbol else symbols
+    engine = BotEngineService(db)
+    market_snapshot = await engine.build_market_snapshot(instance)
+    market_snapshot["market_basket"] = basket_metadata
+    market_snapshot["allowed_symbols"] = symbols
+    runs: list[BotRunResponse] = []
+    skipped: list[dict[str, object]] = []
+    for symbol in target_symbols[:50]:
+        try:
+            run = await _run_paper_symbol(
+                db,
+                instance=instance,
+                organization_id=permission_ctx.organization_id,
+                user_id=permission_ctx.user.id,
+                symbol=symbol,
+                timeframe=requested_timeframe,
+                market_snapshot=market_snapshot,
+                cycle_key=None,
+                triggered_by="manual_batch",
+            )
+            runs.append(_run_response(run))
+            await db.commit()
+        except Exception as exc:
+            logger.warning(
+                "Paper basket symbol failed",
+                extra={"instance_id": str(instance_id), "symbol": symbol},
+                exc_info=True,
+            )
+            skipped.append({
+                "symbol": symbol,
+                "reason": "paper_cycle_failed",
+                "message": "Nao foi possivel avaliar este ativo neste ciclo. Tente novamente apos sincronizar candles.",
+            })
+            await db.rollback()
+            instance = await _load_customer_bot_instance_for_action(db, permission_ctx, instance_id)
+
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.UPDATE,
+        resource_type="bot_instance",
+        resource_id=instance.id,
+        description="Customer ran bot paper basket",
+        metadata={
+            "instance_id": instance_id,
+            "run_count": len(runs),
+            "skipped_count": len(skipped),
+            "symbol_count": len(target_symbols),
+        },
+        request=request,
+    )
+    return BotRunBatchResponse(
+        instance_id=instance.id,
+        symbol_count=len(target_symbols),
+        run_count=len(runs),
+        skipped_count=len(skipped),
+        runs=runs,
+        skipped=skipped,
+        basket=basket_metadata,
+    )
+
+
+@router.post("/instances/{instance_id}/basket/refresh", response_model=BotBasketRefreshResponse)
+async def refresh_bot_instance_basket(
+    instance_id: UUID,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:run", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+    request: Request,
+) -> BotBasketRefreshResponse:
+    """Force-resolve the operational basket from the latest market ranking snapshots."""
+    instance = await _load_customer_bot_instance_for_action(db, permission_ctx, instance_id)
+    symbols, basket_metadata = await _resolve_instance_basket_for_action(
+        db,
+        instance,
+        refresh_snapshot=True,
+        force_refresh=True,
+    )
+    await db.flush()
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.UPDATE,
+        resource_type="bot_instance",
+        resource_id=instance.id,
+        description="Customer refreshed bot basket",
+        metadata={"instance_id": instance_id, "symbol_count": len(symbols), "basket": basket_metadata},
+        request=request,
+    )
+    return BotBasketRefreshResponse(
+        instance=_instance_response(await _load_instance_for_response(db, instance.id)),
+        symbols=symbols,
+        symbol_count=len(symbols),
+        basket=basket_metadata,
+    )
 
 
 @router.post("/instances/{instance_id}/backtests", response_model=BotBacktestRunResponse, status_code=status.HTTP_202_ACCEPTED)

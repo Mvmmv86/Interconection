@@ -248,6 +248,57 @@ function botGateRows(signal: BotSignal | undefined) {
   return rows;
 }
 
+function latestSignalMap(signals: BotSignal[]) {
+  const map = new Map<string, BotSignal>();
+  signals.forEach((signal) => {
+    const symbol = String(signal.symbol || '').toUpperCase();
+    if (symbol && !map.has(symbol)) {
+      map.set(symbol, signal);
+    }
+  });
+  return map;
+}
+
+function symbolStatus(signal: BotSignal | undefined) {
+  if (!signal) {
+    return {
+      label: 'sem ciclo',
+      className: 'border-border-subtle bg-background-secondary/70 text-text-tertiary hover:border-accent-blue/30',
+      title: 'Ainda nao existe ciclo paper para este ativo',
+    };
+  }
+  const riskSnapshot = isRecord(signal.risk_snapshot) ? signal.risk_snapshot : {};
+  const blocks = asStringArray(riskSnapshot.blocks);
+  const warnings = asStringArray(riskSnapshot.data_warnings);
+  const action = String(signal.action || 'hold').toLowerCase();
+  if (blocks.length) {
+    return {
+      label: 'bloqueado',
+      className: 'border-status-error/30 bg-status-error/10 text-status-error hover:border-status-error/60',
+      title: blocks.join(', '),
+    };
+  }
+  if (warnings.length) {
+    return {
+      label: 'aguardando dados',
+      className: 'border-status-warning/30 bg-status-warning/10 text-status-warning hover:border-status-warning/60',
+      title: warnings.join(', '),
+    };
+  }
+  if (action === 'buy') {
+    return {
+      label: 'entrada',
+      className: 'border-status-success/30 bg-status-success/10 text-status-success hover:border-status-success/60',
+      title: signal.reason || 'Entrada validada pelo motor',
+    };
+  }
+  return {
+    label: action,
+    className: 'border-accent-blue/20 bg-accent-blue/10 text-accent-blue hover:border-accent-blue/60',
+    title: signal.reason || 'Ultimo ciclo sem entrada',
+  };
+}
+
 export default function BotsPage() {
   const { can, activeMembership } = useAuth();
   const [templates, setTemplates] = useState<BotTemplate[]>([]);
@@ -271,6 +322,7 @@ export default function BotsPage() {
   const [isRankingLoading, setIsRankingLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunningId, setIsRunningId] = useState<string | null>(null);
+  const [isRefreshingBasketId, setIsRefreshingBasketId] = useState<string | null>(null);
   const [isActivatingId, setIsActivatingId] = useState<string | null>(null);
   const [backtestSelection, setBacktestSelection] = useState<BacktestSelection | null>(null);
   const [backtestForm, setBacktestForm] = useState<BacktestForm>(defaultBacktestForm);
@@ -455,7 +507,7 @@ export default function BotsPage() {
   };
 
   const loadSignals = async (instanceId: string) => {
-    const result = await api.getBotInstanceSignals(instanceId);
+    const result = await api.getBotInstanceSignals(instanceId, 100);
     if (!result.success) {
       setError(result.error || 'Nao foi possivel carregar sinais do bot');
       return;
@@ -576,13 +628,28 @@ export default function BotsPage() {
   const runPaper = async (instance: BotInstance) => {
     setIsRunningId(instance.id);
     setError(null);
-    const result = await api.runBotInstancePaper(instance.id);
+    const result = await api.runBotInstancePaperBasket(instance.id);
     setIsRunningId(null);
     if (!result.success) {
-      setError(result.error || 'Nao foi possivel rodar ciclo paper');
+      setError(result.error || 'Nao foi possivel rodar a cesta paper');
       return;
     }
+    if (result.data && result.data.skipped_count > 0) {
+      setError(`Cesta rodada parcialmente: ${result.data.run_count}/${result.data.symbol_count} ativos avaliados; ${result.data.skipped_count} aguardam mais dados.`);
+    }
     await Promise.all([loadSignals(instance.id), loadBots()]);
+  };
+
+  const refreshBasket = async (instance: BotInstance) => {
+    setIsRefreshingBasketId(instance.id);
+    setError(null);
+    const result = await api.refreshBotInstanceBasket(instance.id);
+    setIsRefreshingBasketId(null);
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel recalcular a cesta do bot');
+      return;
+    }
+    await loadBots();
   };
 
   const requestLive = async (instance: BotInstance) => {
@@ -1107,7 +1174,9 @@ export default function BotsPage() {
               {instances.map((instance) => {
                 const basket = botBasketView(instance);
                 const riskConfig = isRecord(instance.risk_config) ? instance.risk_config : {};
-                const latestSignal = (signalsByInstance[instance.id] || [])[0];
+                const instanceSignals = signalsByInstance[instance.id] || [];
+                const latestSignal = instanceSignals[0];
+                const signalBySymbol = latestSignalMap(instanceSignals);
                 const gateRows = botGateRows(latestSignal);
                 return (
                 <div key={instance.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
@@ -1139,17 +1208,21 @@ export default function BotsPage() {
                       </div>
                       {basket.symbols.length ? (
                         <div className="flex flex-wrap gap-1.5">
-                          {basket.symbols.slice(0, 24).map((symbol) => (
-                            <button
-                              key={symbol}
-                              type="button"
-                              onClick={() => openBacktest(instance, symbol)}
-                              className="rounded-md border border-accent-blue/20 bg-accent-blue/10 px-2 py-1 text-[10px] font-semibold text-accent-blue transition hover:border-accent-blue/60 hover:bg-accent-blue/20"
-                              title={`Rodar backtest em ${symbol}`}
-                            >
-                              {symbol}
-                            </button>
-                          ))}
+                          {basket.symbols.slice(0, 24).map((symbol) => {
+                            const status = symbolStatus(signalBySymbol.get(symbol));
+                            return (
+                              <button
+                                key={symbol}
+                                type="button"
+                                onClick={() => openBacktest(instance, symbol)}
+                                className={`rounded-md border px-2 py-1 text-[10px] font-semibold transition ${status.className}`}
+                                title={`${symbol}: ${status.title}. Clique para backtest.`}
+                              >
+                                <span>{symbol}</span>
+                                <span className="ml-1 opacity-70">{status.label}</span>
+                              </button>
+                            );
+                          })}
                           {basket.symbols.length > 24 && <Badge variant="yellow" size="sm">+{basket.symbols.length - 24}</Badge>}
                         </div>
                       ) : (
@@ -1206,12 +1279,22 @@ export default function BotsPage() {
                     <Button
                       type="button"
                       size="sm"
+                      variant="ghost"
+                      disabled={isRefreshingBasketId === instance.id || !can('bots:run')}
+                      onClick={() => refreshBasket(instance)}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      {isRefreshingBasketId === instance.id ? 'Atualizando...' : 'Recalcular cesta'}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
                       variant="secondary"
                       disabled={isRunningId === instance.id || !can('bots:run')}
                       onClick={() => runPaper(instance)}
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
-                      {isRunningId === instance.id ? 'Rodando...' : 'Rodar paper'}
+                      {isRunningId === instance.id ? 'Rodando cesta...' : 'Rodar cesta paper'}
                     </Button>
                     <Button
                       type="button"

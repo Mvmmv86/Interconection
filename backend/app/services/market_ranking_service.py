@@ -520,6 +520,7 @@ class MarketRankingService:
         instance: Any,
         fallback_symbols: list[str],
         refresh_snapshot: bool = False,
+        force_refresh: bool = False,
     ) -> tuple[list[str], dict]:
         """Resolve dynamic market-ranking baskets for a bot instance."""
         risk_config = getattr(instance, "risk_config", None)
@@ -533,6 +534,7 @@ class MarketRankingService:
                 policy=basket_policy,
                 fallback_symbols=fallback_symbols,
                 refresh_snapshot=refresh_snapshot,
+                force_refresh=force_refresh,
             )
         if isinstance(market_basket, dict) and market_basket.get("source") == "market_extremes":
             return await self._resolve_market_extremes_basket(
@@ -540,6 +542,7 @@ class MarketRankingService:
                 policy=market_basket,
                 fallback_symbols=fallback_symbols,
                 refresh_snapshot=refresh_snapshot,
+                force_refresh=force_refresh,
             )
 
         if not isinstance(market_basket, dict) or market_basket.get("source") != "market_ranking":
@@ -622,6 +625,7 @@ class MarketRankingService:
         policy: dict[str, Any],
         fallback_symbols: list[str],
         refresh_snapshot: bool,
+        force_refresh: bool,
     ) -> tuple[list[str], dict]:
         """Build or reuse a bot-owned basket from top gainers and losers."""
         risk_config = getattr(instance, "risk_config", None)
@@ -646,7 +650,7 @@ class MarketRankingService:
 
         now = datetime.now(timezone.utc)
         active_basket = risk_config.get("active_basket")
-        if isinstance(active_basket, dict):
+        if isinstance(active_basket, dict) and not force_refresh:
             active_symbols = [
                 normalize_strategy_symbol(symbol)
                 for symbol in (active_basket.get("symbols") or [])

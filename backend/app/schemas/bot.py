@@ -284,6 +284,27 @@ class BotRunResponse(BaseSchema):
     updated_at: datetime
 
 
+class BotRunBatchResponse(BaseSchema):
+    """Batch paper evaluation over a bot basket."""
+
+    instance_id: UUID
+    symbol_count: int
+    run_count: int
+    skipped_count: int
+    runs: list[BotRunResponse]
+    skipped: list[dict[str, Any]] = Field(default_factory=list)
+    basket: dict[str, Any] = Field(default_factory=dict)
+
+
+class BotBasketRefreshResponse(BaseSchema):
+    """Freshly resolved operational basket for one bot instance."""
+
+    instance: BotInstanceResponse
+    symbols: list[str]
+    symbol_count: int
+    basket: dict[str, Any] = Field(default_factory=dict)
+
+
 class BotSignalResponse(BaseSchema):
     """Generated bot signal."""
 
