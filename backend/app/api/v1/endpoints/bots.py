@@ -1445,12 +1445,24 @@ async def queue_bot_instance_backtest(
     period_start = data.period_start or (period_end - timedelta(days=365))
     if period_start >= period_end:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="period_start must be before period_end")
+    max_backtest_window = timedelta(days=550)
+    if period_end - period_start > max_backtest_window:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Backtest window cannot exceed 18 months",
+        )
 
     exchange_key = normalize_exchange_key(
         str(instance.exchange.exchange if instance.exchange else (strategy.market_config or {}).get("default_exchange") or "bingx")
     )
     market_type = normalize_market_type(resolve_strategy_market_type(strategy, instance))
-    timeframe = data.timeframe or resolve_strategy_timeframe(strategy, instance)
+    timeframe = str(data.timeframe or resolve_strategy_timeframe(strategy, instance)).lower()
+    allowed_backtest_timeframes = {"1h", "4h", "1d"}
+    if timeframe not in allowed_backtest_timeframes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Backtest timeframe must be one of: 1h, 4h, 1d",
+        )
     engine = BotEngineService(db)
     risk_snapshot = engine._merged_risk_config(strategy, instance=instance, overrides=data.risk_overrides)
     cost_snapshot = {
@@ -1501,8 +1513,15 @@ async def queue_bot_instance_backtest(
             existing.metrics = {}
             existing.equity_curve = []
             existing.drawdown_curve = []
+            existing_diagnostics = {
+                key: value
+                for key, value in dict(existing.diagnostics or {}).items()
+                if key not in {"worker_claim_id", "worker_claimed_at", "duplicate_worker_skipped_at"}
+            }
             existing.diagnostics = {
-                **(existing.diagnostics or {}),
+                **existing_diagnostics,
+                "stage": "queued",
+                "stage_label": "Queued for retry",
                 "retry_requested_at": datetime.now(timezone.utc).isoformat(),
             }
             await record_audit_event(
@@ -1555,7 +1574,11 @@ async def queue_bot_instance_backtest(
         metrics={},
         equity_curve=[],
         drawdown_curve=[],
-        diagnostics={"queue": "backtests"},
+        diagnostics={
+            "queue": "backtests",
+            "stage": "queued",
+            "stage_label": "Queued for worker",
+        },
     )
     db.add(run)
     try:

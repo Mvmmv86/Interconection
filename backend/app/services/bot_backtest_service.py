@@ -8,14 +8,17 @@ simulation outside the FastAPI event loop.
 from __future__ import annotations
 
 import math
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.db.session import async_session_maker
 from app.models.bot import (
     BotBacktestRun,
     BotBacktestStatus,
@@ -23,6 +26,7 @@ from app.models.bot import (
     BotInstance,
     BotStrategy,
 )
+from app.models.market_candle import MarketCandle
 from app.services.bot_engine_service import (
     BotEngineService,
     _candle_close_value,
@@ -31,7 +35,14 @@ from app.services.bot_engine_service import (
     _candle_timestamp,
     _json_number,
 )
-from app.services.market_data_ingestion_service import MarketDataIngestionService
+from app.services.market_data_ingestion_service import (
+    MarketDataIngestionService,
+    normalize_exchange_key,
+    normalize_market_type,
+    normalize_strategy_symbol,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class BotBacktestService:
@@ -43,6 +54,7 @@ class BotBacktestService:
 
     async def run_backtest_run(self, run_id: UUID) -> BotBacktestRun:
         """Execute one queued backtest run and persist metrics/trades."""
+        claim_id = str(uuid4())
         result = await self.db.execute(
             select(BotBacktestRun)
             .options(
@@ -58,13 +70,31 @@ class BotBacktestService:
             raise ValueError(f"Backtest run not found: {run_id}")
         if run.status != BotBacktestStatus.RUNNING:
             return run
+        diagnostics = dict(run.diagnostics or {})
+        existing_claim = diagnostics.get("worker_claim_id")
+        existing_claimed_at = self._parse_datetime(diagnostics.get("worker_claimed_at"))
+        claim_is_stale = existing_claimed_at is None or (
+            existing_claimed_at < datetime.now(timezone.utc) - timedelta(hours=2)
+        )
+        if existing_claim and not claim_is_stale:
+            diagnostics["duplicate_worker_skipped_at"] = datetime.now(timezone.utc).isoformat()
+            run.diagnostics = diagnostics
+            await self.db.commit()
+            return run
 
         run.started_at = run.started_at or datetime.now(timezone.utc)
         run.progress = 1
-        await self.db.flush()
+        run.diagnostics = {
+            **diagnostics,
+            "stage": "claimed",
+            "stage_label": "Backtest worker claimed run",
+            "worker_claim_id": claim_id,
+            "worker_claimed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await self.db.commit()
 
         try:
-            await self._execute(run)
+            await self._execute(run, claim_id=claim_id)
         except Exception as exc:
             run.status = BotBacktestStatus.FAILED
             run.error_message = str(exc)
@@ -74,14 +104,31 @@ class BotBacktestService:
                 **(run.diagnostics or {}),
                 "error_type": exc.__class__.__name__,
                 "failed_at": run.finished_at.isoformat(),
+                "stage": "failed",
+                "stage_label": "Backtest failed",
             }
+            await self.db.commit()
         return run
 
-    async def _execute(self, run: BotBacktestRun) -> None:
+    async def _execute(self, run: BotBacktestRun, *, claim_id: str) -> None:
         strategy = run.strategy
         instance = run.instance
         limit = self._candle_limit(run.timeframe, run.period_start, run.period_end, strategy)
+        await self._save_progress(
+            run,
+            claim_id=claim_id,
+            progress=5,
+            stage="preparing_candles",
+            stage_label="Preparing exchange candles on demand",
+        )
         preload_snapshot = await self._preload_exchange_candles(run, limit=limit)
+        await self._save_progress(
+            run,
+            claim_id=claim_id,
+            progress=15,
+            stage="loading_candles",
+            stage_label="Loading normalized candles",
+        )
         candles, candle_source = await self.engine._load_strategy_candles(
             strategy,
             instance=instance,
@@ -94,11 +141,14 @@ class BotBacktestService:
         )
         data_quality = self.engine._data_quality(candles)
         coverage_quality = self._coverage_quality(candles, run.timeframe, run.period_start, run.period_end)
+        available_history = await self._available_history(run)
         data_warnings = self.engine._data_quality_warnings(data_quality) + coverage_quality["warnings"]
         data_quality = {
             **data_quality,
             **coverage_quality,
+            "stage": "loaded_candles",
             "preload": preload_snapshot,
+            "available_history": available_history,
             "requested_limit": limit,
             "candle_source": candle_source,
             "warnings": data_warnings,
@@ -106,10 +156,26 @@ class BotBacktestService:
         run.data_quality = data_quality
         if len(candles) < 2:
             run.status = BotBacktestStatus.FAILED
-            run.error_message = "Not enough price history for backtest"
-            run.result_summary = {"reason": "missing_price_history", "sample_count": len(candles)}
+            run.error_message = self._insufficient_history_message(
+                run=run,
+                available_history=available_history,
+                sample_count=len(candles),
+            )
+            run.result_summary = {
+                "reason": "missing_price_history",
+                "sample_count": len(candles),
+                "available_history": available_history,
+                "requested_period_start": run.period_start.isoformat(),
+                "requested_period_end": run.period_end.isoformat(),
+            }
             run.progress = 100
             run.finished_at = datetime.now(timezone.utc)
+            run.diagnostics = {
+                **(run.diagnostics or {}),
+                "stage": "failed",
+                "stage_label": "Backtest failed: insufficient history",
+            }
+            await self.db.commit()
             return
 
         frames, fallback_indicators = self.engine._indicator_frames(strategy, candles)
@@ -119,9 +185,22 @@ class BotBacktestService:
             run.result_summary = {"reason": "missing_indicators", "sample_count": len(candles)}
             run.progress = 100
             run.finished_at = datetime.now(timezone.utc)
+            run.diagnostics = {
+                **(run.diagnostics or {}),
+                "stage": "failed",
+                "stage_label": "Backtest failed: missing indicators",
+            }
+            await self.db.commit()
             return
 
         await self.db.execute(delete(BotBacktestTrade).where(BotBacktestTrade.run_id == run.id))
+        await self._save_progress(
+            run,
+            claim_id=claim_id,
+            progress=20,
+            stage="simulating",
+            stage_label="Running strategy simulation",
+        )
 
         risk = self.engine._merged_risk_config(strategy, instance=instance, overrides=run.risk_snapshot or {})
         cost_snapshot = run.cost_snapshot or {}
@@ -335,8 +414,13 @@ class BotBacktestService:
                 }
 
             if index % 250 == 0:
-                run.progress = min(95, int(index / max(1, len(candles)) * 100))
-                await self.db.flush()
+                await self._save_progress(
+                    run,
+                    claim_id=claim_id,
+                    progress=min(95, int(index / max(1, len(candles)) * 100)),
+                    stage="simulating",
+                    stage_label="Running strategy simulation",
+                )
 
         if units > 0:
             last_candle = candles[-1]
@@ -461,11 +545,57 @@ class BotBacktestService:
         run.drawdown_curve = stored_drawdown_curve
         run.diagnostics = {
             **(run.diagnostics or {}),
+            "stage": "completed",
+            "stage_label": "Backtest completed",
             "curve_points_full": len(equity_curve),
             "curve_points_stored": len(stored_equity_curve),
             "curve_downsample_max_points": 2000,
         }
         run.finished_at = datetime.now(timezone.utc)
+        await self.db.commit()
+
+    async def _save_progress(
+        self,
+        run: BotBacktestRun,
+        *,
+        claim_id: str,
+        progress: int,
+        stage: str,
+        stage_label: str,
+    ) -> None:
+        """Persist a visible worker stage without waiting for the full run."""
+        diagnostics = dict(run.diagnostics or {})
+        if diagnostics.get("worker_claim_id") != claim_id:
+            raise RuntimeError("Backtest worker claim lost")
+        updated_diagnostics = {
+            **diagnostics,
+            "stage": stage,
+            "stage_label": stage_label,
+            "stage_updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        run.progress = progress
+        run.diagnostics = updated_diagnostics
+        async with async_session_maker() as progress_session:
+            await progress_session.execute(
+                update(BotBacktestRun)
+                .where(
+                    BotBacktestRun.id == run.id,
+                    BotBacktestRun.status == BotBacktestStatus.RUNNING,
+                )
+                .values(progress=progress, diagnostics=updated_diagnostics)
+            )
+            await progress_session.commit()
+
+    def _parse_datetime(self, value: object) -> datetime | None:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     async def _preload_exchange_candles(self, run: BotBacktestRun, *, limit: int) -> dict:
         """Fetch the requested symbol/timeframe before simulating a customer bot.
@@ -481,6 +611,13 @@ class BotBacktestService:
                 "status": "skipped",
                 "reason": "missing_exchange_id",
             }
+        local_before = await self._available_history(run)
+        if self._history_covers_request(local_before):
+            return {
+                "status": "skipped",
+                "reason": "local_coverage_sufficient",
+                "local_coverage": local_before,
+            }
         try:
             service = MarketDataIngestionService(self.db)
             result = await service.sync_exchange_candles(
@@ -494,16 +631,120 @@ class BotBacktestService:
                 period_end=run.period_end,
             )
             await self.db.flush()
+            local_after = await self._available_history(run)
             return {
                 "status": "completed",
                 **result,
+                "local_coverage_before": local_before,
+                "local_coverage_after": local_after,
             }
         except Exception as exc:
+            logger.warning(
+                "Backtest candle preload failed",
+                extra={
+                    "run_id": str(run.id),
+                    "exchange_id": str(run.exchange_id),
+                    "symbol": run.symbol,
+                    "timeframe": run.timeframe,
+                },
+                exc_info=True,
+            )
             return {
                 "status": "failed",
                 "error_type": exc.__class__.__name__,
-                "message": str(exc),
+                "message": "Exchange candle preload failed; using any candles already stored locally.",
+                "local_coverage_before": local_before,
             }
+
+    async def _available_history(self, run: BotBacktestRun) -> dict:
+        """Return the stored candle range for the exact market requested."""
+        exchange = normalize_exchange_key(run.exchange)
+        symbol = normalize_strategy_symbol(run.symbol)
+        market_type = normalize_market_type(run.market_type)
+        base_filters = (
+            MarketCandle.exchange == exchange,
+            MarketCandle.symbol == symbol,
+            MarketCandle.market_type == market_type,
+            MarketCandle.timeframe == run.timeframe,
+        )
+        result = await self.db.execute(
+            select(
+                func.count(MarketCandle.id),
+                func.min(MarketCandle.open_time),
+                func.max(MarketCandle.open_time),
+            ).where(*base_filters)
+        )
+        count, first_at, last_at = result.one()
+        period_result = await self.db.execute(
+            select(
+                func.count(MarketCandle.id),
+                func.min(MarketCandle.open_time),
+                func.max(MarketCandle.open_time),
+            ).where(
+                *base_filters,
+                MarketCandle.open_time >= run.period_start,
+                MarketCandle.open_time <= run.period_end,
+            )
+        )
+        period_count, period_first_at, period_last_at = period_result.one()
+        expected_rows = self._expected_rows(run.timeframe, run.period_start, run.period_end)
+        period_coverage_percent = (
+            Decimal(int(period_count or 0)) / Decimal(expected_rows) * Decimal("100")
+            if expected_rows
+            else Decimal("100")
+        )
+        period_covers_request = (
+            int(period_count or 0) >= math.floor(expected_rows * 0.95)
+            and period_first_at is not None
+            and period_last_at is not None
+            and self._coerce_utc(period_first_at) <= self._coerce_utc(run.period_start) + self._timeframe_tolerance(run.timeframe)
+            and self._coerce_utc(period_last_at) >= self._coerce_utc(run.period_end) - self._timeframe_tolerance(run.timeframe)
+        )
+        return {
+            "exchange": exchange,
+            "symbol": symbol,
+            "market_type": market_type,
+            "timeframe": run.timeframe,
+            "stored_rows": int(count or 0),
+            "first_candle_at": first_at.isoformat() if first_at else None,
+            "last_candle_at": last_at.isoformat() if last_at else None,
+            "period_rows": int(period_count or 0),
+            "period_first_candle_at": period_first_at.isoformat() if period_first_at else None,
+            "period_last_candle_at": period_last_at.isoformat() if period_last_at else None,
+            "expected_rows": expected_rows,
+            "period_coverage_percent": _json_number(min(period_coverage_percent, Decimal("100"))),
+            "period_covers_request": period_covers_request,
+            "requested_period_start": run.period_start.isoformat(),
+            "requested_period_end": run.period_end.isoformat(),
+        }
+
+    def _history_covers_request(self, snapshot: dict) -> bool:
+        return bool(snapshot.get("period_covers_request"))
+
+    def _insufficient_history_message(
+        self,
+        *,
+        run: BotBacktestRun,
+        available_history: dict,
+        sample_count: int,
+    ) -> str:
+        first_at = available_history.get("first_candle_at")
+        last_at = available_history.get("last_candle_at")
+        if first_at and last_at:
+            return (
+                "Not enough exchange candles for this backtest window. "
+                f"{run.symbol} {run.timeframe} is available from {first_at} to {last_at}; "
+                f"requested {run.period_start.isoformat()} to {run.period_end.isoformat()}."
+            )
+        if sample_count > 0:
+            return (
+                "Not enough exchange candles for this backtest window. "
+                f"Only {sample_count} candle(s) matched the requested period."
+            )
+        return (
+            "Not enough exchange candles for this backtest window. "
+            "The exchange did not return usable OHLCV history for the requested symbol/timeframe yet."
+        )
 
     def _close_trade(
         self,
@@ -588,7 +829,7 @@ class BotBacktestService:
         seconds = self._timeframe_seconds(timeframe)
         normalized_start = self._coerce_utc(period_start)
         normalized_end = self._coerce_utc(period_end)
-        expected_rows = max(1, int((period_end - period_start).total_seconds() // seconds))
+        expected_rows = self._expected_rows(timeframe, period_start, period_end)
         first_at = self._candle_open_time(candles[0]) if candles else None
         last_at = self._candle_open_time(candles[-1]) if candles else None
         coverage_percent = Decimal(len(candles)) / Decimal(expected_rows) * Decimal("100") if expected_rows else Decimal("100")
@@ -601,6 +842,8 @@ class BotBacktestService:
         return {
             "expected_rows": expected_rows,
             "period_coverage_percent": _json_number(min(coverage_percent, Decimal("100"))),
+            "requested_period_start": normalized_start.isoformat(),
+            "requested_period_end": normalized_end.isoformat(),
             "first_candle_at": first_at.isoformat() if first_at else None,
             "last_candle_at": last_at.isoformat() if last_at else None,
             "warnings": warnings,
@@ -616,6 +859,10 @@ class BotBacktestService:
 
     def _timeframe_tolerance(self, timeframe: str):
         return timedelta(seconds=self._timeframe_seconds(timeframe) * 2)
+
+    def _expected_rows(self, timeframe: str, period_start: datetime, period_end: datetime) -> int:
+        seconds = self._timeframe_seconds(timeframe)
+        return max(1, int((period_end - period_start).total_seconds() // seconds))
 
     def _coerce_utc(self, value: datetime) -> datetime:
         if value.tzinfo is None:

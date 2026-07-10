@@ -111,6 +111,11 @@ function formatDateTime(value: string | null | undefined) {
   return new Date(value).toLocaleString('pt-BR');
 }
 
+function formatHistoryDate(value: unknown) {
+  if (typeof value !== 'string' || !value) return null;
+  return new Date(value).toLocaleDateString('pt-BR');
+}
+
 function formatCompactUsd(value: number | null | undefined) {
   const amount = Number(value || 0);
   if (!Number.isFinite(amount)) return '$0';
@@ -175,6 +180,54 @@ function statusTone(status: string | undefined | null): 'success' | 'error' | 'y
   if (normalized === 'failed') return 'error';
   if (['running', 'queued', 'pending'].includes(normalized)) return 'yellow';
   return 'blue';
+}
+
+function clampBacktestMonths(value: string) {
+  const parsed = Math.floor(asNumber(value, 6));
+  return Math.min(18, Math.max(1, Number.isFinite(parsed) ? parsed : 6));
+}
+
+function backtestStageLabel(run: BotBacktestRun | null) {
+  const diagnostics = isRecord(run?.diagnostics) ? run!.diagnostics : {};
+  const dataQuality = isRecord(run?.data_quality) ? run!.data_quality : {};
+  const stage = String(diagnostics.stage || dataQuality.stage || run?.status || 'new');
+  const labels: Record<string, string> = {
+    queued: 'Na fila do worker',
+    claimed: 'Worker iniciado',
+    preparing_candles: 'Preparando candles da exchange',
+    loading_candles: 'Carregando candles normalizados',
+    loaded_candles: 'Candles carregados',
+    simulating: 'Simulando estrategia',
+    completed: 'Concluido',
+    running: 'Na fila/rodando',
+    failed: 'Falhou',
+    succeeded: 'Concluido',
+    new: 'Aguardando solicitacao',
+  };
+  return labels[stage] || stage;
+}
+
+function backtestAvailableHistoryLabel(run: BotBacktestRun | null) {
+  const dataQuality = isRecord(run?.data_quality) ? run!.data_quality : {};
+  const history = isRecord(dataQuality.available_history) ? dataQuality.available_history : {};
+  const first = formatHistoryDate(history.first_candle_at);
+  const last = formatHistoryDate(history.last_candle_at);
+  const rows = Number(history.stored_rows || 0);
+  if (first && last) return `${first} ate ${last} (${rows.toLocaleString('pt-BR')} candles)`;
+  if (rows > 0) return `${rows.toLocaleString('pt-BR')} candles armazenados`;
+  return 'Aguardando ingestao sob demanda';
+}
+
+function backtestPreloadLabel(run: BotBacktestRun | null) {
+  const dataQuality = isRecord(run?.data_quality) ? run!.data_quality : {};
+  const preload = isRecord(dataQuality.preload) ? dataQuality.preload : {};
+  const status = String(preload.status || 'aguardando');
+  const stored = Number(preload.stored || 0);
+  const errors = Array.isArray(preload.errors) ? preload.errors.length : 0;
+  if (status === 'completed') return `${stored.toLocaleString('pt-BR')} candles atualizados${errors ? `, ${errors} aviso(s)` : ''}`;
+  if (status === 'failed') return 'Falha ao buscar candles da exchange';
+  if (status === 'skipped') return 'Sem exchange vinculada para preload';
+  return 'Sera executado quando o worker iniciar';
 }
 
 function curveBars(points: unknown[] | undefined, key: string, maxBars = 56, baselineZero = false) {
@@ -689,7 +742,11 @@ export default function BotsPage() {
     setBacktestTradesError(null);
     const periodEnd = new Date();
     const periodStart = new Date(periodEnd);
-    periodStart.setMonth(periodStart.getMonth() - Math.max(1, Math.floor(asNumber(backtestForm.months, 6))));
+    const months = clampBacktestMonths(backtestForm.months);
+    if (String(months) !== backtestForm.months) {
+      updateBacktestForm({ months: String(months) });
+    }
+    periodStart.setMonth(periodStart.getMonth() - months);
     const result = await api.createBotInstanceBacktest(backtestSelection.instance.id, {
       symbol: backtestSelection.symbol,
       timeframe: backtestForm.timeframe,
@@ -1410,12 +1467,18 @@ export default function BotsPage() {
                         Janela
                         <div className="relative">
                           <input
+                            type="number"
+                            min={1}
+                            max={18}
                             value={backtestForm.months}
                             onChange={(event) => updateBacktestForm({ months: event.target.value })}
                             className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 pr-16 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                           />
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] uppercase tracking-[0.14em] text-text-tertiary">meses</span>
                         </div>
+                        <p className="text-[10px] text-text-tertiary">
+                          Maximo 18 meses. Se o ativo for novo, usamos o historico real disponivel na exchange e avisamos o periodo.
+                        </p>
                       </label>
                       <label className="space-y-1 text-caption text-text-secondary">
                         Capital
@@ -1475,9 +1538,27 @@ export default function BotsPage() {
                   </div>
                   <div className="mt-4 grid gap-2 text-caption text-text-secondary">
                     <div className="flex items-center justify-between gap-3">
+                      <span>Etapa</span>
+                      <span className="text-right font-semibold text-text-primary">
+                        {backtestStageLabel(backtestRun)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
                       <span>Cobertura historica</span>
                       <span className="font-semibold text-text-primary">
                         {backtestRun ? `${Number(backtestRun.data_quality?.period_coverage_percent || 0).toFixed(2)}%` : '-'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Historico disponivel</span>
+                      <span className="max-w-[62%] text-right font-semibold text-text-primary">
+                        {backtestAvailableHistoryLabel(backtestRun)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Preload exchange</span>
+                      <span className="max-w-[62%] text-right font-semibold text-text-primary">
+                        {backtestPreloadLabel(backtestRun)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
