@@ -31,6 +31,7 @@ from app.services.bot_engine_service import (
     _candle_timestamp,
     _json_number,
 )
+from app.services.market_data_ingestion_service import MarketDataIngestionService
 
 
 class BotBacktestService:
@@ -80,6 +81,7 @@ class BotBacktestService:
         strategy = run.strategy
         instance = run.instance
         limit = self._candle_limit(run.timeframe, run.period_start, run.period_end, strategy)
+        preload_snapshot = await self._preload_exchange_candles(run, limit=limit)
         candles, candle_source = await self.engine._load_strategy_candles(
             strategy,
             instance=instance,
@@ -96,6 +98,7 @@ class BotBacktestService:
         data_quality = {
             **data_quality,
             **coverage_quality,
+            "preload": preload_snapshot,
             "requested_limit": limit,
             "candle_source": candle_source,
             "warnings": data_warnings,
@@ -463,6 +466,44 @@ class BotBacktestService:
             "curve_downsample_max_points": 2000,
         }
         run.finished_at = datetime.now(timezone.utc)
+
+    async def _preload_exchange_candles(self, run: BotBacktestRun, *, limit: int) -> dict:
+        """Fetch the requested symbol/timeframe before simulating a customer bot.
+
+        Scanner snapshots are intentionally cheap and usually store 1h/1d data.
+        Institutional backtests can request 4h+ windows for basket assets that
+        were never ingested in that exact timeframe. Preloading here keeps the
+        worker self-sufficient and prevents a misleading fallback to legacy
+        ticker-only price history.
+        """
+        if run.exchange_id is None:
+            return {
+                "status": "skipped",
+                "reason": "missing_exchange_id",
+            }
+        try:
+            service = MarketDataIngestionService(self.db)
+            result = await service.sync_exchange_candles(
+                exchange_id=run.exchange_id,
+                organization_id=run.organization_id,
+                symbols=[run.symbol],
+                timeframes=[run.timeframe],
+                limit=limit,
+                market_type=run.market_type,
+                period_start=run.period_start,
+                period_end=run.period_end,
+            )
+            await self.db.flush()
+            return {
+                "status": "completed",
+                **result,
+            }
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "error_type": exc.__class__.__name__,
+                "message": str(exc),
+            }
 
     def _close_trade(
         self,
