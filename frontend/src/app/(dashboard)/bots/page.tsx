@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bot, Pause, Play, RefreshCw, ShieldCheck, Sparkles, X, Zap } from 'lucide-react';
+import type { SeriesMarker, UTCTimestamp } from 'lightweight-charts';
 import {
   api,
   type BotInstance,
@@ -53,6 +54,13 @@ type BacktestSelection = {
   instance: BotInstance;
   symbol: string;
 };
+type BacktestCrosshairLegend = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+} | null;
 type BasketEditorState = {
   instance: BotInstance;
   value: string;
@@ -148,6 +156,19 @@ function formatCompactUsd(value: number | null | undefined) {
     currency: 'USD',
     notation: Math.abs(amount) >= 100000 ? 'compact' : 'standard',
     maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 6,
+  }).format(amount);
+}
+
+function formatChartPrice(value: number | null | undefined) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return '$0';
+  const abs = Math.abs(amount);
+  const decimals = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.01 ? 6 : 8;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
   }).format(amount);
 }
 
@@ -339,128 +360,297 @@ function BacktestCandleChart({
   loading: boolean;
   error: string | null;
 }) {
-  const candles = chart?.candles || [];
-  const tradeList = chart?.trades?.length ? chart.trades : trades;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const crosshairFrameRef = useRef<number | null>(null);
+  const [crosshairLegend, setCrosshairLegend] = useState<BacktestCrosshairLegend>(null);
+  const candles = useMemo(() => chart?.candles || [], [chart?.candles]);
+  const tradeList = useMemo(() => (chart?.trades?.length ? chart.trades : trades), [chart?.trades, trades]);
+  const chartData = useMemo(() => {
+    return candles
+      .map((candle) => {
+        const time = Math.floor(new Date(candle.open_time).getTime() / 1000) as UTCTimestamp;
+        return {
+          time,
+          open: Number(candle.open),
+          high: Number(candle.high),
+          low: Number(candle.low),
+          close: Number(candle.close),
+        };
+      })
+      .filter((candle) => Number.isFinite(candle.time) && [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite));
+  }, [candles]);
+  const movingAverage = useCallback((period: number) => {
+    if (chartData.length < period) return [];
+    const output: Array<{ time: UTCTimestamp; value: number }> = [];
+    let rolling = 0;
+    chartData.forEach((candle, index) => {
+      rolling += candle.close;
+      if (index >= period) rolling -= chartData[index - period].close;
+      if (index >= period - 1) output.push({ time: candle.time, value: rolling / period });
+    });
+    return output;
+  }, [chartData]);
+  const ma20 = useMemo(() => movingAverage(20), [movingAverage]);
+  const ma50 = useMemo(() => movingAverage(50), [movingAverage]);
+  const priceLines = useMemo(() => {
+    const recent = chartData.slice(-Math.min(180, chartData.length));
+    if (!recent.length) return null;
+    return {
+      support: Math.min(...recent.map((candle) => candle.low)),
+      resistance: Math.max(...recent.map((candle) => candle.high)),
+    };
+  }, [chartData]);
+  const nearestTime = useCallback((iso: string | null) => {
+    const rawTime = Math.floor(new Date(iso || '').getTime() / 1000);
+    if (!Number.isFinite(rawTime) || !chartData.length) return null;
+    let left = 0;
+    let right = chartData.length - 1;
+    while (left < right) {
+      const middle = Math.floor((left + right) / 2);
+      if (chartData[middle].time < rawTime) left = middle + 1;
+      else right = middle;
+    }
+    const candidate = chartData[left];
+    const previous = chartData[Math.max(0, left - 1)];
+    return Math.abs(Number(candidate.time) - rawTime) < Math.abs(Number(previous.time) - rawTime)
+      ? candidate.time
+      : previous.time;
+  }, [chartData]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !chartData.length) return;
+
+    let disposed = false;
+    let chartApi: { remove: () => void } | null = null;
+    const publishLegend = (legend: BacktestCrosshairLegend) => {
+      if (crosshairFrameRef.current !== null) {
+        window.cancelAnimationFrame(crosshairFrameRef.current);
+      }
+      crosshairFrameRef.current = window.requestAnimationFrame(() => {
+        if (!disposed) setCrosshairLegend(legend);
+        crosshairFrameRef.current = null;
+      });
+    };
+
+    void import('lightweight-charts').then((charts) => {
+      if (disposed || !containerRef.current) return;
+      const {
+        CandlestickSeries,
+        ColorType,
+        CrosshairMode,
+        LineSeries,
+        createChart,
+        createSeriesMarkers,
+      } = charts;
+
+      const chartApiInstance = createChart(containerRef.current, {
+        autoSize: true,
+        height: 460,
+        layout: {
+          background: { type: ColorType.Solid, color: 'transparent' },
+          textColor: '#64748b',
+          fontFamily: 'inherit',
+        },
+        grid: {
+          vertLines: { color: 'rgba(148, 163, 184, 0.12)' },
+          horzLines: { color: 'rgba(148, 163, 184, 0.16)' },
+        },
+        crosshair: {
+          mode: CrosshairMode.Normal,
+          vertLine: { color: 'rgba(37, 99, 235, 0.45)', labelBackgroundColor: '#2563eb' },
+          horzLine: { color: 'rgba(37, 99, 235, 0.45)', labelBackgroundColor: '#2563eb' },
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(148, 163, 184, 0.25)',
+          scaleMargins: { top: 0.08, bottom: 0.18 },
+        },
+        timeScale: {
+          borderColor: 'rgba(148, 163, 184, 0.25)',
+          timeVisible: true,
+          secondsVisible: false,
+          rightOffset: 8,
+          barSpacing: 7,
+        },
+        localization: {
+          priceFormatter: (price: number) => formatChartPrice(price),
+        },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: false,
+        },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true,
+        },
+      });
+      chartApi = chartApiInstance;
+
+      const candleSeries = chartApiInstance.addSeries(CandlestickSeries, {
+        upColor: '#10b981',
+        downColor: '#ef4444',
+        borderVisible: false,
+        wickUpColor: '#10b981',
+        wickDownColor: '#ef4444',
+        priceLineVisible: false,
+        lastValueVisible: true,
+      });
+      candleSeries.setData(chartData);
+
+      if (ma20.length) {
+        const series = chartApiInstance.addSeries(LineSeries, {
+          color: '#3b82f6',
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          title: 'MA20',
+        });
+        series.setData(ma20);
+      }
+      if (ma50.length) {
+        const series = chartApiInstance.addSeries(LineSeries, {
+          color: '#f59e0b',
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          title: 'MA50',
+        });
+        series.setData(ma50);
+      }
+
+      if (priceLines) {
+        candleSeries.createPriceLine({
+          price: priceLines.resistance,
+          color: '#ef4444',
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'Resistencia',
+        });
+        candleSeries.createPriceLine({
+          price: priceLines.support,
+          color: '#10b981',
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'Suporte',
+        });
+      }
+
+      const markers = tradeList
+        .flatMap((trade) => {
+          const entryTime = nearestTime(trade.entry_time);
+          const exitTime = nearestTime(trade.exit_time);
+          const exitColor = Number(trade.net_pnl) >= 0 ? '#10b981' : '#ef4444';
+          const items: SeriesMarker<UTCTimestamp>[] = [];
+          if (entryTime) {
+            items.push({
+              time: entryTime,
+              position: 'belowBar',
+              color: '#3b82f6',
+              shape: 'arrowUp',
+              text: `Entrada ${formatChartPrice(trade.entry_price)}`,
+            });
+          }
+          if (exitTime) {
+            items.push({
+              time: exitTime,
+              position: 'aboveBar',
+              color: exitColor,
+              shape: 'arrowDown',
+              text: `Saida ${formatPercent(Number(trade.return_percent))}`,
+            });
+          }
+          return items;
+        })
+        .sort((a, b) => Number(a.time) - Number(b.time));
+      createSeriesMarkers(candleSeries, markers);
+
+      chartApiInstance.subscribeCrosshairMove((param) => {
+        const point = param.seriesData.get(candleSeries) as { open?: number; high?: number; low?: number; close?: number } | undefined;
+        if (!param.time || !point || point.close === undefined) {
+          publishLegend(null);
+          return;
+        }
+        const timeValue = typeof param.time === 'number' ? new Date(param.time * 1000).toISOString() : String(param.time);
+        publishLegend({
+          time: formatDateTime(timeValue),
+          open: Number(point.open || 0),
+          high: Number(point.high || 0),
+          low: Number(point.low || 0),
+          close: Number(point.close || 0),
+        });
+      });
+
+      chartApiInstance.timeScale().fitContent();
+    });
+
+    return () => {
+      disposed = true;
+      if (crosshairFrameRef.current !== null) {
+        window.cancelAnimationFrame(crosshairFrameRef.current);
+        crosshairFrameRef.current = null;
+      }
+      chartApi?.remove();
+    };
+  }, [chartData, ma20, ma50, nearestTime, priceLines, tradeList]);
+
   if (loading) {
     return (
-      <div className="flex h-72 items-center justify-center text-caption text-text-tertiary">
+      <div className="flex h-[460px] items-center justify-center text-caption text-text-tertiary">
         Carregando candles e execucoes...
       </div>
     );
   }
   if (error) {
     return (
-      <div className="flex h-72 items-center justify-center rounded-xl border border-status-error/30 bg-status-error/10 p-4 text-center text-caption text-status-error">
+      <div className="flex h-[460px] items-center justify-center rounded-xl border border-status-error/30 bg-status-error/10 p-4 text-center text-caption text-status-error">
         {error}
       </div>
     );
   }
-  if (candles.length < 2) {
+  if (chartData.length < 2) {
     return (
-      <div className="flex h-72 items-center justify-center rounded-xl border border-border-subtle bg-background-secondary/50 p-4 text-center text-caption text-text-tertiary">
+      <div className="flex h-[460px] items-center justify-center rounded-xl border border-border-subtle bg-background-secondary/50 p-4 text-center text-caption text-text-tertiary">
         Sem candles suficientes para desenhar o grafico deste backtest.
       </div>
     );
   }
 
-  const width = 980;
-  const height = 340;
-  const pad = { left: 56, right: 24, top: 20, bottom: 34 };
-  const plotWidth = width - pad.left - pad.right;
-  const plotHeight = height - pad.top - pad.bottom;
-  const candleTimes = candles.map((candle) => new Date(candle.open_time).getTime()).filter(Number.isFinite);
-  const minTime = Math.min(...candleTimes);
-  const maxTime = Math.max(...candleTimes);
-  const tradePrices = tradeList.flatMap((trade) => [
-    Number(trade.entry_price),
-    trade.exit_price === null ? Number.NaN : Number(trade.exit_price),
-  ]).filter(Number.isFinite);
-  const lows = candles.map((candle) => Number(candle.low)).filter(Number.isFinite);
-  const highs = candles.map((candle) => Number(candle.high)).filter(Number.isFinite);
-  const minPrice = Math.min(...lows, ...tradePrices);
-  const maxPrice = Math.max(...highs, ...tradePrices);
-  const priceRange = Math.max(0.000001, maxPrice - minPrice);
-  const timeRange = Math.max(1, maxTime - minTime);
-  const xForTime = (value: string | null) => {
-    const time = new Date(value || '').getTime();
-    if (!Number.isFinite(time)) return pad.left;
-    return pad.left + ((Math.min(maxTime, Math.max(minTime, time)) - minTime) / timeRange) * plotWidth;
-  };
-  const yForPrice = (value: number) => pad.top + ((maxPrice - value) / priceRange) * plotHeight;
-  const candleWidth = Math.max(1.2, Math.min(8, (plotWidth / candles.length) * 0.62));
-  const grid = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-    const price = maxPrice - priceRange * ratio;
-    const y = pad.top + plotHeight * ratio;
-    return { price, y };
-  });
-
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-80 w-full rounded-xl border border-border-subtle bg-background-secondary/50" role="img" aria-label="Backtest execution candles">
-      <rect x="0" y="0" width={width} height={height} rx="18" fill="transparent" />
-      {grid.map((line) => (
-        <g key={line.y}>
-          <line x1={pad.left} x2={width - pad.right} y1={line.y} y2={line.y} stroke="currentColor" strokeOpacity="0.08" />
-          <text x={12} y={line.y + 4} className="fill-text-tertiary text-[10px]">
-            {formatCompactUsd(line.price)}
-          </text>
-        </g>
-      ))}
-      {candles.map((candle) => {
-        const x = xForTime(candle.open_time);
-        const open = Number(candle.open);
-        const close = Number(candle.close);
-        const high = Number(candle.high);
-        const low = Number(candle.low);
-        const up = close >= open;
-        const color = up ? 'rgb(16 185 129)' : 'rgb(239 68 68)';
-        const bodyY = Math.min(yForPrice(open), yForPrice(close));
-        const bodyHeight = Math.max(1, Math.abs(yForPrice(open) - yForPrice(close)));
-        return (
-          <g key={candle.open_time}>
-            <line x1={x} x2={x} y1={yForPrice(high)} y2={yForPrice(low)} stroke={color} strokeWidth="1.2" strokeOpacity="0.85" />
-            <rect
-              x={x - candleWidth / 2}
-              y={bodyY}
-              width={candleWidth}
-              height={bodyHeight}
-              rx="1"
-              fill={color}
-              opacity={up ? 0.85 : 0.72}
-            />
-          </g>
-        );
-      })}
-      {tradeList.map((trade) => {
-        const entryX = xForTime(trade.entry_time);
-        const entryY = yForPrice(Number(trade.entry_price));
-        const exitX = xForTime(trade.exit_time || candles[candles.length - 1].close_time);
-        const exitY = yForPrice(Number(trade.exit_price ?? trade.entry_price));
-        const profitable = Number(trade.net_pnl) >= 0;
-        const color = profitable ? 'rgb(16 185 129)' : 'rgb(239 68 68)';
-        return (
-          <g key={trade.id}>
-            <line x1={entryX} y1={entryY} x2={exitX} y2={exitY} stroke={color} strokeWidth="1.5" strokeDasharray="5 4" opacity="0.75" />
-            <circle cx={entryX} cy={entryY} r="5" fill="rgb(59 130 246)" stroke="white" strokeWidth="1.4">
-              <title>{`Entrada ${trade.symbol}: ${formatCompactUsd(trade.entry_price)} em ${formatDateTime(trade.entry_time)}`}</title>
-            </circle>
-            <path
-              d={`M ${exitX} ${exitY - 6} L ${exitX + 6} ${exitY} L ${exitX} ${exitY + 6} L ${exitX - 6} ${exitY} Z`}
-              fill={color}
-              stroke="white"
-              strokeWidth="1.2"
-            >
-              <title>{`Saida ${trade.symbol}: ${formatCompactUsd(trade.exit_price)} | ${formatPercent(trade.return_percent)} em ${formatDateTime(trade.exit_time)}`}</title>
-            </path>
-          </g>
-        );
-      })}
-      <text x={pad.left} y={height - 12} className="fill-text-tertiary text-[10px]">
-        {formatDateTime(candles[0]?.open_time)}
-      </text>
-      <text x={width - pad.right - 118} y={height - 12} className="fill-text-tertiary text-[10px]">
-        {formatDateTime(candles[candles.length - 1]?.close_time)}
-      </text>
-    </svg>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-background-secondary/50 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-3 text-caption text-text-tertiary">
+          <span>{chartData.length} candles</span>
+          <span>{tradeList.length} trades</span>
+          <span className="text-accent-blue">Crosshair, zoom e pan nativos</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em]">
+          <span className="text-accent-blue">MA20</span>
+          <span className="text-status-warning">MA50</span>
+          <span className="text-status-success">Suporte</span>
+          <span className="text-status-error">Resistencia</span>
+        </div>
+      </div>
+      <div className="relative rounded-xl border border-border-subtle bg-background-secondary/50 p-2">
+        {crosshairLegend && (
+          <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-2 rounded-lg border border-border-subtle bg-background-primary/90 px-3 py-2 text-[11px] shadow-sm backdrop-blur">
+            <span className="font-semibold text-text-primary">{crosshairLegend.time}</span>
+            <span>O {formatCompactUsd(crosshairLegend.open)}</span>
+            <span>H {formatCompactUsd(crosshairLegend.high)}</span>
+            <span>L {formatCompactUsd(crosshairLegend.low)}</span>
+            <span>C {formatCompactUsd(crosshairLegend.close)}</span>
+          </div>
+        )}
+        <div ref={containerRef} className="h-[460px] min-h-[360px] w-full" />
+      </div>
+      <p className="text-[10px] text-text-tertiary">
+        Powered by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer" className="text-accent-blue hover:underline">TradingView</a> Lightweight Charts(TM). Use scroll/pinch para zoom, arraste para navegar no tempo e o crosshair para preco preciso.
+      </p>
+    </div>
   );
 }
 
@@ -2107,9 +2297,9 @@ export default function BotsPage() {
         );
       })()}
       {backtestSelection && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-          <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-border-subtle bg-background-primary shadow-2xl">
-            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-border-subtle bg-background-primary/95 p-5 backdrop-blur">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-2 backdrop-blur-sm sm:p-4">
+          <div className="max-h-[94vh] w-full max-w-[min(1280px,calc(100vw-1rem))] overflow-hidden rounded-2xl border border-border-subtle bg-background-primary shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-border-subtle bg-background-primary/95 p-4 backdrop-blur sm:p-5">
               <div>
                 <p className="text-overline uppercase tracking-[0.22em] text-accent-blue">Backtest institucional</p>
                 <h2 className="mt-1 text-heading-md text-text-primary">{backtestSelection.symbol}</h2>
@@ -2126,8 +2316,8 @@ export default function BotsPage() {
               </button>
             </div>
 
-            <div className="grid gap-4 p-5 xl:grid-cols-[0.72fr_1.28fr]">
-              <div className="space-y-4">
+            <div className="grid max-h-[calc(94vh-96px)] min-w-0 gap-4 overflow-y-auto p-3 sm:p-4 xl:grid-cols-[300px_minmax(0,1fr)]">
+              <div className="min-w-0 space-y-4 xl:sticky xl:top-0 xl:self-start">
                 <Card variant="glass" className="overflow-hidden">
                   <div className="border-b border-border-subtle bg-background-secondary/60 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
@@ -2140,13 +2330,15 @@ export default function BotsPage() {
                       </Badge>
                     </div>
                   </div>
-                  <div className="p-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="p-3 sm:p-4">
+                    <div className="grid gap-2 sm:grid-cols-2">
                       <label className="space-y-1 text-caption text-text-secondary">
                         Timeframe
                         <Select
                           value={backtestForm.timeframe}
                           options={[
+                            { value: '15m', label: '15m - rapido' },
+                            { value: '30m', label: '30m - curto' },
                             { value: '1h', label: '1h - investigativo' },
                             { value: '4h', label: '4h - recomendado' },
                             { value: '1d', label: '1d - macro' },
@@ -2209,7 +2401,7 @@ export default function BotsPage() {
                       onClick={runAssetBacktest}
                     >
                       <BarChart3 className="h-4 w-4" />
-                      {isBacktestSubmitting ? 'Enfileirando no worker...' : 'Executar backtest institucional'}
+                          {isBacktestSubmitting ? 'Enfileirando...' : 'Executar backtest'}
                     </Button>
                     {!can('bots:backtest') && (
                       <p className="mt-2 text-caption text-status-error">Seu papel nao tem permissao bots:backtest.</p>
@@ -2293,8 +2485,8 @@ export default function BotsPage() {
                 </Card>
               </div>
 
-              <div className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-4">
+              <div className="min-w-0 space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   {[
                     { label: 'P&L liquido', key: 'net_pnl_usd', kind: 'usd' as const, good: true },
                     { label: 'ROI', key: 'roi_percent', kind: 'percent' as const, good: true },
@@ -2313,8 +2505,8 @@ export default function BotsPage() {
                   })}
                 </div>
 
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <Card variant="glass" className="p-4">
+                <div className="grid min-w-0 gap-4 2xl:grid-cols-2">
+                  <Card variant="glass" className="min-w-0 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-body-sm font-semibold text-text-primary">Equity curve</p>
                       <Badge variant="blue" size="sm">{backtestRun?.timeframe || backtestForm.timeframe}</Badge>
@@ -2324,7 +2516,7 @@ export default function BotsPage() {
                     </div>
                   </Card>
 
-                  <Card variant="glass" className="p-4">
+                  <Card variant="glass" className="min-w-0 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-body-sm font-semibold text-text-primary">Drawdown</p>
                       <Badge variant="yellow" size="sm">risco</Badge>
@@ -2360,7 +2552,57 @@ export default function BotsPage() {
                       </Badge>
                     </div>
                   </div>
-                  <div className="mt-4">
+                  <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold uppercase tracking-[0.12em]">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-accent-blue/25 bg-accent-blue/10 px-2 py-1 text-accent-blue">
+                      <span className="h-2 w-2 rounded-full bg-accent-blue" />
+                      Entrada
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-status-success/25 bg-status-success/10 px-2 py-1 text-status-success">
+                      <span className="h-2 w-2 rotate-45 bg-status-success" />
+                      Saida lucro
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-status-error/25 bg-status-error/10 px-2 py-1 text-status-error">
+                      <span className="h-2 w-2 rotate-45 bg-status-error" />
+                      Saida prejuizo
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-background-secondary/40 p-2">
+                    <div className="flex flex-wrap gap-2">
+                      {['15m', '30m', '1h', '4h', '1d'].map((timeframe) => {
+                        const active = backtestForm.timeframe === timeframe;
+                        return (
+                          <button
+                            key={timeframe}
+                            type="button"
+                            onClick={() => updateBacktestForm({ timeframe })}
+                            className={`rounded-lg border px-3 py-1.5 text-caption font-semibold transition ${
+                              active
+                                ? 'border-accent-blue bg-accent-blue text-white'
+                                : 'border-border-subtle text-text-secondary hover:border-accent-blue/50 hover:text-accent-blue'
+                            }`}
+                          >
+                            {timeframe}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-caption text-text-tertiary">
+                      {backtestRun && backtestRun.timeframe !== backtestForm.timeframe && (
+                        <span className="rounded-lg border border-status-warning/30 bg-status-warning/10 px-2 py-1 text-status-warning">
+                          Reexecute para atualizar candles/trades
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        disabled={isBacktestSubmitting || !can('bots:backtest')}
+                        onClick={runAssetBacktest}
+                        className="rounded-lg border border-accent-purple/30 bg-accent-purple/10 px-3 py-1.5 font-semibold text-accent-purple transition hover:border-accent-purple hover:bg-accent-purple hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Rodar timeframe
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-4 overflow-x-auto rounded-xl">
                     <BacktestCandleChart
                       chart={backtestChart}
                       trades={backtestTrades}
