@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bot, Pause, Pla
 import {
   api,
   type BotInstance,
+  type BotBacktestChart,
   type BotBacktestRun,
   type BotBacktestTrade,
   type BotMarketRanking,
@@ -101,6 +102,16 @@ function normalizeBotSymbol(value: string) {
     return normalized;
   }
   return `${normalized}USDT`;
+}
+
+function parseManualSymbols(value: string) {
+  return Array.from(new Set(
+    splitCsv(value)
+      .map((item) => item.trim().toUpperCase().replace(/[/-]/g, ''))
+      .filter((item) => item.length >= 2)
+      .map(normalizeBotSymbol)
+      .filter(Boolean)
+  ));
 }
 
 function asNumber(value: string, fallback: number) {
@@ -243,22 +254,226 @@ function backtestPreloadLabel(run: BotBacktestRun | null) {
   return 'Sera executado quando o worker iniciar';
 }
 
-function curveBars(points: unknown[] | undefined, key: string, maxBars = 56, baselineZero = false) {
-  const source = Array.isArray(points) ? points : [];
-  const values = source
-    .map((item) => (isRecord(item) ? Number(item[key]) : Number.NaN))
-    .filter((item) => Number.isFinite(item));
-  if (!values.length) return [];
-  const step = Math.max(1, Math.ceil(values.length / maxBars));
-  const sampled = values.filter((_, index) => index % step === 0).slice(-maxBars);
-  const min = baselineZero ? 0 : Math.min(...sampled);
-  const max = baselineZero ? Math.max(0, ...sampled) : Math.max(...sampled);
-  const range = Math.max(0.000001, max - min);
-  return sampled.map((value) => Math.max(8, Math.round(((value - min) / range) * 54) + 8));
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function numericCurvePoints(points: unknown[] | undefined, key: string, transform?: (value: number) => number) {
+  const source = Array.isArray(points) ? points : [];
+  return source
+    .map((item, index) => {
+      const value = isRecord(item) ? Number(item[key]) : Number.NaN;
+      if (!Number.isFinite(value)) return null;
+      return {
+        index,
+        value: transform ? transform(value) : value,
+      };
+    })
+    .filter((item): item is { index: number; value: number } => Boolean(item));
+}
+
+function MiniLineChart({
+  points,
+  valueKey,
+  tone,
+  emptyLabel = 'Aguardando resultado',
+  transform,
+  baselineZero = false,
+}: {
+  points: unknown[] | undefined;
+  valueKey: string;
+  tone: 'blue' | 'red';
+  emptyLabel?: string;
+  transform?: (value: number) => number;
+  baselineZero?: boolean;
+}) {
+  const values = numericCurvePoints(points, valueKey, transform);
+  if (values.length < 2) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-caption text-text-tertiary">
+        {emptyLabel}
+      </div>
+    );
+  }
+
+  const width = 520;
+  const height = 150;
+  const padX = 10;
+  const padY = 12;
+  const rawMin = Math.min(...values.map((point) => point.value));
+  const rawMax = Math.max(...values.map((point) => point.value));
+  const min = baselineZero ? Math.min(rawMin, 0) : rawMin;
+  const max = baselineZero ? Math.max(rawMax, 0) : rawMax;
+  const range = Math.max(0.000001, max - min);
+  const xScale = (index: number) => padX + (index / Math.max(1, values.length - 1)) * (width - padX * 2);
+  const yScale = (value: number) => padY + ((max - value) / range) * (height - padY * 2);
+  const path = values
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${xScale(index).toFixed(2)} ${yScale(point.value).toFixed(2)}`)
+    .join(' ');
+  const zeroY = yScale(0);
+  const showZeroLine = baselineZero || (min <= 0 && max >= 0);
+  const stroke = tone === 'blue' ? 'rgb(59 130 246)' : 'rgb(239 68 68)';
+  const fill = tone === 'blue' ? 'rgba(59, 130, 246, 0.14)' : 'rgba(239, 68, 68, 0.12)';
+  const areaPath = `${path} L ${xScale(values.length - 1).toFixed(2)} ${height - padY} L ${xScale(0).toFixed(2)} ${height - padY} Z`;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full overflow-visible" role="img" aria-label={valueKey}>
+      {showZeroLine && (
+        <line x1={padX} x2={width - padX} y1={zeroY} y2={zeroY} stroke="currentColor" strokeOpacity="0.12" strokeDasharray="4 4" />
+      )}
+      <path d={areaPath} fill={fill} />
+      <path d={path} fill="none" stroke={stroke} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={xScale(values.length - 1)} cy={yScale(values[values.length - 1].value)} r="4" fill={stroke} />
+    </svg>
+  );
+}
+
+function BacktestCandleChart({
+  chart,
+  trades,
+  loading,
+  error,
+}: {
+  chart: BotBacktestChart | null;
+  trades: BotBacktestTrade[];
+  loading: boolean;
+  error: string | null;
+}) {
+  const candles = chart?.candles || [];
+  const tradeList = chart?.trades?.length ? chart.trades : trades;
+  if (loading) {
+    return (
+      <div className="flex h-72 items-center justify-center text-caption text-text-tertiary">
+        Carregando candles e execucoes...
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="flex h-72 items-center justify-center rounded-xl border border-status-error/30 bg-status-error/10 p-4 text-center text-caption text-status-error">
+        {error}
+      </div>
+    );
+  }
+  if (candles.length < 2) {
+    return (
+      <div className="flex h-72 items-center justify-center rounded-xl border border-border-subtle bg-background-secondary/50 p-4 text-center text-caption text-text-tertiary">
+        Sem candles suficientes para desenhar o grafico deste backtest.
+      </div>
+    );
+  }
+
+  const width = 980;
+  const height = 340;
+  const pad = { left: 56, right: 24, top: 20, bottom: 34 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const candleTimes = candles.map((candle) => new Date(candle.open_time).getTime()).filter(Number.isFinite);
+  const minTime = Math.min(...candleTimes);
+  const maxTime = Math.max(...candleTimes);
+  const tradePrices = tradeList.flatMap((trade) => [
+    Number(trade.entry_price),
+    trade.exit_price === null ? Number.NaN : Number(trade.exit_price),
+  ]).filter(Number.isFinite);
+  const lows = candles.map((candle) => Number(candle.low)).filter(Number.isFinite);
+  const highs = candles.map((candle) => Number(candle.high)).filter(Number.isFinite);
+  const minPrice = Math.min(...lows, ...tradePrices);
+  const maxPrice = Math.max(...highs, ...tradePrices);
+  const priceRange = Math.max(0.000001, maxPrice - minPrice);
+  const timeRange = Math.max(1, maxTime - minTime);
+  const xForTime = (value: string | null) => {
+    const time = new Date(value || '').getTime();
+    if (!Number.isFinite(time)) return pad.left;
+    return pad.left + ((Math.min(maxTime, Math.max(minTime, time)) - minTime) / timeRange) * plotWidth;
+  };
+  const yForPrice = (value: number) => pad.top + ((maxPrice - value) / priceRange) * plotHeight;
+  const candleWidth = Math.max(1.2, Math.min(8, (plotWidth / candles.length) * 0.62));
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const price = maxPrice - priceRange * ratio;
+    const y = pad.top + plotHeight * ratio;
+    return { price, y };
+  });
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-80 w-full rounded-xl border border-border-subtle bg-background-secondary/50" role="img" aria-label="Backtest execution candles">
+      <rect x="0" y="0" width={width} height={height} rx="18" fill="transparent" />
+      {grid.map((line) => (
+        <g key={line.y}>
+          <line x1={pad.left} x2={width - pad.right} y1={line.y} y2={line.y} stroke="currentColor" strokeOpacity="0.08" />
+          <text x={12} y={line.y + 4} className="fill-text-tertiary text-[10px]">
+            {formatCompactUsd(line.price)}
+          </text>
+        </g>
+      ))}
+      {candles.map((candle) => {
+        const x = xForTime(candle.open_time);
+        const open = Number(candle.open);
+        const close = Number(candle.close);
+        const high = Number(candle.high);
+        const low = Number(candle.low);
+        const up = close >= open;
+        const color = up ? 'rgb(16 185 129)' : 'rgb(239 68 68)';
+        const bodyY = Math.min(yForPrice(open), yForPrice(close));
+        const bodyHeight = Math.max(1, Math.abs(yForPrice(open) - yForPrice(close)));
+        return (
+          <g key={candle.open_time}>
+            <line x1={x} x2={x} y1={yForPrice(high)} y2={yForPrice(low)} stroke={color} strokeWidth="1.2" strokeOpacity="0.85" />
+            <rect
+              x={x - candleWidth / 2}
+              y={bodyY}
+              width={candleWidth}
+              height={bodyHeight}
+              rx="1"
+              fill={color}
+              opacity={up ? 0.85 : 0.72}
+            />
+          </g>
+        );
+      })}
+      {tradeList.map((trade) => {
+        const entryX = xForTime(trade.entry_time);
+        const entryY = yForPrice(Number(trade.entry_price));
+        const exitX = xForTime(trade.exit_time || candles[candles.length - 1].close_time);
+        const exitY = yForPrice(Number(trade.exit_price ?? trade.entry_price));
+        const profitable = Number(trade.net_pnl) >= 0;
+        const color = profitable ? 'rgb(16 185 129)' : 'rgb(239 68 68)';
+        return (
+          <g key={trade.id}>
+            <line x1={entryX} y1={entryY} x2={exitX} y2={exitY} stroke={color} strokeWidth="1.5" strokeDasharray="5 4" opacity="0.75" />
+            <circle cx={entryX} cy={entryY} r="5" fill="rgb(59 130 246)" stroke="white" strokeWidth="1.4">
+              <title>{`Entrada ${trade.symbol}: ${formatCompactUsd(trade.entry_price)} em ${formatDateTime(trade.entry_time)}`}</title>
+            </circle>
+            <path
+              d={`M ${exitX} ${exitY - 6} L ${exitX + 6} ${exitY} L ${exitX} ${exitY + 6} L ${exitX - 6} ${exitY} Z`}
+              fill={color}
+              stroke="white"
+              strokeWidth="1.2"
+            >
+              <title>{`Saida ${trade.symbol}: ${formatCompactUsd(trade.exit_price)} | ${formatPercent(trade.return_percent)} em ${formatDateTime(trade.exit_time)}`}</title>
+            </path>
+          </g>
+        );
+      })}
+      <text x={pad.left} y={height - 12} className="fill-text-tertiary text-[10px]">
+        {formatDateTime(candles[0]?.open_time)}
+      </text>
+      <text x={width - pad.right - 118} y={height - 12} className="fill-text-tertiary text-[10px]">
+        {formatDateTime(candles[candles.length - 1]?.close_time)}
+      </text>
+    </svg>
+  );
+}
+
+function tradeStats(trades: BotBacktestTrade[]) {
+  const totalPnl = trades.reduce((sum, trade) => sum + Number(trade.net_pnl || 0), 0);
+  const avgPnl = trades.length ? totalPnl / trades.length : 0;
+  const winners = trades.filter((trade) => Number(trade.net_pnl || 0) >= 0).length;
+  return {
+    totalPnl,
+    avgPnl,
+    winners,
+    losers: Math.max(0, trades.length - winners),
+  };
 }
 
 function asStringArray(value: unknown): string[] {
@@ -393,11 +608,16 @@ export default function BotsPage() {
   const [isActivatingId, setIsActivatingId] = useState<string | null>(null);
   const [backtestSelection, setBacktestSelection] = useState<BacktestSelection | null>(null);
   const [basketEditor, setBasketEditor] = useState<BasketEditorState | null>(null);
+  const [basketSearch, setBasketSearch] = useState('');
+  const [manualSearchByTemplate, setManualSearchByTemplate] = useState<Record<string, string>>({});
   const [backtestForm, setBacktestForm] = useState<BacktestForm>(defaultBacktestForm);
   const [backtestRun, setBacktestRun] = useState<BotBacktestRun | null>(null);
   const [backtestTrades, setBacktestTrades] = useState<BotBacktestTrade[]>([]);
+  const [backtestChart, setBacktestChart] = useState<BotBacktestChart | null>(null);
   const [isBacktestTradesLoading, setIsBacktestTradesLoading] = useState(false);
+  const [isBacktestChartLoading, setIsBacktestChartLoading] = useState(false);
   const [backtestTradesError, setBacktestTradesError] = useState<string | null>(null);
+  const [backtestChartError, setBacktestChartError] = useState<string | null>(null);
   const [isBacktestSubmitting, setIsBacktestSubmitting] = useState(false);
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -427,9 +647,11 @@ export default function BotsPage() {
 
   const universeBySymbol = useMemo(() => {
     const map = new Map<string, BotMarketUniverseAsset>();
-    universeAssets.forEach((asset) => map.set(asset.symbol, asset));
+    universeAssets.forEach((asset) => map.set(normalizeBotSymbol(asset.symbol), asset));
     return map;
   }, [universeAssets]);
+
+  const universeSymbolSet = useMemo(() => new Set(universeAssets.map((asset) => normalizeBotSymbol(asset.symbol)).filter(Boolean)), [universeAssets]);
 
   const loadBots = useCallback(async () => {
     setIsLoading(true);
@@ -545,6 +767,28 @@ export default function BotsPage() {
     };
   }, [backtestRun?.id, backtestRun?.status]);
 
+  useEffect(() => {
+    const runId = backtestRun?.id;
+    const runStatus = String(backtestRun?.status || '').toLowerCase();
+    if (!runId || runStatus !== 'succeeded') return;
+    let cancelled = false;
+    setIsBacktestChartLoading(true);
+    setBacktestChartError(null);
+    api.getBotBacktestChart(runId).then((result) => {
+      if (cancelled) return;
+      setIsBacktestChartLoading(false);
+      if (result.success && result.data) {
+        setBacktestChart(result.data);
+        return;
+      }
+      setBacktestChart(null);
+      setBacktestChartError(result.error || 'Nao foi possivel carregar o grafico de execucoes.');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [backtestRun?.id, backtestRun?.status]);
+
   const getTemplateConfig = (templateId: string): TemplateConfig => (
     configByTemplate[templateId] || defaultTemplateConfig
   );
@@ -601,7 +845,7 @@ export default function BotsPage() {
       setError('Selecione uma carteira para ativar o bot');
       return;
     }
-    const manualSymbols = splitCsv(config.allowedSymbols).map(normalizeBotSymbol).filter(Boolean);
+    const manualSymbols = parseManualSymbols(config.allowedSymbols);
     const usesManualBasket = config.basketMode === 'manual';
     const usesScannerBasket = config.basketMode === 'scanner';
     const usesExtremeBasket = config.basketMode === 'market_extremes';
@@ -611,6 +855,13 @@ export default function BotsPage() {
     if (usesManualBasket && manualSymbols.length === 0) {
       setError('Informe os ativos que o bot deve monitorar no modo manual.');
       return;
+    }
+    if (usesManualBasket) {
+      const invalidManualSymbols = manualSymbols.filter((symbol) => !universeSymbolSet.has(symbol));
+      if (invalidManualSymbols.length > 0) {
+        setError(`Ativos fora do universo carregado: ${invalidManualSymbols.slice(0, 6).join(', ')}. Selecione ativos pela busca para evitar simbolos inexistentes.`);
+        return;
+      }
     }
     if (usesScannerBasket && (!marketRanking?.snapshot_id || rankingSymbols.length === 0)) {
       setError('Gere ou carregue um ranking antes de ativar o bot com cesta dinamica, ou informe simbolos manuais.');
@@ -727,18 +978,19 @@ export default function BotsPage() {
 
   const openBasketEditor = (instance: BotInstance) => {
     const basket = botBasketView(instance);
+    setBasketSearch('');
     setBasketEditor({
       instance,
       value: basket.symbols.join(', '),
     });
   };
 
-  const basketEditorSymbols = basketEditor ? splitCsv(basketEditor.value).map((item) => item.toUpperCase()) : [];
+  const basketEditorSymbols = basketEditor ? splitCsv(basketEditor.value).map(normalizeBotSymbol).filter(Boolean) : [];
 
   const toggleBasketEditorSymbol = (symbol: string) => {
     if (!basketEditor) return;
-    const normalized = symbol.toUpperCase();
-    const current = new Set(splitCsv(basketEditor.value).map((item) => item.toUpperCase()));
+    const normalized = normalizeBotSymbol(symbol);
+    const current = new Set(splitCsv(basketEditor.value).map(normalizeBotSymbol).filter(Boolean));
     if (current.has(normalized)) {
       current.delete(normalized);
     } else {
@@ -752,7 +1004,13 @@ export default function BotsPage() {
 
   const saveBasketSelection = async () => {
     if (!basketEditor) return;
-    const symbols = Array.from(new Set(splitCsv(basketEditor.value).map(normalizeBotSymbol).filter(Boolean)));
+    const parsedSymbols = parseManualSymbols(basketEditor.value);
+    const invalidSymbols = parsedSymbols.filter((symbol) => !universeSymbolSet.has(symbol));
+    if (invalidSymbols.length) {
+      setError(`Ativos fora do universo carregado: ${invalidSymbols.slice(0, 6).join(', ')}. Use a busca/Top 50 para selecionar ativos reais.`);
+      return;
+    }
+    const symbols = parsedSymbols;
     if (!symbols.length) {
       setError('Escolha pelo menos um ativo para deixar o bot em modo manual.');
       return;
@@ -783,6 +1041,7 @@ export default function BotsPage() {
       setError(result.error || 'Nao foi possivel salvar a cesta manual do bot');
       return;
     }
+    setBasketSearch('');
     setBasketEditor(null);
     await loadBots();
   };
@@ -804,8 +1063,11 @@ export default function BotsPage() {
     setBacktestSelection({ instance, symbol });
     setBacktestRun(null);
     setBacktestTrades([]);
+    setBacktestChart(null);
     setIsBacktestTradesLoading(false);
+    setIsBacktestChartLoading(false);
     setBacktestTradesError(null);
+    setBacktestChartError(null);
     setBacktestError(null);
     setBacktestForm(defaultBacktestForm);
   };
@@ -820,8 +1082,11 @@ export default function BotsPage() {
     setError(null);
     setBacktestError(null);
     setBacktestTrades([]);
+    setBacktestChart(null);
     setIsBacktestTradesLoading(false);
+    setIsBacktestChartLoading(false);
     setBacktestTradesError(null);
+    setBacktestChartError(null);
     const periodEnd = new Date();
     const periodStart = new Date(periodEnd);
     const months = clampBacktestMonths(backtestForm.months);
@@ -845,6 +1110,10 @@ export default function BotsPage() {
     }
     setBacktestRun(result.data);
   };
+
+  const visibleInstances = instances.filter((instance) => instance.status !== 'disabled');
+  const displayedBacktestTrades = backtestChart?.trades?.length ? backtestChart.trades : backtestTrades;
+  const backtestTradeStats = tradeStats(displayedBacktestTrades);
 
   return (
     <div className="min-h-screen bg-background-primary p-6 lg:p-8">
@@ -871,8 +1140,8 @@ export default function BotsPage() {
           {[
             ['Produtos', templates.length, 'Bots publicados'],
             ['Estrategias', strategies.length, 'Motores disponiveis'],
-            ['Instancias', instances.length, 'Bots nesta conta'],
-            ['Ativos', instances.filter((instance) => instance.status === 'active').length, 'Rodando em paper'],
+            ['Instancias', visibleInstances.length, 'Bots nesta conta'],
+            ['Ativos', visibleInstances.filter((instance) => instance.status === 'active').length, 'Rodando em paper'],
           ].map(([label, value, caption]) => (
             <Card key={label} variant="glass" className="p-5">
               <p className="text-caption text-text-muted">{label}</p>
@@ -1103,10 +1372,52 @@ export default function BotsPage() {
                   ? supportedExchangeKeys.map((item) => item.toUpperCase()).join(' ou ')
                   : 'exchange';
                 const requiresExchange = supportedExchangeKeys.length > 0;
-                const hasManualSymbols = splitCsv(config.allowedSymbols).length > 0;
+                const hasManualSymbols = parseManualSymbols(config.allowedSymbols).length > 0;
                 const needsManualBasket = config.basketMode === 'manual' && !hasManualSymbols;
                 const hasScannerBasket = Boolean(marketRanking?.snapshot_id && marketRanking.items.length > 0);
                 const needsScannerBasket = config.basketMode === 'scanner';
+                const selectedStrategyId = config.strategyId || template.strategy_id || '';
+                const matchingInstance = instances.find((instance) => (
+                  instance.template_id === template.id
+                  && instance.client_id === config.clientId
+                  && (instance.exchange_id || '') === (config.exchangeId || '')
+                  && (instance.strategy_id || '') === selectedStrategyId
+                  && instance.mode === 'paper'
+                  && !instance.live_enabled
+                  && instance.status !== 'disabled'
+                ));
+                const selectedClientName = clients.find((client) => client.id === config.clientId)?.name || 'Carteira nao selecionada';
+                const selectedExchangeName = compatibleExchanges.find((exchange) => exchange.id === config.exchangeId)?.label || (requiresExchange ? 'Exchange nao selecionada' : 'Exchange opcional');
+                const selectedStrategyName = strategies.find((strategy) => strategy.id === selectedStrategyId)?.name || template.strategy_name || 'Estrategia padrao';
+                const manualSymbols = parseManualSymbols(config.allowedSymbols);
+                const manualSymbolSet = new Set(manualSymbols);
+                const manualSearch = manualSearchByTemplate[template.id] || '';
+                const manualSearchTerm = manualSearch.trim().toUpperCase().replace(/[/-]/g, '');
+                const manualSuggestions = manualSearch
+                  ? universeAssets
+                      .map((asset) => ({
+                        asset,
+                        symbol: normalizeBotSymbol(asset.symbol),
+                      }))
+                      .filter(({ asset, symbol }) => (
+                        symbol
+                        && !manualSymbolSet.has(symbol)
+                        && (
+                          symbol.includes(manualSearchTerm)
+                          || String(asset.base_asset || '').toUpperCase().includes(manualSearchTerm)
+                          || String(asset.display_name || '').toUpperCase().includes(manualSearchTerm)
+                        )
+                      ))
+                      .slice(0, 8)
+                  : [];
+                const addManualSymbol = (symbol: string) => {
+                  const normalized = normalizeBotSymbol(symbol);
+                  if (!normalized || !universeSymbolSet.has(normalized)) return;
+                  const next = new Set(manualSymbols);
+                  next.add(normalized);
+                  updateTemplateConfig(template.id, { allowedSymbols: Array.from(next).join(', ') });
+                  setManualSearchByTemplate((current) => ({ ...current, [template.id]: '' }));
+                };
                 const activationBlockReasons = [
                   !can('bots:activate') ? 'Seu papel atual nao permite ativar bots nesta conta.' : '',
                   !planAllows(activeMembership?.organization.plan, template.required_plan)
@@ -1160,8 +1471,33 @@ export default function BotsPage() {
                           onClick={() => activateBot(template)}
                         >
                           <Zap className="h-4 w-4" />
-                          {isActivatingId === template.id ? 'Ativando...' : 'Ativar paper'}
+                          {isActivatingId === template.id
+                            ? 'Salvando...'
+                            : matchingInstance
+                              ? 'Atualizar configuracao'
+                              : 'Configurar paper'}
                         </Button>
+                      </div>
+                      <div className="rounded-lg border border-border-subtle bg-background-primary/60 px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2 text-caption text-text-tertiary">
+                          <Badge variant={matchingInstance ? 'blue' : 'default'} size="sm">
+                            {matchingInstance ? 'Atualiza instancia existente' : 'Nova instancia paper'}
+                          </Badge>
+                          <span>{selectedClientName}</span>
+                          <span className="text-text-muted">/</span>
+                          <span>{selectedExchangeName}</span>
+                          <span className="text-text-muted">/</span>
+                          <span>{selectedStrategyName}</span>
+                          {matchingInstance && (
+                            <>
+                              <span className="text-text-muted">/</span>
+                              <span>Status: {matchingInstance.status}</span>
+                            </>
+                          )}
+                        </div>
+                        <p className="mt-1 text-[10px] leading-4 text-text-tertiary">
+                          A instancia operacional e separada por carteira, exchange, estrategia e modo. Para criar outra configuracao, altere uma dessas escolhas.
+                        </p>
                       </div>
                       {activationBlockReasons.length > 0 && (
                         <div className="rounded-lg border border-status-warning/30 bg-status-warning/10 px-3 py-2 text-caption text-status-warning">
@@ -1229,13 +1565,62 @@ export default function BotsPage() {
                           {config.basketMode === 'manual' ? (
                             <div className="grid gap-2">
                               <input
-                                value={config.allowedSymbols}
-                                onChange={(event) => updateTemplateConfig(template.id, { allowedSymbols: event.target.value })}
-                                placeholder="Ativos que o bot deve monitorar. Ex: BTC, ETH, SOL, LINK, AVAX"
+                                value={manualSearch}
+                                onChange={(event) => setManualSearchByTemplate((current) => ({ ...current, [template.id]: event.target.value }))}
+                                onKeyDown={(event) => {
+                                  if (event.key !== 'Enter') return;
+                                  event.preventDefault();
+                                  if (manualSuggestions[0]) {
+                                    addManualSymbol(manualSuggestions[0].symbol);
+                                  }
+                                }}
+                                placeholder="Digite para buscar. Ex: b, btc, eth, sol"
                                 className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                               />
+                              {manualSuggestions.length > 0 && (
+                                <div className="rounded-lg border border-border-subtle bg-background-secondary/70 p-2">
+                                  <div className="mb-2 flex items-center justify-between gap-2">
+                                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-text-tertiary">
+                                      Ativos encontrados
+                                    </span>
+                                    <Badge variant="default" size="sm">{manualSuggestions.length}</Badge>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {manualSuggestions.map(({ asset, symbol }) => (
+                                      <button
+                                        key={symbol}
+                                        type="button"
+                                        onClick={() => addManualSymbol(symbol)}
+                                        className="rounded-lg border border-border-subtle bg-background-primary px-3 py-2 text-left text-[10px] font-semibold text-text-secondary transition hover:border-accent-blue/50 hover:text-accent-blue"
+                                        title={`Adicionar ${symbol}`}
+                                      >
+                                        <span className="block text-text-primary">{asset.base_asset || symbol.replace(/USDT$/, '')}</span>
+                                        <span className="block text-text-tertiary">{symbol}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {manualSymbols.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                  {manualSymbols.map((symbol) => (
+                                    <button
+                                      key={symbol}
+                                      type="button"
+                                      onClick={() => {
+                                        const next = manualSymbols.filter((item) => item !== symbol);
+                                        updateTemplateConfig(template.id, { allowedSymbols: next.join(', ') });
+                                      }}
+                                      className="rounded-md border border-accent-blue/30 bg-accent-blue/10 px-2 py-1 text-[10px] font-semibold text-accent-blue transition hover:border-status-error/40 hover:text-status-error"
+                                      title={`Remover ${symbol}`}
+                                    >
+                                      {symbol} x
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                               <p className="text-caption text-text-tertiary">
-                                Neste modo o bot nao recalcula extremos. Ele roda paper e backtest somente nos ativos definidos acima.
+                                Neste modo o bot nao recalcula extremos. Ele roda paper e backtest somente nos ativos selecionados acima.
                               </p>
                             </div>
                           ) : config.basketMode === 'market_extremes' ? (
@@ -1307,7 +1692,7 @@ export default function BotsPage() {
               <CardTitle>Meus bots operacionais</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {instances.length === 0 && (
+              {visibleInstances.length === 0 && (
                 <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-8 text-center">
                   <ShieldCheck className="mx-auto mb-3 h-8 w-8 text-text-muted" />
                   <p className="text-body-sm text-text-secondary">Nenhum bot ativado nesta conta.</p>
@@ -1317,7 +1702,7 @@ export default function BotsPage() {
                   </p>
                 </div>
               )}
-              {instances.map((instance) => {
+              {visibleInstances.map((instance) => {
                 const basket = botBasketView(instance);
                 const riskConfig = isRecord(instance.risk_config) ? instance.risk_config : {};
                 const instanceSignals = signalsByInstance[instance.id] || [];
@@ -1524,16 +1909,63 @@ export default function BotsPage() {
       </div>
       {basketEditor && (() => {
         const editorBasket = botBasketView(basketEditor.instance);
-        const legSymbols = editorBasket.legs.flatMap((leg) => (
-          Array.isArray(leg.symbols) ? leg.symbols.map((symbol) => String(symbol)) : []
-        ));
-        const candidateSymbols = Array.from(new Set([...editorBasket.symbols, ...legSymbols]))
-          .map((symbol) => symbol.toUpperCase())
+        const legSymbolsByDirection = (direction: string) => editorBasket.legs
+          .filter((leg) => String(leg.direction || '') === direction)
+          .flatMap((leg) => (Array.isArray(leg.symbols) ? leg.symbols.map((symbol) => normalizeBotSymbol(String(symbol))) : []))
           .filter(Boolean);
+        const loserSymbols = Array.from(new Set(legSymbolsByDirection('losers')));
+        const gainerSymbols = Array.from(new Set(legSymbolsByDirection('gainers')));
+        const legSymbols = [...loserSymbols, ...gainerSymbols];
+        const legSymbolSet = new Set(legSymbols);
+        const candidateSymbols = Array.from(new Set([...editorBasket.symbols, ...legSymbols]))
+          .map(normalizeBotSymbol)
+          .filter(Boolean);
+        const otherCandidateSymbols = candidateSymbols.filter((symbol) => !legSymbolSet.has(symbol));
         const selectedSymbols = new Set(basketEditorSymbols);
+        const searchTerm = basketSearch.trim().toUpperCase();
+        const universeSymbols = universeAssets
+          .map((asset) => normalizeBotSymbol(asset.symbol))
+          .filter(Boolean);
+        const topUniverseSymbols = Array.from(new Set(universeSymbols)).slice(0, 50);
+        const searchedUniverseSymbols = Array.from(new Set(
+          universeSymbols.filter((symbol) => {
+            if (!searchTerm) return true;
+            const asset = universeBySymbol.get(symbol);
+            return (
+              symbol.includes(searchTerm)
+              || String(asset?.base_asset || '').toUpperCase().includes(searchTerm)
+              || String(asset?.display_name || '').toUpperCase().includes(searchTerm)
+            );
+          })
+        )).slice(0, 50);
+        const discoverySymbols = searchTerm ? searchedUniverseSymbols : topUniverseSymbols;
+        const renderSymbolButton = (symbol: string, tone: 'default' | 'up' | 'down' = 'default') => {
+          const normalized = normalizeBotSymbol(symbol);
+          const selected = selectedSymbols.has(normalized);
+          const toneClass = tone === 'up'
+            ? 'border-status-success/35 text-status-success'
+            : tone === 'down'
+              ? 'border-status-error/35 text-status-error'
+              : 'border-border-subtle text-text-secondary';
+          return (
+            <button
+              key={normalized}
+              type="button"
+              onClick={() => toggleBasketEditorSymbol(normalized)}
+              className={`rounded-lg border px-3 py-2 text-caption font-semibold transition ${
+                selected
+                  ? 'border-accent-blue/50 bg-accent-blue/10 text-accent-blue'
+                  : `bg-background-primary hover:border-accent-blue/40 hover:text-text-primary ${toneClass}`
+              }`}
+              title={selected ? 'Remover da cesta manual' : 'Adicionar na cesta manual'}
+            >
+              {normalized}
+            </button>
+          );
+        };
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-3xl rounded-2xl border border-border-subtle bg-background-primary shadow-2xl">
+            <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-border-subtle bg-background-primary shadow-2xl">
               <div className="flex items-start justify-between gap-4 border-b border-border-subtle p-5">
                 <div>
                   <p className="text-overline uppercase tracking-[0.22em] text-accent-blue">Cesta do bot</p>
@@ -1544,42 +1976,69 @@ export default function BotsPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setBasketEditor(null)}
+                  onClick={() => {
+                    setBasketSearch('');
+                    setBasketEditor(null);
+                  }}
                   className="rounded-xl border border-border-subtle p-2 text-text-muted transition hover:border-accent-blue/40 hover:text-text-primary"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="grid gap-4 p-5 lg:grid-cols-[1fr_0.9fr]">
+              <div className="grid gap-4 p-5 xl:grid-cols-[1.08fr_0.92fr]">
                 <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-body-sm font-semibold text-text-primary">Candidatos sugeridos</p>
+                      <p className="text-body-sm font-semibold text-text-primary">Origem da cesta automatica</p>
                       <p className="text-caption text-text-tertiary">
-                        Clique para incluir ou remover da cesta final do bot.
+                        Separe o que veio de queda e o que veio de alta antes de travar a lista final.
                       </p>
                     </div>
                     <Badge variant="blue" size="sm">{selectedSymbols.size}/{candidateSymbols.length || selectedSymbols.size}</Badge>
                   </div>
                   {candidateSymbols.length ? (
-                    <div className="mt-4 flex max-h-[320px] flex-wrap gap-2 overflow-y-auto pr-1">
-                      {candidateSymbols.map((symbol) => {
-                        const selected = selectedSymbols.has(symbol);
-                        return (
-                          <button
-                            key={symbol}
-                            type="button"
-                            onClick={() => toggleBasketEditorSymbol(symbol)}
-                            className={`rounded-lg border px-3 py-2 text-caption font-semibold transition ${
-                              selected
-                                ? 'border-accent-blue/50 bg-accent-blue/10 text-accent-blue'
-                                : 'border-border-subtle bg-background-primary text-text-tertiary hover:border-accent-blue/40 hover:text-text-primary'
-                            }`}
-                          >
-                            {symbol}
-                          </button>
-                        );
-                      })}
+                    <div className="mt-4 grid gap-3">
+                      <div className="rounded-xl border border-border-subtle bg-background-primary/70 p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="flex items-center gap-2 text-caption font-semibold text-status-error">
+                            <ArrowDownRight className="h-3.5 w-3.5" />
+                            Quedas monitoradas
+                          </p>
+                          <Badge variant="error" size="sm">{loserSymbols.length}</Badge>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {loserSymbols.length ? loserSymbols.map((symbol) => renderSymbolButton(symbol, 'down')) : (
+                            <span className="text-caption text-text-tertiary">Sem perna de queda nesta cesta.</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border-subtle bg-background-primary/70 p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="flex items-center gap-2 text-caption font-semibold text-status-success">
+                            <ArrowUpRight className="h-3.5 w-3.5" />
+                            Altas monitoradas
+                          </p>
+                          <Badge variant="success" size="sm">{gainerSymbols.length}</Badge>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {gainerSymbols.length ? gainerSymbols.map((symbol) => renderSymbolButton(symbol, 'up')) : (
+                            <span className="text-caption text-text-tertiary">Sem perna de alta nesta cesta.</span>
+                          )}
+                        </div>
+                      </div>
+                      {otherCandidateSymbols.length > 0 && (
+                        <div className="rounded-xl border border-border-subtle bg-background-primary/70 p-3">
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <p className="text-caption font-semibold text-text-primary">
+                              Outros candidatos / manual atual
+                            </p>
+                            <Badge variant="default" size="sm">{otherCandidateSymbols.length}</Badge>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {otherCandidateSymbols.map((symbol) => renderSymbolButton(symbol))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="mt-4 rounded-lg border border-border-subtle bg-background-primary p-4 text-caption text-text-tertiary">
@@ -1588,10 +2047,30 @@ export default function BotsPage() {
                   )}
                 </div>
                 <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
-                  <p className="text-body-sm font-semibold text-text-primary">Lista final manual</p>
+                  <p className="text-body-sm font-semibold text-text-primary">Buscar ativos conhecidos</p>
                   <p className="mt-1 text-caption text-text-tertiary">
-                    Use virgulas. Voce pode adicionar ativos conhecidos mesmo fora do ranking.
+                    Pesquise ou use o Top 50 por volume para adicionar ativos que nao entraram nos extremos.
                   </p>
+                  <input
+                    value={basketSearch}
+                    onChange={(event) => setBasketSearch(event.target.value)}
+                    placeholder="Buscar ativo. Ex: BTC, ETH, SOL"
+                    className="mt-4 h-10 w-full rounded-xl border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                  />
+                  <div className="mt-3 rounded-xl border border-border-subtle bg-background-primary/70 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <p className="text-caption font-semibold text-text-primary">
+                        {searchTerm ? 'Resultado da busca' : 'Top 50 por volume'}
+                      </p>
+                      <Badge variant="default" size="sm">{discoverySymbols.length}</Badge>
+                    </div>
+                    <div className="flex max-h-[150px] flex-wrap gap-2 overflow-y-auto pr-1">
+                      {discoverySymbols.length ? discoverySymbols.map((symbol) => renderSymbolButton(symbol)) : (
+                        <span className="text-caption text-text-tertiary">Nenhum ativo encontrado no universo carregado.</span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="mt-4 text-body-sm font-semibold text-text-primary">Lista final manual</p>
                   <textarea
                     value={basketEditor.value}
                     onChange={(event) => setBasketEditor({ ...basketEditor, value: event.target.value })}
@@ -1603,7 +2082,14 @@ export default function BotsPage() {
                     <p>Paper, sinais e backtest em cesta passam a usar somente esta lista.</p>
                   </div>
                   <div className="mt-5 flex justify-end gap-2">
-                    <Button type="button" variant="ghost" onClick={() => setBasketEditor(null)}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        setBasketSearch('');
+                        setBasketEditor(null);
+                      }}
+                    >
                       Cancelar
                     </Button>
                     <Button
@@ -1833,20 +2319,8 @@ export default function BotsPage() {
                       <p className="text-body-sm font-semibold text-text-primary">Equity curve</p>
                       <Badge variant="blue" size="sm">{backtestRun?.timeframe || backtestForm.timeframe}</Badge>
                     </div>
-                    <div className="mt-4 flex h-24 items-end gap-1 rounded-xl border border-border-subtle bg-background-secondary/50 p-3">
-                      {curveBars(backtestRun?.equity_curve, 'equity').length ? (
-                        curveBars(backtestRun?.equity_curve, 'equity').map((height, index) => (
-                          <span
-                            key={`${height}-${index}`}
-                            className="flex-1 rounded-t bg-accent-blue/70"
-                            style={{ height }}
-                          />
-                        ))
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-caption text-text-tertiary">
-                          Aguardando resultado
-                        </div>
-                      )}
+                    <div className="mt-4 h-32 rounded-xl border border-border-subtle bg-background-secondary/50 p-3">
+                      <MiniLineChart points={backtestRun?.equity_curve} valueKey="equity" tone="blue" />
                     </div>
                   </Card>
 
@@ -1855,23 +2329,46 @@ export default function BotsPage() {
                       <p className="text-body-sm font-semibold text-text-primary">Drawdown</p>
                       <Badge variant="yellow" size="sm">risco</Badge>
                     </div>
-                    <div className="mt-4 flex h-24 items-end gap-1 rounded-xl border border-border-subtle bg-background-secondary/50 p-3">
-                      {curveBars(backtestRun?.drawdown_curve, 'drawdown_percent', 56, true).length ? (
-                        curveBars(backtestRun?.drawdown_curve, 'drawdown_percent', 56, true).map((height, index) => (
-                          <span
-                            key={`${height}-${index}`}
-                            className="flex-1 rounded-t bg-status-error/60"
-                            style={{ height }}
-                          />
-                        ))
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-caption text-text-tertiary">
-                          Aguardando resultado
-                        </div>
-                      )}
+                    <div className="mt-4 h-32 rounded-xl border border-border-subtle bg-background-secondary/50 p-3">
+                      <MiniLineChart
+                        points={backtestRun?.drawdown_curve}
+                        valueKey="drawdown_percent"
+                        tone="red"
+                        transform={(value) => -Math.abs(value)}
+                        baselineZero
+                      />
                     </div>
                   </Card>
                 </div>
+
+                <Card variant="glass" className="p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-body-sm font-semibold text-text-primary">Candles e execucoes</p>
+                      <p className="mt-1 text-caption text-text-tertiary">
+                        Entradas em azul, saidas em verde/vermelho conforme P&L liquido.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="blue" size="sm">
+                        {backtestChart
+                          ? `${backtestChart.candle_count_returned}/${backtestChart.candle_count_full} candles`
+                          : 'candles'}
+                      </Badge>
+                      <Badge variant="purple" size="sm">
+                        {backtestChart ? `${backtestChart.trade_count_returned} trades` : 'execucoes'}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <BacktestCandleChart
+                      chart={backtestChart}
+                      trades={backtestTrades}
+                      loading={isBacktestChartLoading}
+                      error={backtestChartError}
+                    />
+                  </div>
+                </Card>
 
                 <div className="grid gap-4 xl:grid-cols-3">
                   <Card variant="glass" className="p-4">
@@ -1905,44 +2402,79 @@ export default function BotsPage() {
 
                 <Card variant="glass" className="p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-body-sm font-semibold text-text-primary">Trades normalizados</p>
+                    <div>
+                      <p className="text-body-sm font-semibold text-text-primary">Trades normalizados</p>
+                      <p className="mt-1 text-caption text-text-tertiary">
+                        Entrada, saida, precos executados, ROI e P&L liquido de cada operacao.
+                      </p>
+                    </div>
                     <div className="flex items-center gap-2">
                       <Badge variant="purple" size="sm">
-                        {backtestTrades.length
-                          ? `mostrando ${Math.min(backtestTrades.length, 8)} de ${metricNumber(backtestRun, 'trade_count') || backtestTrades.length}`
+                        {displayedBacktestTrades.length
+                          ? `${displayedBacktestTrades.length} carregados de ${metricNumber(backtestRun, 'trade_count') || displayedBacktestTrades.length}`
                           : `${metricNumber(backtestRun, 'trade_count')} trades`}
                       </Badge>
                       {isBacktestTradesLoading && <Badge variant="yellow" size="sm">carregando</Badge>}
                     </div>
                   </div>
-                  <div className="mt-3 overflow-hidden rounded-xl border border-border-subtle">
-                    <div className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] bg-background-secondary/70 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-text-tertiary">
-                      <span>Periodo</span>
-                      <span>Retorno</span>
-                      <span>MAE/MFE</span>
-                      <span>Saida</span>
-                    </div>
-                    {backtestTradesError ? (
-                      <div className="px-3 py-6 text-center text-caption text-status-error">
-                        {backtestTradesError}
-                      </div>
-                    ) : backtestTrades.length ? (
-                      backtestTrades.slice(0, 8).map((trade) => (
-                        <div key={trade.id} className="grid grid-cols-[1.2fr_0.9fr_0.9fr_0.9fr] border-t border-border-subtle px-3 py-2 text-caption text-text-secondary">
-                          <span>{formatDateTime(trade.entry_time)} {'->'} {trade.exit_time ? formatDateTime(trade.exit_time) : 'aberto'}</span>
-                          <span className={metricTone(Number(trade.return_percent))}>{formatPercent(Number(trade.return_percent))}</span>
-                          <span>{formatPercent(Number(trade.mae_percent))} / {formatPercent(Number(trade.mfe_percent))}</span>
-                          <span>{trade.exit_reason || '-'}</span>
+                  {displayedBacktestTrades.length > 0 && (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                      {[
+                        { label: 'P&L total', value: formatCompactUsd(backtestTradeStats.totalPnl), tone: metricTone(backtestTradeStats.totalPnl) },
+                        { label: 'P&L medio', value: formatCompactUsd(backtestTradeStats.avgPnl), tone: metricTone(backtestTradeStats.avgPnl) },
+                        { label: 'Vencedores', value: String(backtestTradeStats.winners), tone: 'text-status-success' },
+                        { label: 'Perdedores', value: String(backtestTradeStats.losers), tone: 'text-status-error' },
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-lg border border-border-subtle bg-background-secondary/50 px-3 py-2">
+                          <p className="text-[10px] uppercase tracking-[0.16em] text-text-tertiary">{item.label}</p>
+                          <p className={`mt-1 text-body-sm font-semibold ${item.tone}`}>{item.value}</p>
                         </div>
-                      ))
-                    ) : (
-                      <div className="px-3 py-6 text-center text-caption text-text-tertiary">
-                        {backtestRun?.status === 'succeeded' ? 'Nenhum trade foi gerado para esta janela.' : 'Os trades aparecem aqui quando o worker concluir.'}
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-3 overflow-hidden rounded-xl border border-border-subtle">
+                    <div className="overflow-x-auto">
+                      <div className="min-w-[920px]">
+                        <div className="grid grid-cols-[1.1fr_1.1fr_1fr_0.8fr_0.8fr_0.9fr_0.9fr] bg-background-secondary/70 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-text-tertiary">
+                          <span>Entrada</span>
+                          <span>Saida</span>
+                          <span>Precos</span>
+                          <span>P&L</span>
+                          <span>ROI</span>
+                          <span>MAE/MFE</span>
+                          <span>Motivo</span>
+                        </div>
+                        {backtestTradesError ? (
+                          <div className="px-3 py-6 text-center text-caption text-status-error">
+                            {backtestTradesError}
+                          </div>
+                        ) : displayedBacktestTrades.length ? (
+                          <div className="max-h-72 overflow-y-auto">
+                            {displayedBacktestTrades.map((trade) => (
+                              <div key={trade.id} className="grid grid-cols-[1.1fr_1.1fr_1fr_0.8fr_0.8fr_0.9fr_0.9fr] border-t border-border-subtle px-3 py-2 text-caption text-text-secondary">
+                                <span>{formatDateTime(trade.entry_time)}</span>
+                                <span>{trade.exit_time ? formatDateTime(trade.exit_time) : 'aberto'}</span>
+                                <span>{formatCompactUsd(trade.entry_price)} {'->'} {trade.exit_price ? formatCompactUsd(trade.exit_price) : '-'}</span>
+                                <span className={metricTone(Number(trade.net_pnl))}>{formatCompactUsd(Number(trade.net_pnl))}</span>
+                                <span className={metricTone(Number(trade.return_percent))}>{formatPercent(Number(trade.return_percent))}</span>
+                                <span>{formatPercent(Number(trade.mae_percent))} / {formatPercent(Number(trade.mfe_percent))}</span>
+                                <span>{trade.exit_reason || trade.entry_reason || '-'}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="px-3 py-6 text-center text-caption text-text-tertiary">
+                            {backtestRun?.status === 'succeeded' ? 'Nenhum trade foi gerado para esta janela.' : 'Os trades aparecem aqui quando o worker concluir.'}
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
                   <p className="mt-3 text-caption text-text-tertiary">
                     Taxas e slippage entram no preco executado e no P&L liquido. MAE/MFE ajudam a avaliar fragilidade e potencial intratrade.
+                    {backtestChart && metricNumber(backtestRun, 'trade_count') > backtestChart.trade_count_returned
+                      ? ` Mostrando os primeiros ${backtestChart.trade_count_returned} trades; paginacao completa entra no proximo refinamento.`
+                      : ''}
                   </p>
                 </Card>
               </div>

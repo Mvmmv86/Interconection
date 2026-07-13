@@ -43,6 +43,7 @@ from app.models.bot import (
 )
 from app.models.client import Client
 from app.models.exchange import Exchange
+from app.models.market_candle import MarketCandle
 from app.models.market_ranking import MarketRankingSnapshot, MarketUniverseAsset
 from app.models.organization import Organization, PlanType
 from app.schemas.exchange import SUPPORTED_EXCHANGES as ENABLED_EXCHANGE_CONNECTORS
@@ -51,6 +52,8 @@ from app.schemas.bot import (
     AdminBotTemplateCreate,
     AdminBotTemplateUpdate,
     BotBacktestCreate,
+    BotBacktestCandleResponse,
+    BotBacktestChartResponse,
     BotBacktestRunResponse,
     BotBacktestResponse,
     BotBacktestTradeResponse,
@@ -636,6 +639,32 @@ def _backtest_trade_response(trade: BotBacktestTrade) -> BotBacktestTradeRespons
     )
 
 
+def _backtest_candle_response(candle: MarketCandle) -> BotBacktestCandleResponse:
+    return BotBacktestCandleResponse(
+        open_time=candle.open_time,
+        close_time=candle.close_time,
+        open=float(candle.open),
+        high=float(candle.high),
+        low=float(candle.low),
+        close=float(candle.close),
+        volume=float(candle.volume),
+        quote_volume=float(candle.quote_volume),
+    )
+
+
+def _sample_backtest_chart_items(items: list, max_points: int = 1500) -> list:
+    if len(items) <= max_points or max_points <= 2:
+        return items
+    last_index = len(items) - 1
+    indexes = {
+        round(index * last_index / (max_points - 1))
+        for index in range(max_points)
+    }
+    indexes.add(0)
+    indexes.add(last_index)
+    return [items[index] for index in sorted(indexes)]
+
+
 def _market_ranking_response(
     snapshot: MarketRankingSnapshot | None,
     *,
@@ -991,6 +1020,7 @@ async def list_bot_instances(
             selectinload(BotInstance.exchange),
         )
         .where(BotInstance.organization_id == permission_ctx.organization_id)
+        .where(BotInstance.status != BotInstanceStatus.DISABLED)
         .order_by(BotInstance.created_at.desc())
     )
     query = apply_client_scope_filter(permission_ctx, query, BotInstance.client_id, "bots")
@@ -1036,6 +1066,15 @@ async def create_bot_instance(
     client = await _get_customer_client(db, permission_ctx, data.client_id)
     exchange = await _get_customer_exchange(db, data.client_id, data.exchange_id)
     _ensure_exchange_supported(template, exchange)
+    organization_id = permission_ctx.organization_id
+    actor_user_id = permission_ctx.user.id
+    template_id = template.id
+    template_name = template.name
+    client_id = client.id
+    exchange_id = exchange.id if exchange else None
+    strategy_id = selected_strategy.id if selected_strategy else None
+    merged_parameters = _merge_parameters(template, data.parameters)
+    merged_risk_config = {**(selected_strategy.risk_defaults if selected_strategy else {}), **data.risk_config}
     existing = await db.scalar(
         select(BotInstance)
         .options(
@@ -1046,11 +1085,11 @@ async def create_bot_instance(
             selectinload(BotInstance.exchange),
         )
         .where(
-            BotInstance.organization_id == permission_ctx.organization_id,
-            BotInstance.client_id == client.id,
-            BotInstance.template_id == template.id,
-            BotInstance.exchange_id == (exchange.id if exchange else None),
-            BotInstance.strategy_id == (selected_strategy.id if selected_strategy else None),
+            BotInstance.organization_id == organization_id,
+            BotInstance.client_id == client_id,
+            BotInstance.template_id == template_id,
+            BotInstance.exchange_id == exchange_id,
+            BotInstance.strategy_id == strategy_id,
             BotInstance.mode == data.mode,
             BotInstance.live_enabled == False,
             BotInstance.status != BotInstanceStatus.DISABLED,
@@ -1058,17 +1097,17 @@ async def create_bot_instance(
         .with_for_update()
     )
     if existing is not None:
-        existing.name = data.name or existing.name or template.name
-        existing.parameters = _merge_parameters(template, data.parameters)
-        existing.risk_config = {**(selected_strategy.risk_defaults if selected_strategy else {}), **data.risk_config}
+        existing.name = data.name or existing.name or template_name
+        existing.parameters = merged_parameters
+        existing.risk_config = merged_risk_config
         if existing.status in {BotInstanceStatus.PAUSED, BotInstanceStatus.ERROR}:
             _apply_status_timestamps(existing, BotInstanceStatus.CONFIGURED)
             existing.status = BotInstanceStatus.CONFIGURED
         await db.flush()
         await record_audit_event(
             db,
-            organization_id=permission_ctx.organization_id,
-            user_id=permission_ctx.user.id,
+            organization_id=organization_id,
+            user_id=actor_user_id,
             action=AuditAction.UPDATE,
             resource_type="bot_instance",
             resource_id=existing.id,
@@ -1078,28 +1117,73 @@ async def create_bot_instance(
         )
         return _instance_response(await _load_instance_for_response(db, existing.id))
 
-    await enforce_plan_limit(db, permission_ctx.organization_id, "bots")
+    await enforce_plan_limit(db, organization_id, "bots")
 
     instance = BotInstance(
         id=uuid4(),
-        template_id=template.id,
-        organization_id=permission_ctx.organization_id,
-        client_id=client.id,
-        exchange_id=exchange.id if exchange else None,
-        strategy_id=selected_strategy.id if selected_strategy else None,
-        name=data.name or template.name,
+        template_id=template_id,
+        organization_id=organization_id,
+        client_id=client_id,
+        exchange_id=exchange_id,
+        strategy_id=strategy_id,
+        name=data.name or template_name,
         mode=data.mode,
         status=BotInstanceStatus.CONFIGURED,
-        parameters=_merge_parameters(template, data.parameters),
-        risk_config={**(selected_strategy.risk_defaults if selected_strategy else {}), **data.risk_config},
-        created_by_user_id=permission_ctx.user.id,
+        parameters=merged_parameters,
+        risk_config=merged_risk_config,
+        created_by_user_id=actor_user_id,
     )
     db.add(instance)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        existing_after_conflict = await db.scalar(
+            select(BotInstance)
+            .options(
+                selectinload(BotInstance.template).selectinload(BotTemplate.parameters),
+                selectinload(BotInstance.strategy),
+                selectinload(BotInstance.organization),
+                selectinload(BotInstance.client),
+                selectinload(BotInstance.exchange),
+            )
+            .where(
+                BotInstance.organization_id == organization_id,
+                BotInstance.client_id == client_id,
+                BotInstance.template_id == template_id,
+                BotInstance.exchange_id == exchange_id,
+                BotInstance.strategy_id == strategy_id,
+                BotInstance.mode == data.mode,
+                BotInstance.live_enabled == False,
+                BotInstance.status != BotInstanceStatus.DISABLED,
+            )
+            .with_for_update()
+        )
+        if existing_after_conflict is None:
+            raise
+        existing_after_conflict.name = data.name or existing_after_conflict.name or template_name
+        existing_after_conflict.parameters = merged_parameters
+        existing_after_conflict.risk_config = merged_risk_config
+        if existing_after_conflict.status in {BotInstanceStatus.PAUSED, BotInstanceStatus.ERROR}:
+            _apply_status_timestamps(existing_after_conflict, BotInstanceStatus.CONFIGURED)
+            existing_after_conflict.status = BotInstanceStatus.CONFIGURED
+        await db.flush()
+        await record_audit_event(
+            db,
+            organization_id=organization_id,
+            user_id=actor_user_id,
+            action=AuditAction.UPDATE,
+            resource_type="bot_instance",
+            resource_id=existing_after_conflict.id,
+            description="Customer reused existing bot instance after concurrent activation",
+            metadata={"template_id": template_id, "client_id": client_id, "exchange_id": data.exchange_id},
+            request=request,
+        )
+        return _instance_response(await _load_instance_for_response(db, existing_after_conflict.id))
     await record_audit_event(
         db,
-        organization_id=permission_ctx.organization_id,
-        user_id=permission_ctx.user.id,
+        organization_id=organization_id,
+        user_id=actor_user_id,
         action=AuditAction.CREATE,
         resource_type="bot_instance",
         resource_id=instance.id,
@@ -1671,6 +1755,76 @@ async def list_bot_backtest_trades(
         .limit(limit)
     )
     return [_backtest_trade_response(trade) for trade in result.scalars().all()]
+
+
+@router.get("/backtests/{run_id}/chart", response_model=BotBacktestChartResponse)
+async def get_bot_backtest_chart(
+    run_id: UUID,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:view", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+) -> BotBacktestChartResponse:
+    """Return OHLCV candles plus simulated trades for one backtest chart."""
+    candle_limit = 30000
+    trade_limit = 1000
+    run = await db.scalar(
+        select(BotBacktestRun).where(
+            BotBacktestRun.id == run_id,
+            BotBacktestRun.organization_id == permission_ctx.organization_id,
+        )
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Backtest run not found")
+    if (
+        is_scope_specific_enforcement_enabled("bots")
+        and not permission_ctx.can_access_client(run.client_id)
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden by membership client scope")
+
+    candle_filters = (
+        MarketCandle.exchange == run.exchange,
+        MarketCandle.symbol == run.symbol,
+        MarketCandle.market_type == run.market_type,
+        MarketCandle.timeframe == run.timeframe,
+        MarketCandle.open_time >= run.period_start,
+        MarketCandle.open_time <= run.period_end,
+    )
+    candle_count_full = await db.scalar(select(func.count()).select_from(MarketCandle).where(*candle_filters))
+    candle_result = await db.execute(
+        select(MarketCandle)
+        .where(*candle_filters)
+        .order_by(MarketCandle.open_time.asc())
+        .limit(candle_limit)
+    )
+    candles = candle_result.scalars().all()
+    sampled_candles = _sample_backtest_chart_items(list(candles))
+
+    trade_result = await db.execute(
+        select(BotBacktestTrade)
+        .where(BotBacktestTrade.run_id == run_id)
+        .order_by(BotBacktestTrade.entry_time.asc())
+        .limit(trade_limit)
+    )
+    trades = trade_result.scalars().all()
+
+    return BotBacktestChartResponse(
+        run_id=run.id,
+        symbol=run.symbol,
+        exchange=run.exchange,
+        market_type=run.market_type,
+        timeframe=run.timeframe,
+        period_start=run.period_start,
+        period_end=run.period_end,
+        candle_count_full=int(candle_count_full or 0),
+        candle_count_loaded=len(candles),
+        candle_count_returned=len(sampled_candles),
+        trade_count_returned=len(trades),
+        trade_limit=trade_limit,
+        candles=[_backtest_candle_response(candle) for candle in sampled_candles],
+        trades=[_backtest_trade_response(trade) for trade in trades],
+    )
 
 
 @router.get("/instances/{instance_id}/backtests", response_model=list[BotBacktestRunResponse])

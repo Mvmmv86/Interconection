@@ -749,6 +749,34 @@ interface BotBacktestTrade {
   updated_at: string;
 }
 
+interface BotBacktestCandle {
+  open_time: string;
+  close_time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  quote_volume: number;
+}
+
+interface BotBacktestChart {
+  run_id: string;
+  symbol: string;
+  exchange: string;
+  market_type: string;
+  timeframe: string;
+  period_start: string;
+  period_end: string;
+  candle_count_full: number;
+  candle_count_loaded: number;
+  candle_count_returned: number;
+  trade_count_returned: number;
+  trade_limit: number;
+  candles: BotBacktestCandle[];
+  trades: BotBacktestTrade[];
+}
+
 interface BotMarketRankingItem {
   id: string;
   rank: number;
@@ -1736,6 +1764,10 @@ class ApiClient {
     return this.request<BotBacktestTrade[]>(`/api/v1/bots/backtests/${runId}/trades`);
   }
 
+  async getBotBacktestChart(runId: string): Promise<ApiResponse<BotBacktestChart>> {
+    return this.request<BotBacktestChart>(`/api/v1/bots/backtests/${runId}/chart`);
+  }
+
   async requestBotLiveEnable(
     instanceId: string,
     data: { confirm_risk: boolean; reason?: string | null }
@@ -1992,6 +2024,8 @@ export type {
   BotBacktest,
   BotBacktestRun,
   BotBacktestTrade,
+  BotBacktestCandle,
+  BotBacktestChart,
   BotMarketRanking,
   BotMarketRankingItem,
   BotMarketScannerBootstrap,

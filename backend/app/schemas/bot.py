@@ -447,6 +447,38 @@ class BotBacktestTradeResponse(BaseSchema):
     updated_at: datetime
 
 
+class BotBacktestCandleResponse(BaseSchema):
+    """One OHLCV candle returned for backtest chart visualization."""
+
+    open_time: datetime
+    close_time: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    quote_volume: float
+
+
+class BotBacktestChartResponse(BaseSchema):
+    """Candles and trades needed to render an execution chart."""
+
+    run_id: UUID
+    symbol: str
+    exchange: str
+    market_type: str
+    timeframe: str
+    period_start: datetime
+    period_end: datetime
+    candle_count_full: int
+    candle_count_loaded: int
+    candle_count_returned: int
+    trade_count_returned: int
+    trade_limit: int
+    candles: list[BotBacktestCandleResponse]
+    trades: list[BotBacktestTradeResponse]
+
+
 class BotLiveEnableRequest(BaseSchema):
     """Explicit request to enable future live mode."""
 

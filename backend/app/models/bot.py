@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, List, Optional
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -245,6 +245,21 @@ class BotInstance(Base, UUIDMixin, TimestampMixin):
     """Customer activation of a platform bot product."""
 
     __tablename__ = "bot_instances"
+    __table_args__ = (
+        Index(
+            "uq_bot_instances_active_identity",
+            "organization_id",
+            "client_id",
+            "template_id",
+            "exchange_id",
+            "strategy_id",
+            "mode",
+            "live_enabled",
+            unique=True,
+            postgresql_where=text("status <> 'DISABLED' AND live_enabled = false"),
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
     template_id: Mapped[Optional[UUID]] = mapped_column(
         ForeignKey("bot_templates.id", ondelete="SET NULL"),
