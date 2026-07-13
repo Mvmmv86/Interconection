@@ -54,6 +54,8 @@ type BacktestSelection = {
   instance: BotInstance;
   symbol: string;
 };
+type ChartIndicatorKey = 'bcAlphaTrend' | 'ma20' | 'ma50' | 'supportResistance';
+type ChartIndicatorState = Record<ChartIndicatorKey, boolean>;
 type BacktestCrosshairLegend = {
   time: string;
   open: number;
@@ -170,6 +172,13 @@ function formatChartPrice(value: number | null | undefined) {
     minimumFractionDigits: 0,
     maximumFractionDigits: decimals,
   }).format(amount);
+}
+
+function formatSignedChartPrice(value: number | null | undefined) {
+  const amount = Number(value || 0);
+  if (!Number.isFinite(amount)) return '$0';
+  if (amount === 0) return '$0';
+  return `${amount > 0 ? '+' : '-'}${formatChartPrice(Math.abs(amount))}`;
 }
 
 function formatCompactNumber(value: number | null | undefined) {
@@ -354,11 +363,13 @@ function BacktestCandleChart({
   trades,
   loading,
   error,
+  indicators,
 }: {
   chart: BotBacktestChart | null;
   trades: BotBacktestTrade[];
   loading: boolean;
   error: string | null;
+  indicators: ChartIndicatorState;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const crosshairFrameRef = useRef<number | null>(null);
@@ -375,6 +386,7 @@ function BacktestCandleChart({
           high: Number(candle.high),
           low: Number(candle.low),
           close: Number(candle.close),
+          volume: Number(candle.volume || 0),
         };
       })
       .filter((candle) => Number.isFinite(candle.time) && [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite));
@@ -392,6 +404,125 @@ function BacktestCandleChart({
   }, [chartData]);
   const ma20 = useMemo(() => movingAverage(20), [movingAverage]);
   const ma50 = useMemo(() => movingAverage(50), [movingAverage]);
+  const officialBcAlphaTrend = useMemo(() => {
+    const points =
+      chart?.indicators?.bc_alpha_trend?.series?.stop ||
+      chart?.indicators?.bc_alpha_trend?.series?.value ||
+      [];
+    return points
+      .map((point) => {
+        const time = Math.floor(new Date(point.time).getTime() / 1000) as UTCTimestamp;
+        const value = Number(point.value);
+        if (!Number.isFinite(Number(time)) || !Number.isFinite(value)) return null;
+        return { time, value };
+      })
+      .filter((point): point is { time: UTCTimestamp; value: number } => point !== null);
+  }, [chart?.indicators]);
+  const bcAlphaTrend = useMemo(() => {
+    if (officialBcAlphaTrend.length) return officialBcAlphaTrend;
+    const count = chartData.length;
+    if (count < 20) return [];
+
+    const atrLength = 14;
+    const flowLength = 14;
+    const trendOffset = 2;
+    const atrMultiplier = 1;
+    const flowThreshold = 50;
+
+    const isFiniteNumber = (value: number | null | undefined): value is number =>
+      typeof value === 'number' && Number.isFinite(value);
+    const rma = (values: number[], length: number) => {
+      const output: Array<number | null> = new Array(values.length).fill(null);
+      let previous: number | null = null;
+      for (let index = 0; index < values.length; index += 1) {
+        const value = values[index];
+        if (!Number.isFinite(value)) continue;
+        if (previous === null) {
+          if (index < length - 1) continue;
+          const windowValues = values.slice(index - length + 1, index + 1).filter(Number.isFinite);
+          if (windowValues.length < length) continue;
+          previous = windowValues.reduce((sum, item) => sum + item, 0) / length;
+        } else {
+          previous = (previous * (length - 1) + value) / length;
+        }
+        output[index] = previous;
+      }
+      return output;
+    };
+
+    const trueRanges = chartData.map((candle, index) => {
+      const previousClose = index > 0 ? chartData[index - 1].close : candle.close;
+      return Math.max(candle.high - candle.low, Math.abs(candle.high - previousClose), Math.abs(candle.low - previousClose));
+    });
+    const atr = rma(trueRanges, atrLength);
+
+    const gains = chartData.map((candle, index) =>
+      index === 0 ? 0 : Math.max(candle.close - chartData[index - 1].close, 0)
+    );
+    const losses = chartData.map((candle, index) =>
+      index === 0 ? 0 : Math.max(chartData[index - 1].close - candle.close, 0)
+    );
+    const avgGain = rma(gains, flowLength);
+    const avgLoss = rma(losses, flowLength);
+    const rsi = chartData.map((_, index) => {
+      const gain = avgGain[index];
+      const loss = avgLoss[index];
+      if (!isFiniteNumber(gain) || !isFiniteNumber(loss)) return null;
+      if (loss === 0) return 100;
+      const rs = gain / loss;
+      return 100 - 100 / (1 + rs);
+    });
+
+    const typicalPrices = chartData.map((candle) => (candle.high + candle.low + candle.close) / 3);
+    const rawMoneyFlow = chartData.map((candle, index) => typicalPrices[index] * Math.max(Number(candle.volume || 0), 0));
+    const mfi = chartData.map((_, index) => {
+      if (index < flowLength) return null;
+      let positive = 0;
+      let negative = 0;
+      for (let cursor = index - flowLength + 1; cursor <= index; cursor += 1) {
+        const flow = rawMoneyFlow[cursor] || 0;
+        if (typicalPrices[cursor] > typicalPrices[cursor - 1]) positive += flow;
+        if (typicalPrices[cursor] < typicalPrices[cursor - 1]) negative += flow;
+      }
+      if (negative === 0) return positive > 0 ? 100 : null;
+      const ratio = positive / negative;
+      return 100 - 100 / (1 + ratio);
+    });
+    const volumeCoverage = chartData.filter((candle) => Number(candle.volume || 0) > 0).length / count;
+    const flow = volumeCoverage >= 0.5 ? mfi : rsi;
+
+    const alphaLine: Array<number | null> = new Array(count).fill(null);
+    const trend: Array<number | null> = new Array(count).fill(null);
+    return chartData
+      .map((candle, index) => {
+        const atrValue = atr[index];
+        const flowValue = flow[index];
+        if (!isFiniteNumber(atrValue) || !isFiniteNumber(flowValue)) return null;
+
+        const upSupport = candle.low - atrMultiplier * atrValue;
+        const downResistance = candle.high + atrMultiplier * atrValue;
+        const previousAlpha = index > 0 ? alphaLine[index - 1] : null;
+        alphaLine[index] =
+          flowValue >= flowThreshold
+            ? Math.max(upSupport, previousAlpha ?? upSupport)
+            : Math.min(downResistance, previousAlpha ?? downResistance);
+
+        const reference = index >= trendOffset ? alphaLine[index - trendOffset] : null;
+        const previousTrend = index > 0 && trend[index - 1] !== null ? trend[index - 1] : null;
+        if (reference === null) {
+          trend[index] = previousTrend ?? 0;
+        } else if ((alphaLine[index] || 0) > reference) {
+          trend[index] = 1;
+        } else if ((alphaLine[index] || 0) < reference) {
+          trend[index] = -1;
+        } else {
+          trend[index] = previousTrend ?? 0;
+        }
+
+        return alphaLine[index] === null ? null : { time: candle.time, value: alphaLine[index] as number };
+      })
+      .filter((point): point is { time: UTCTimestamp; value: number } => point !== null);
+  }, [chartData, officialBcAlphaTrend]);
   const priceLines = useMemo(() => {
     const recent = chartData.slice(-Math.min(180, chartData.length));
     if (!recent.length) return null;
@@ -500,7 +631,18 @@ function BacktestCandleChart({
       });
       candleSeries.setData(chartData);
 
-      if (ma20.length) {
+      if (indicators.bcAlphaTrend && bcAlphaTrend.length) {
+        const series = chartApiInstance.addSeries(LineSeries, {
+          color: '#8b5cf6',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          title: 'BC AlphaTrend',
+        });
+        series.setData(bcAlphaTrend);
+      }
+
+      if (indicators.ma20 && ma20.length) {
         const series = chartApiInstance.addSeries(LineSeries, {
           color: '#3b82f6',
           lineWidth: 1,
@@ -510,7 +652,7 @@ function BacktestCandleChart({
         });
         series.setData(ma20);
       }
-      if (ma50.length) {
+      if (indicators.ma50 && ma50.length) {
         const series = chartApiInstance.addSeries(LineSeries, {
           color: '#f59e0b',
           lineWidth: 1,
@@ -521,7 +663,7 @@ function BacktestCandleChart({
         series.setData(ma50);
       }
 
-      if (priceLines) {
+      if (indicators.supportResistance && priceLines) {
         candleSeries.createPriceLine({
           price: priceLines.resistance,
           color: '#ef4444',
@@ -561,7 +703,7 @@ function BacktestCandleChart({
               position: 'aboveBar',
               color: exitColor,
               shape: 'arrowDown',
-              text: `Saida ${formatPercent(Number(trade.return_percent))}`,
+              text: `Saida ${formatPercent(Number(trade.return_percent))} (${formatSignedChartPrice(trade.net_pnl)})`,
             });
           }
           return items;
@@ -596,7 +738,7 @@ function BacktestCandleChart({
       }
       chartApi?.remove();
     };
-  }, [chartData, ma20, ma50, nearestTime, priceLines, tradeList]);
+  }, [bcAlphaTrend, chartData, indicators, ma20, ma50, nearestTime, priceLines, tradeList]);
 
   if (loading) {
     return (
@@ -615,7 +757,7 @@ function BacktestCandleChart({
   if (chartData.length < 2) {
     return (
       <div className="flex h-[460px] items-center justify-center rounded-xl border border-border-subtle bg-background-secondary/50 p-4 text-center text-caption text-text-tertiary">
-        Sem candles suficientes para desenhar o grafico deste backtest.
+        Sem candles suficientes para este timeframe visual. Os trades do backtest continuam preservados; carregue candles deste timeframe ou volte para o timeframe original.
       </div>
     );
   }
@@ -629,10 +771,11 @@ function BacktestCandleChart({
           <span className="text-accent-blue">Crosshair, zoom e pan nativos</span>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em]">
-          <span className="text-accent-blue">MA20</span>
-          <span className="text-status-warning">MA50</span>
-          <span className="text-status-success">Suporte</span>
-          <span className="text-status-error">Resistencia</span>
+          {indicators.bcAlphaTrend && <span className="text-accent-purple">BC AlphaTrend</span>}
+          {indicators.ma20 && <span className="text-accent-blue">MA20</span>}
+          {indicators.ma50 && <span className="text-status-warning">MA50</span>}
+          {indicators.supportResistance && <span className="text-status-success">Suporte</span>}
+          {indicators.supportResistance && <span className="text-status-error">Resistencia</span>}
         </div>
       </div>
       <div className="relative rounded-xl border border-border-subtle bg-background-secondary/50 p-2">
@@ -804,6 +947,13 @@ export default function BotsPage() {
   const [backtestRun, setBacktestRun] = useState<BotBacktestRun | null>(null);
   const [backtestTrades, setBacktestTrades] = useState<BotBacktestTrade[]>([]);
   const [backtestChart, setBacktestChart] = useState<BotBacktestChart | null>(null);
+  const [chartTimeframe, setChartTimeframe] = useState(defaultBacktestForm.timeframe);
+  const [chartIndicators, setChartIndicators] = useState<ChartIndicatorState>({
+    bcAlphaTrend: true,
+    ma20: true,
+    ma50: true,
+    supportResistance: true,
+  });
   const [isBacktestTradesLoading, setIsBacktestTradesLoading] = useState(false);
   const [isBacktestChartLoading, setIsBacktestChartLoading] = useState(false);
   const [backtestTradesError, setBacktestTradesError] = useState<string | null>(null);
@@ -964,7 +1114,7 @@ export default function BotsPage() {
     let cancelled = false;
     setIsBacktestChartLoading(true);
     setBacktestChartError(null);
-    api.getBotBacktestChart(runId).then((result) => {
+    api.getBotBacktestChart(runId, chartTimeframe).then((result) => {
       if (cancelled) return;
       setIsBacktestChartLoading(false);
       if (result.success && result.data) {
@@ -977,7 +1127,7 @@ export default function BotsPage() {
     return () => {
       cancelled = true;
     };
-  }, [backtestRun?.id, backtestRun?.status]);
+  }, [backtestRun?.id, backtestRun?.status, chartTimeframe]);
 
   const getTemplateConfig = (templateId: string): TemplateConfig => (
     configByTemplate[templateId] || defaultTemplateConfig
@@ -1260,6 +1410,7 @@ export default function BotsPage() {
     setBacktestChartError(null);
     setBacktestError(null);
     setBacktestForm(defaultBacktestForm);
+    setChartTimeframe(defaultBacktestForm.timeframe);
   };
 
   const updateBacktestForm = (patch: Partial<BacktestForm>) => {
@@ -1298,6 +1449,7 @@ export default function BotsPage() {
       setBacktestError(result.error || 'Nao foi possivel enfileirar o backtest deste ativo');
       return;
     }
+    setChartTimeframe(result.data.timeframe || backtestForm.timeframe);
     setBacktestRun(result.data);
   };
 
@@ -2509,7 +2661,7 @@ export default function BotsPage() {
                   <Card variant="glass" className="min-w-0 p-4">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-body-sm font-semibold text-text-primary">Equity curve</p>
-                      <Badge variant="blue" size="sm">{backtestRun?.timeframe || backtestForm.timeframe}</Badge>
+                      <Badge variant="blue" size="sm">{backtestChart?.timeframe || chartTimeframe}</Badge>
                     </div>
                     <div className="mt-4 h-32 rounded-xl border border-border-subtle bg-background-secondary/50 p-3">
                       <MiniLineChart points={backtestRun?.equity_curve} valueKey="equity" tone="blue" />
@@ -2569,12 +2721,12 @@ export default function BotsPage() {
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle bg-background-secondary/40 p-2">
                     <div className="flex flex-wrap gap-2">
                       {['15m', '30m', '1h', '4h', '1d'].map((timeframe) => {
-                        const active = backtestForm.timeframe === timeframe;
+                        const active = chartTimeframe === timeframe;
                         return (
                           <button
                             key={timeframe}
                             type="button"
-                            onClick={() => updateBacktestForm({ timeframe })}
+                            onClick={() => setChartTimeframe(timeframe)}
                             className={`rounded-lg border px-3 py-1.5 text-caption font-semibold transition ${
                               active
                                 ? 'border-accent-blue bg-accent-blue text-white'
@@ -2586,20 +2738,37 @@ export default function BotsPage() {
                         );
                       })}
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 text-caption text-text-tertiary">
-                      {backtestRun && backtestRun.timeframe !== backtestForm.timeframe && (
-                        <span className="rounded-lg border border-status-warning/30 bg-status-warning/10 px-2 py-1 text-status-warning">
-                          Reexecute para atualizar candles/trades
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        disabled={isBacktestSubmitting || !can('bots:backtest')}
-                        onClick={runAssetBacktest}
-                        className="rounded-lg border border-accent-purple/30 bg-accent-purple/10 px-3 py-1.5 font-semibold text-accent-purple transition hover:border-accent-purple hover:bg-accent-purple hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Rodar timeframe
-                      </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {([
+                        { key: 'bcAlphaTrend', label: 'AlphaTrend' },
+                        { key: 'ma20', label: 'MA20' },
+                        { key: 'ma50', label: 'MA50' },
+                        { key: 'supportResistance', label: 'S/R' },
+                      ] as const).map((indicator) => {
+                        const active = chartIndicators[indicator.key];
+                        return (
+                          <button
+                            key={indicator.key}
+                            type="button"
+                            onClick={() =>
+                              setChartIndicators((current) => ({
+                                ...current,
+                                [indicator.key]: !current[indicator.key],
+                              }))
+                            }
+                            className={`rounded-lg border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+                              active
+                                ? 'border-accent-purple/40 bg-accent-purple/10 text-accent-purple'
+                                : 'border-border-subtle text-text-tertiary hover:border-accent-purple/40 hover:text-accent-purple'
+                            }`}
+                          >
+                            {indicator.label}
+                          </button>
+                        );
+                      })}
+                      <span className="rounded-lg border border-border-subtle px-2 py-1 text-caption text-text-tertiary">
+                        Visual independente; trades preservados e indicadores recalculados no timeframe visual
+                      </span>
                     </div>
                   </div>
                   <div className="mt-4 overflow-x-auto rounded-xl">
@@ -2608,6 +2777,7 @@ export default function BotsPage() {
                       trades={backtestTrades}
                       loading={isBacktestChartLoading}
                       error={backtestChartError}
+                      indicators={chartIndicators}
                     />
                   </div>
                 </Card>

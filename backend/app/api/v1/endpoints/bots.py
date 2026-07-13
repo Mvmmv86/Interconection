@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
@@ -663,6 +664,71 @@ def _sample_backtest_chart_items(items: list, max_points: int = 1500) -> list:
     indexes.add(0)
     indexes.add(last_index)
     return [items[index] for index in sorted(indexes)]
+
+
+def _backtest_indicator_parameters(run: BotBacktestRun) -> dict[str, object]:
+    snapshot = run.strategy_snapshot if isinstance(run.strategy_snapshot, dict) else {}
+    candidates: list[dict[str, object]] = []
+    for key in ("parameters", "indicator_parameters", "config", "settings"):
+        value = snapshot.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+    indicators = snapshot.get("indicators")
+    if isinstance(indicators, list):
+        for item in indicators:
+            if not isinstance(item, dict):
+                continue
+            item_key = str(item.get("key") or item.get("indicator") or item.get("type") or "").lower()
+            if item_key == "bc_alpha_trend":
+                params = item.get("parameters") or item.get("params") or {}
+                if isinstance(params, dict):
+                    candidates.append(params)
+    merged: dict[str, object] = {
+        "atr_length": 14,
+        "flow_length": 14,
+        "trend_offset": 2,
+        "atr_multiplier": 1.0,
+        "flow_threshold": 50.0,
+        "flow_source": "auto",
+    }
+    for candidate in candidates:
+        merged.update({key: value for key, value in candidate.items() if value is not None})
+    return merged
+
+
+def _backtest_indicator_points(candles: list[MarketCandle], values: list[object], max_points: int = 1500) -> list[dict[str, object]]:
+    points: list[dict[str, object]] = []
+    for candle, value in zip(candles, values, strict=False):
+        if value is None:
+            continue
+        number = float(value)
+        if not math.isfinite(number):
+            continue
+        points.append({"time": candle.open_time, "value": number})
+    return _sample_backtest_chart_items(points, max_points=max_points)
+
+
+def _backtest_chart_indicators(engine: BotEngineService, candles: list[MarketCandle], run: BotBacktestRun) -> dict[str, object]:
+    if not candles:
+        return {}
+    parameters = _backtest_indicator_parameters(run)
+    try:
+        alpha_trend = engine._calculate_indicator("bc_alpha_trend", parameters, candles)
+    except Exception:
+        logger.exception("Failed to calculate backtest chart indicators", extra={"run_id": str(run.id), "symbol": run.symbol})
+        return {"bc_alpha_trend": {"status": "unavailable", "label": "BC AlphaTrend"}}
+    return {
+        "bc_alpha_trend": {
+            "status": "ok",
+            "label": "BC AlphaTrend",
+            "source": "bot_engine_service",
+            "parameters": parameters,
+            "series": {
+                "value": _backtest_indicator_points(candles, alpha_trend.get("value") or []),
+                "stop": _backtest_indicator_points(candles, alpha_trend.get("stop") or []),
+            },
+        }
+    }
 
 
 def _market_ranking_response(
@@ -1765,6 +1831,7 @@ async def get_bot_backtest_chart(
         Depends(require_permission("bots:view", route_key="bots", force=True)),
     ],
     db: DBSession,
+    timeframe: str | None = None,
 ) -> BotBacktestChartResponse:
     """Return OHLCV candles plus simulated trades for one backtest chart."""
     candle_limit = 30000
@@ -1783,11 +1850,16 @@ async def get_bot_backtest_chart(
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden by membership client scope")
 
+    allowed_chart_timeframes = {"15m", "30m", "1h", "4h", "1d"}
+    chart_timeframe = str(timeframe or run.timeframe or "").lower()
+    if chart_timeframe not in allowed_chart_timeframes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported chart timeframe")
+
     candle_filters = (
         MarketCandle.exchange == run.exchange,
         MarketCandle.symbol == run.symbol,
         MarketCandle.market_type == run.market_type,
-        MarketCandle.timeframe == run.timeframe,
+        MarketCandle.timeframe == chart_timeframe,
         MarketCandle.open_time >= run.period_start,
         MarketCandle.open_time <= run.period_end,
     )
@@ -1800,6 +1872,7 @@ async def get_bot_backtest_chart(
     )
     candles = candle_result.scalars().all()
     sampled_candles = _sample_backtest_chart_items(list(candles))
+    indicators = _backtest_chart_indicators(BotEngineService(db), list(candles), run)
 
     trade_result = await db.execute(
         select(BotBacktestTrade)
@@ -1814,7 +1887,7 @@ async def get_bot_backtest_chart(
         symbol=run.symbol,
         exchange=run.exchange,
         market_type=run.market_type,
-        timeframe=run.timeframe,
+        timeframe=chart_timeframe,
         period_start=run.period_start,
         period_end=run.period_end,
         candle_count_full=int(candle_count_full or 0),
@@ -1824,6 +1897,7 @@ async def get_bot_backtest_chart(
         trade_limit=trade_limit,
         candles=[_backtest_candle_response(candle) for candle in sampled_candles],
         trades=[_backtest_trade_response(trade) for trade in trades],
+        indicators=indicators,
     )
 
 

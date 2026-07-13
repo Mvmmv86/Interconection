@@ -760,6 +760,19 @@ interface BotBacktestCandle {
   quote_volume: number;
 }
 
+interface BotBacktestIndicatorPoint {
+  time: string;
+  value: number;
+}
+
+interface BotBacktestIndicatorPayload {
+  status?: string;
+  label?: string;
+  source?: string;
+  parameters?: Record<string, unknown>;
+  series?: Record<string, BotBacktestIndicatorPoint[]>;
+}
+
 interface BotBacktestChart {
   run_id: string;
   symbol: string;
@@ -775,6 +788,7 @@ interface BotBacktestChart {
   trade_limit: number;
   candles: BotBacktestCandle[];
   trades: BotBacktestTrade[];
+  indicators?: Record<string, BotBacktestIndicatorPayload>;
 }
 
 interface BotMarketRankingItem {
@@ -1764,8 +1778,9 @@ class ApiClient {
     return this.request<BotBacktestTrade[]>(`/api/v1/bots/backtests/${runId}/trades`);
   }
 
-  async getBotBacktestChart(runId: string): Promise<ApiResponse<BotBacktestChart>> {
-    return this.request<BotBacktestChart>(`/api/v1/bots/backtests/${runId}/chart`);
+  async getBotBacktestChart(runId: string, timeframe?: string): Promise<ApiResponse<BotBacktestChart>> {
+    const query = timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : '';
+    return this.request<BotBacktestChart>(`/api/v1/bots/backtests/${runId}/chart${query}`);
   }
 
   async requestBotLiveEnable(

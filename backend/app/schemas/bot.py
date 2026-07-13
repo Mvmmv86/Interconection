@@ -477,6 +477,7 @@ class BotBacktestChartResponse(BaseSchema):
     trade_limit: int
     candles: list[BotBacktestCandleResponse]
     trades: list[BotBacktestTradeResponse]
+    indicators: dict[str, Any] = Field(default_factory=dict)
 
 
 class BotLiveEnableRequest(BaseSchema):
