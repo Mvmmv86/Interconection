@@ -528,6 +528,23 @@ class MarketRankingService:
             risk_config = {}
         market_basket = risk_config.get("market_basket")
         basket_policy = risk_config.get("basket_policy")
+        if isinstance(market_basket, dict) and market_basket.get("source") == "manual":
+            manual_symbols = (
+                _coerce_symbol_list(market_basket.get("symbols"))
+                or _coerce_symbol_list(risk_config.get("allowed_symbols"))
+                or fallback_symbols
+            )
+            symbols = [
+                normalize_strategy_symbol(symbol)
+                for symbol in manual_symbols
+                if str(symbol or "").strip()
+            ]
+            return symbols, {
+                "source": "manual",
+                "selection_mode": market_basket.get("selection_mode") or "operator",
+                "symbol_count": len(symbols),
+                "symbols": symbols,
+            }
         if isinstance(basket_policy, dict) and basket_policy.get("source") == "market_extremes":
             return await self._resolve_market_extremes_basket(
                 instance=instance,

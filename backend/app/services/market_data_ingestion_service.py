@@ -61,7 +61,7 @@ def resolve_strategy_symbols(strategy: object | None, instance: object | None = 
     market_basket = instance_risk.get("market_basket")
     uses_dynamic_market_basket = (
         isinstance(market_basket, dict)
-        and market_basket.get("source") in {"market_ranking", "market_extremes"}
+        and market_basket.get("source") in {"market_ranking", "market_extremes", "manual"}
     )
 
     catalog_symbols = [

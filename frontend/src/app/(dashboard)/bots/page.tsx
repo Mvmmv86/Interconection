@@ -37,7 +37,7 @@ type TemplateConfig = {
   basketRefreshTime: string;
 };
 
-type BasketMode = 'market_extremes' | 'scanner';
+type BasketMode = 'market_extremes' | 'scanner' | 'manual';
 type RankingDirection = 'gainers' | 'losers';
 type RankingTimeframe = '1h' | '24h' | '7d' | '30d';
 type PlanName = 'free' | 'pro' | 'enterprise';
@@ -51,6 +51,10 @@ type BacktestForm = {
 type BacktestSelection = {
   instance: BotInstance;
   symbol: string;
+};
+type BasketEditorState = {
+  instance: BotInstance;
+  value: string;
 };
 
 const planRank: Record<PlanName, number> = {
@@ -88,6 +92,15 @@ function splitCsv(value: string) {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function normalizeBotSymbol(value: string) {
+  const normalized = String(value || '').trim().toUpperCase().replace(/[/-]/g, '');
+  if (!normalized) return '';
+  if (normalized.endsWith('USDT') || normalized.endsWith('USDC') || normalized.endsWith('USD')) {
+    return normalized;
+  }
+  return `${normalized}USDT`;
 }
 
 function asNumber(value: string, fallback: number) {
@@ -376,8 +389,10 @@ export default function BotsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRunningId, setIsRunningId] = useState<string | null>(null);
   const [isRefreshingBasketId, setIsRefreshingBasketId] = useState<string | null>(null);
+  const [isSavingBasketId, setIsSavingBasketId] = useState<string | null>(null);
   const [isActivatingId, setIsActivatingId] = useState<string | null>(null);
   const [backtestSelection, setBacktestSelection] = useState<BacktestSelection | null>(null);
+  const [basketEditor, setBasketEditor] = useState<BasketEditorState | null>(null);
   const [backtestForm, setBacktestForm] = useState<BacktestForm>(defaultBacktestForm);
   const [backtestRun, setBacktestRun] = useState<BotBacktestRun | null>(null);
   const [backtestTrades, setBacktestTrades] = useState<BotBacktestTrade[]>([]);
@@ -586,12 +601,17 @@ export default function BotsPage() {
       setError('Selecione uma carteira para ativar o bot');
       return;
     }
-    const manualSymbols = splitCsv(config.allowedSymbols).map((item) => item.toUpperCase());
-    const usesScannerBasket = manualSymbols.length === 0 && config.basketMode === 'scanner';
-    const usesExtremeBasket = manualSymbols.length === 0 && config.basketMode === 'market_extremes';
+    const manualSymbols = splitCsv(config.allowedSymbols).map(normalizeBotSymbol).filter(Boolean);
+    const usesManualBasket = config.basketMode === 'manual';
+    const usesScannerBasket = config.basketMode === 'scanner';
+    const usesExtremeBasket = config.basketMode === 'market_extremes';
     const rankingSymbols = (marketRanking?.items || []).map((item) => item.base_asset.toUpperCase());
     const selectedExchange = (exchangesByClient[config.clientId] || []).find((exchange) => exchange.id === config.exchangeId);
     const executionExchange = selectedExchange?.exchange?.toLowerCase() || rankingExchange;
+    if (usesManualBasket && manualSymbols.length === 0) {
+      setError('Informe os ativos que o bot deve monitorar no modo manual.');
+      return;
+    }
     if (usesScannerBasket && (!marketRanking?.snapshot_id || rankingSymbols.length === 0)) {
       setError('Gere ou carregue um ranking antes de ativar o bot com cesta dinamica, ou informe simbolos manuais.');
       return;
@@ -600,7 +620,7 @@ export default function BotsPage() {
       setError('O scanner carregado pertence a outra exchange. Aplique filtros para a exchange selecionada no bot antes de ativar.');
       return;
     }
-    const allowedSymbols = manualSymbols.length > 0 ? manualSymbols : (usesScannerBasket ? rankingSymbols : []);
+    const allowedSymbols = usesManualBasket ? manualSymbols : (usesScannerBasket ? rankingSymbols : []);
     const basketPolicy = usesExtremeBasket
       ? {
           source: 'market_extremes',
@@ -636,8 +656,8 @@ export default function BotsPage() {
         max_daily_signals: Math.max(0, Math.floor(asNumber(config.maxDailySignals, 20))),
         allowed_symbols: allowedSymbols,
         basket_policy: basketPolicy,
-        market_basket: manualSymbols.length > 0
-          ? { source: 'manual' }
+        market_basket: usesManualBasket
+          ? { source: 'manual', selection_mode: 'operator', symbols: manualSymbols }
           : usesExtremeBasket
             ? {
                 source: 'market_extremes',
@@ -702,6 +722,68 @@ export default function BotsPage() {
       setError(result.error || 'Nao foi possivel recalcular a cesta do bot');
       return;
     }
+    await loadBots();
+  };
+
+  const openBasketEditor = (instance: BotInstance) => {
+    const basket = botBasketView(instance);
+    setBasketEditor({
+      instance,
+      value: basket.symbols.join(', '),
+    });
+  };
+
+  const basketEditorSymbols = basketEditor ? splitCsv(basketEditor.value).map((item) => item.toUpperCase()) : [];
+
+  const toggleBasketEditorSymbol = (symbol: string) => {
+    if (!basketEditor) return;
+    const normalized = symbol.toUpperCase();
+    const current = new Set(splitCsv(basketEditor.value).map((item) => item.toUpperCase()));
+    if (current.has(normalized)) {
+      current.delete(normalized);
+    } else {
+      current.add(normalized);
+    }
+    setBasketEditor({
+      ...basketEditor,
+      value: Array.from(current).join(', '),
+    });
+  };
+
+  const saveBasketSelection = async () => {
+    if (!basketEditor) return;
+    const symbols = Array.from(new Set(splitCsv(basketEditor.value).map(normalizeBotSymbol).filter(Boolean)));
+    if (!symbols.length) {
+      setError('Escolha pelo menos um ativo para deixar o bot em modo manual.');
+      return;
+    }
+    const currentRiskConfig = isRecord(basketEditor.instance.risk_config) ? basketEditor.instance.risk_config : {};
+    const nextRiskConfig = {
+      ...currentRiskConfig,
+      allowed_symbols: symbols,
+      basket_policy: null,
+      market_basket: {
+        source: 'manual',
+        selection_mode: 'operator',
+        symbols,
+      },
+      active_basket: {
+        source: 'manual',
+        selection_mode: 'operator',
+        symbols,
+        symbol_count: symbols.length,
+        generated_at: new Date().toISOString(),
+      },
+    };
+    setIsSavingBasketId(basketEditor.instance.id);
+    setError(null);
+    const result = await api.updateBotInstance(basketEditor.instance.id, { risk_config: nextRiskConfig });
+    setIsSavingBasketId(null);
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel salvar a cesta manual do bot');
+      return;
+    }
+    setBasketEditor(null);
     await loadBots();
   };
 
@@ -1022,8 +1104,9 @@ export default function BotsPage() {
                   : 'exchange';
                 const requiresExchange = supportedExchangeKeys.length > 0;
                 const hasManualSymbols = splitCsv(config.allowedSymbols).length > 0;
+                const needsManualBasket = config.basketMode === 'manual' && !hasManualSymbols;
                 const hasScannerBasket = Boolean(marketRanking?.snapshot_id && marketRanking.items.length > 0);
-                const needsScannerBasket = !hasManualSymbols && config.basketMode === 'scanner';
+                const needsScannerBasket = config.basketMode === 'scanner';
                 const activationBlockReasons = [
                   !can('bots:activate') ? 'Seu papel atual nao permite ativar bots nesta conta.' : '',
                   !planAllows(activeMembership?.organization.plan, template.required_plan)
@@ -1031,6 +1114,7 @@ export default function BotsPage() {
                     : '',
                   !config.clientId ? 'Selecione uma carteira para ativar.' : '',
                   requiresExchange && !config.exchangeId ? `Selecione uma conexao ${supportedExchangeLabel}.` : '',
+                  needsManualBasket ? 'Informe os ativos do modo manual.' : '',
                   needsScannerBasket && !hasScannerBasket ? 'Carregue um ranking no scanner ou use a cesta automatica.' : '',
                 ].filter(Boolean);
                 const exchangeOptions = [
@@ -1123,19 +1207,12 @@ export default function BotsPage() {
                           className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                         />
                       </div>
-                      <input
-                        value={config.allowedSymbols}
-                        onChange={(event) => updateTemplateConfig(template.id, { allowedSymbols: event.target.value })}
-                        placeholder="Simbolos manuais opcionais. Vazio deixa o bot montar a cesta automaticamente. Ex: BTC, ETH, SOL"
-                        className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
-                      />
-                      {!hasManualSymbols && (
-                        <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-3">
+                      <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-3">
                           <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                              <p className="text-body-sm font-semibold text-text-primary">Cesta automatica do bot</p>
+                              <p className="text-body-sm font-semibold text-text-primary">Modo da cesta do bot</p>
                               <p className="text-caption text-text-tertiary">
-                                O bot recalcula os extremos no horario configurado e monitora altas + quedas.
+                                Escolha se o bot monta a cesta automaticamente ou se o operador define exatamente os ativos.
                               </p>
                             </div>
                             <Select
@@ -1143,12 +1220,25 @@ export default function BotsPage() {
                               options={[
                                 { value: 'market_extremes', label: 'Auto: altas + quedas' },
                                 { value: 'scanner', label: 'Usar scanner carregado' },
+                                { value: 'manual', label: 'Manual: operador escolhe' },
                               ]}
                               onChange={(event) => updateTemplateConfig(template.id, { basketMode: event.target.value as BasketMode })}
                               className="h-9 min-w-[190px] py-0 text-caption"
                             />
                           </div>
-                          {config.basketMode === 'market_extremes' ? (
+                          {config.basketMode === 'manual' ? (
+                            <div className="grid gap-2">
+                              <input
+                                value={config.allowedSymbols}
+                                onChange={(event) => updateTemplateConfig(template.id, { allowedSymbols: event.target.value })}
+                                placeholder="Ativos que o bot deve monitorar. Ex: BTC, ETH, SOL, LINK, AVAX"
+                                className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                              />
+                              <p className="text-caption text-text-tertiary">
+                                Neste modo o bot nao recalcula extremos. Ele roda paper e backtest somente nos ativos definidos acima.
+                              </p>
+                            </div>
+                          ) : config.basketMode === 'market_extremes' ? (
                             <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
                               <Select
                                 value={config.basketTimeframe}
@@ -1195,7 +1285,6 @@ export default function BotsPage() {
                             </p>
                           )}
                         </div>
-                      )}
                       {config.clientId && supportedExchangeKeys.length > 0 && compatibleExchanges.length === 0 && (
                         <p className="text-caption text-status-warning">
                           Esta carteira ainda nao tem conexao ativa {supportedExchangeLabel}. Conecte uma exchange compativel em Positions &gt; Exchanges antes de vincular o bot.
@@ -1255,7 +1344,13 @@ export default function BotsPage() {
                     <div className="grid gap-2 md:grid-cols-3">
                       <p>Max ordem: {formatCompactUsd(Number(riskConfig.max_order_usd || 0))}</p>
                       <p>Max posicao: {formatCompactUsd(Number(riskConfig.max_position_usd || 0))}</p>
-                      <p>Cesta: {basket.source === 'market_extremes' ? 'Auto altas + quedas' : basket.source}</p>
+                      <p>
+                        Cesta: {basket.source === 'market_extremes'
+                          ? 'Auto altas + quedas'
+                          : basket.source === 'manual'
+                            ? 'Manual do operador'
+                            : basket.source}
+                      </p>
                     </div>
                     <div>
                       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1341,7 +1436,20 @@ export default function BotsPage() {
                       onClick={() => refreshBasket(instance)}
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
-                      {isRefreshingBasketId === instance.id ? 'Atualizando...' : 'Recalcular cesta'}
+                      {isRefreshingBasketId === instance.id
+                        ? 'Atualizando...'
+                        : basket.source === 'manual'
+                          ? 'Atualizar lista'
+                          : 'Recalcular cesta'}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={!can('bots:edit')}
+                      onClick={() => openBasketEditor(instance)}
+                    >
+                      {basket.source === 'manual' ? 'Editar ativos' : 'Selecionar ativos'}
                     </Button>
                     <Button
                       type="button"
@@ -1414,6 +1522,104 @@ export default function BotsPage() {
           </Card>
         </div>
       </div>
+      {basketEditor && (() => {
+        const editorBasket = botBasketView(basketEditor.instance);
+        const legSymbols = editorBasket.legs.flatMap((leg) => (
+          Array.isArray(leg.symbols) ? leg.symbols.map((symbol) => String(symbol)) : []
+        ));
+        const candidateSymbols = Array.from(new Set([...editorBasket.symbols, ...legSymbols]))
+          .map((symbol) => symbol.toUpperCase())
+          .filter(Boolean);
+        const selectedSymbols = new Set(basketEditorSymbols);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-3xl rounded-2xl border border-border-subtle bg-background-primary shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-border-subtle p-5">
+                <div>
+                  <p className="text-overline uppercase tracking-[0.22em] text-accent-blue">Cesta do bot</p>
+                  <h2 className="mt-1 text-heading-sm text-text-primary">Selecionar ativos monitorados</h2>
+                  <p className="mt-1 text-caption text-text-muted">
+                    {basketEditor.instance.name} - salvar aqui transforma esta instancia em modo manual.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBasketEditor(null)}
+                  className="rounded-xl border border-border-subtle p-2 text-text-muted transition hover:border-accent-blue/40 hover:text-text-primary"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="grid gap-4 p-5 lg:grid-cols-[1fr_0.9fr]">
+                <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-body-sm font-semibold text-text-primary">Candidatos sugeridos</p>
+                      <p className="text-caption text-text-tertiary">
+                        Clique para incluir ou remover da cesta final do bot.
+                      </p>
+                    </div>
+                    <Badge variant="blue" size="sm">{selectedSymbols.size}/{candidateSymbols.length || selectedSymbols.size}</Badge>
+                  </div>
+                  {candidateSymbols.length ? (
+                    <div className="mt-4 flex max-h-[320px] flex-wrap gap-2 overflow-y-auto pr-1">
+                      {candidateSymbols.map((symbol) => {
+                        const selected = selectedSymbols.has(symbol);
+                        return (
+                          <button
+                            key={symbol}
+                            type="button"
+                            onClick={() => toggleBasketEditorSymbol(symbol)}
+                            className={`rounded-lg border px-3 py-2 text-caption font-semibold transition ${
+                              selected
+                                ? 'border-accent-blue/50 bg-accent-blue/10 text-accent-blue'
+                                : 'border-border-subtle bg-background-primary text-text-tertiary hover:border-accent-blue/40 hover:text-text-primary'
+                            }`}
+                          >
+                            {symbol}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-lg border border-border-subtle bg-background-primary p-4 text-caption text-text-tertiary">
+                      Esta instancia ainda nao tem cesta gerada. Informe ativos manualmente ao lado.
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                  <p className="text-body-sm font-semibold text-text-primary">Lista final manual</p>
+                  <p className="mt-1 text-caption text-text-tertiary">
+                    Use virgulas. Voce pode adicionar ativos conhecidos mesmo fora do ranking.
+                  </p>
+                  <textarea
+                    value={basketEditor.value}
+                    onChange={(event) => setBasketEditor({ ...basketEditor, value: event.target.value })}
+                    placeholder="BTC, ETH, SOL, LINK, AVAX"
+                    className="mt-4 min-h-[160px] w-full rounded-xl border border-border-subtle bg-background-primary p-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                  />
+                  <div className="mt-3 grid gap-2 text-caption text-text-tertiary">
+                    <p>Selecionados: <span className="font-semibold text-text-primary">{selectedSymbols.size}</span></p>
+                    <p>Paper, sinais e backtest em cesta passam a usar somente esta lista.</p>
+                  </div>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <Button type="button" variant="ghost" onClick={() => setBasketEditor(null)}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={isSavingBasketId === basketEditor.instance.id || !can('bots:edit')}
+                      onClick={saveBasketSelection}
+                    >
+                      {isSavingBasketId === basketEditor.instance.id ? 'Salvando...' : 'Salvar cesta manual'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {backtestSelection && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
           <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-border-subtle bg-background-primary shadow-2xl">
