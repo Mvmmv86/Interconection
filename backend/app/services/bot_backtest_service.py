@@ -17,6 +17,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.db.session import async_session_maker
 from app.models.bot import (
@@ -407,11 +408,18 @@ class BotBacktestService:
                 lowest_since_entry = low if lowest_since_entry <= 0 else min(lowest_since_entry, low)
                 breakeven_armed = False
                 trailing_armed = False
-                run.diagnostics = {
-                    **(run.diagnostics or {}),
-                    "last_entry_conditions": entry_evaluations,
-                    "last_sizing": {key: _json_number(value) if isinstance(value, Decimal) else value for key, value in sizing.items()},
-                }
+                set_committed_value(
+                    run,
+                    "diagnostics",
+                    {
+                        **(run.diagnostics or {}),
+                        "last_entry_conditions": entry_evaluations,
+                        "last_sizing": {
+                            key: _json_number(value) if isinstance(value, Decimal) else value
+                            for key, value in sizing.items()
+                        },
+                    },
+                )
 
             if index % 250 == 0:
                 await self._save_progress(
@@ -573,8 +581,8 @@ class BotBacktestService:
             "stage_label": stage_label,
             "stage_updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        run.progress = progress
-        run.diagnostics = updated_diagnostics
+        set_committed_value(run, "progress", progress)
+        set_committed_value(run, "diagnostics", updated_diagnostics)
         async with async_session_maker() as progress_session:
             await progress_session.execute(
                 update(BotBacktestRun)
