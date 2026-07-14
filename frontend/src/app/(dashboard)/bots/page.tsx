@@ -34,6 +34,9 @@ type TemplateConfig = {
   atrStopLength: string;
   atrStopMultiplier: string;
   atrStopBufferPercent: string;
+  stopLossPercent: string;
+  takeProfitPercent: string;
+  breakevenPercent: string;
   trailingStopPercent: string;
   allowedSymbols: string;
   basketMode: BasketMode;
@@ -59,6 +62,9 @@ type BacktestForm = {
   atrStopLength: string;
   atrStopMultiplier: string;
   atrStopBufferPercent: string;
+  stopLossPercent: string;
+  takeProfitPercent: string;
+  breakevenPercent: string;
   trailingStopPercent: string;
 };
 type BacktestSelection = {
@@ -96,7 +102,10 @@ const defaultTemplateConfig: TemplateConfig = {
   atrStopLength: '14',
   atrStopMultiplier: '2',
   atrStopBufferPercent: '0.10',
-  trailingStopPercent: '0',
+  stopLossPercent: '3',
+  takeProfitPercent: '8',
+  breakevenPercent: '4',
+  trailingStopPercent: '2',
   allowedSymbols: '',
   basketMode: 'market_extremes',
   basketTimeframe: '7d',
@@ -116,7 +125,10 @@ const defaultBacktestForm: BacktestForm = {
   atrStopLength: '14',
   atrStopMultiplier: '2',
   atrStopBufferPercent: '0.10',
-  trailingStopPercent: '0',
+  stopLossPercent: '3',
+  takeProfitPercent: '8',
+  breakevenPercent: '4',
+  trailingStopPercent: '2',
 };
 
 function splitCsv(value: string) {
@@ -1318,7 +1330,10 @@ export default function BotsPage() {
         atr_stop_length: Math.max(1, Math.floor(asNumber(config.atrStopLength, 14))),
         atr_stop_multiplier: asNumber(config.atrStopMultiplier, 2),
         atr_stop_buffer_percent: Math.max(0, asNumber(config.atrStopBufferPercent, 0.1)),
-        trailing_stop_percent: Math.max(0, asNumber(config.trailingStopPercent, 0)),
+        stop_loss_percent: Math.max(0, asNumber(config.stopLossPercent, 3)),
+        take_profit_percent: Math.max(0, asNumber(config.takeProfitPercent, 8)),
+        breakeven_activation_percent: Math.max(0, asNumber(config.breakevenPercent, 4)),
+        trailing_stop_percent: Math.max(0, asNumber(config.trailingStopPercent, 2)),
         allowed_symbols: allowedSymbols,
         basket_policy: basketPolicy,
         market_basket: usesManualBasket
@@ -1481,7 +1496,10 @@ export default function BotsPage() {
       atrStopLength: String(riskConfig.atr_stop_length || defaultBacktestForm.atrStopLength),
       atrStopMultiplier: String(riskConfig.atr_stop_multiplier || defaultBacktestForm.atrStopMultiplier),
       atrStopBufferPercent: String(riskConfig.atr_stop_buffer_percent ?? defaultBacktestForm.atrStopBufferPercent),
-      trailingStopPercent: String(riskConfig.trailing_stop_percent || defaultBacktestForm.trailingStopPercent),
+      stopLossPercent: String(riskConfig.stop_loss_percent ?? defaultBacktestForm.stopLossPercent),
+      takeProfitPercent: String(riskConfig.take_profit_percent ?? defaultBacktestForm.takeProfitPercent),
+      breakevenPercent: String(riskConfig.breakeven_activation_percent ?? defaultBacktestForm.breakevenPercent),
+      trailingStopPercent: String(riskConfig.trailing_stop_percent ?? defaultBacktestForm.trailingStopPercent),
     };
     setBacktestSelection({ instance, symbol });
     setBacktestRun(null);
@@ -1531,7 +1549,10 @@ export default function BotsPage() {
         atr_stop_length: Math.max(1, Math.floor(asNumber(backtestForm.atrStopLength, 14))),
         atr_stop_multiplier: asNumber(backtestForm.atrStopMultiplier, 2),
         atr_stop_buffer_percent: Math.max(0, asNumber(backtestForm.atrStopBufferPercent, 0.1)),
-        trailing_stop_percent: Math.max(0, asNumber(backtestForm.trailingStopPercent, 0)),
+        stop_loss_percent: Math.max(0, asNumber(backtestForm.stopLossPercent, 3)),
+        take_profit_percent: Math.max(0, asNumber(backtestForm.takeProfitPercent, 8)),
+        breakeven_activation_percent: Math.max(0, asNumber(backtestForm.breakevenPercent, 4)),
+        trailing_stop_percent: Math.max(0, asNumber(backtestForm.trailingStopPercent, 2)),
       },
     });
     setIsBacktestSubmitting(false);
@@ -2023,6 +2044,33 @@ export default function BotsPage() {
                             />
                           </label>
                           <label className="grid gap-1 text-caption text-text-tertiary">
+                            Stop loss %
+                            <input
+                              value={config.stopLossPercent}
+                              onChange={(event) => updateTemplateConfig(template.id, { stopLossPercent: event.target.value })}
+                              placeholder="3"
+                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                            />
+                          </label>
+                          <label className="grid gap-1 text-caption text-text-tertiary">
+                            Take profit %
+                            <input
+                              value={config.takeProfitPercent}
+                              onChange={(event) => updateTemplateConfig(template.id, { takeProfitPercent: event.target.value })}
+                              placeholder="8"
+                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                            />
+                          </label>
+                          <label className="grid gap-1 text-caption text-text-tertiary">
+                            Breakeven apos %
+                            <input
+                              value={config.breakevenPercent}
+                              onChange={(event) => updateTemplateConfig(template.id, { breakevenPercent: event.target.value })}
+                              placeholder="4"
+                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                            />
+                          </label>
+                          <label className="grid gap-1 text-caption text-text-tertiary">
                             Trailing %
                             <input
                               value={config.trailingStopPercent}
@@ -2216,7 +2264,7 @@ export default function BotsPage() {
                     Exchange: {instance.exchange_name || 'Nao vinculada'} - Ultimo ciclo: {formatDateTime(instance.last_run_at)}
                   </p>
                   <div className="mt-3 grid gap-3 rounded-lg border border-border-subtle bg-background-primary/60 p-3 text-caption text-text-secondary">
-                    <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-5">
+                    <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
                       <p>Max ordem: {formatCompactUsd(Number(riskConfig.max_order_usd || 0))}</p>
                       <p>Max posicao: {formatCompactUsd(Number(riskConfig.max_position_usd || 0))}</p>
                       <p>
@@ -2224,6 +2272,10 @@ export default function BotsPage() {
                           ? `ATR ${riskConfig.atr_stop_length || 14}x${riskConfig.atr_stop_multiplier || 2} - ${riskConfig.atr_stop_buffer_percent ?? 0.1}%`
                           : 'AlphaTrend'}
                       </p>
+                      <p>
+                        SL/TP: {Number(riskConfig.stop_loss_percent || 0)}% / {Number(riskConfig.take_profit_percent || 0)}%
+                      </p>
+                      <p>Breakeven: {Number(riskConfig.breakeven_activation_percent || 0)}%</p>
                       <p>Trailing: {Number(riskConfig.trailing_stop_percent || 0)}%</p>
                       <p>
                         Cesta: {basket.source === 'market_extremes'
@@ -2735,6 +2787,33 @@ export default function BotsPage() {
                         />
                       </label>
                       <label className="space-y-1 text-caption text-text-secondary">
+                        Stop loss %
+                        <input
+                          value={backtestForm.stopLossPercent}
+                          onChange={(event) => updateBacktestForm({ stopLossPercent: event.target.value })}
+                          placeholder="3"
+                          className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                      </label>
+                      <label className="space-y-1 text-caption text-text-secondary">
+                        Take profit %
+                        <input
+                          value={backtestForm.takeProfitPercent}
+                          onChange={(event) => updateBacktestForm({ takeProfitPercent: event.target.value })}
+                          placeholder="8"
+                          className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                      </label>
+                      <label className="space-y-1 text-caption text-text-secondary">
+                        Breakeven apos %
+                        <input
+                          value={backtestForm.breakevenPercent}
+                          onChange={(event) => updateBacktestForm({ breakevenPercent: event.target.value })}
+                          placeholder="4"
+                          className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                      </label>
+                      <label className="space-y-1 text-caption text-text-secondary">
                         Trailing %
                         <input
                           value={backtestForm.trailingStopPercent}
@@ -3105,3 +3184,4 @@ export default function BotsPage() {
     </div>
   );
 }
+

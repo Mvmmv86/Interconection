@@ -760,6 +760,8 @@ class BotEngineService:
                 "stop_model": risk_snapshot.get("stop_model"),
                 "stop_source": risk_snapshot.get("stop_source"),
                 "trailing_armed": bool(risk_snapshot.get("trailing_armed")),
+                "breakeven_armed": bool(risk_snapshot.get("breakeven_armed")),
+                "peak_gain_percent": risk_snapshot.get("peak_gain_percent"),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         elif action == "SELL":
@@ -976,6 +978,7 @@ class BotEngineService:
             if normalize_strategy_symbol(str(item.get("symbol") or "")) == symbol
         )
         latest_high = Decimal(str(_candle_high_value(candles[-1], float(latest_price)) or latest_price))
+        latest_low = Decimal(str(_candle_low_value(candles[-1], float(latest_price)) or latest_price))
         paper_state_map = risk_config.get("paper_trade_state") if isinstance(risk_config, Mapping) else {}
         symbol_state = {}
         if isinstance(paper_state_map, Mapping):
@@ -1014,9 +1017,50 @@ class BotEngineService:
         confidence = Decimal("0.25")
         notional = Decimal("0")
         stop_model = stop_snapshot["stop_model"]
-        stop_exit = effective_symbol_value > 0 and stop_price > 0 and latest_price <= stop_price
-        if stop_exit:
+        stop_loss_percent = self._risk_decimal(risk_config, "stop_loss_percent", Decimal("0"))
+        take_profit_percent = self._risk_decimal(risk_config, "take_profit_percent", Decimal("0"))
+        breakeven_activation_percent = self._risk_decimal(
+            risk_config,
+            "breakeven_activation_percent",
+            Decimal("0"),
+        )
+        gain_percent = Decimal("0")
+        drawdown_from_entry_percent = Decimal("0")
+        peak_gain_percent = Decimal("0")
+        breakeven_armed = False
+        stop_loss_exit = False
+        take_profit_exit = False
+        breakeven_exit = False
+        stop_loss_price = Decimal("0")
+        take_profit_price = Decimal("0")
+        breakeven_price = Decimal("0")
+        exit_trigger_price = latest_price
+        if effective_symbol_value > 0 and state_entry_price > 0:
+            gain_percent = (latest_price - state_entry_price) / state_entry_price * Decimal("100")
+            intrabar_gain_percent = (latest_high - state_entry_price) / state_entry_price * Decimal("100")
+            drawdown_from_entry_percent = (state_entry_price - latest_low) / state_entry_price * Decimal("100")
+            highest_since_entry = _safe_decimal(stop_snapshot["highest_since_entry"], latest_price)
+            peak_gain_percent = (highest_since_entry - state_entry_price) / state_entry_price * Decimal("100")
+            breakeven_armed = (
+                breakeven_activation_percent > 0 and peak_gain_percent >= breakeven_activation_percent
+            )
+            gain_percent = max(gain_percent, intrabar_gain_percent)
+            stop_loss_price = state_entry_price * (Decimal("1") - stop_loss_percent / Decimal("100"))
+            take_profit_price = state_entry_price * (Decimal("1") + take_profit_percent / Decimal("100"))
+            breakeven_price = state_entry_price
+            stop_loss_exit = stop_loss_percent > 0 and latest_low <= stop_loss_price
+            take_profit_exit = take_profit_percent > 0 and latest_high >= take_profit_price
+            breakeven_exit = breakeven_armed and latest_low <= breakeven_price
+        stop_exit = effective_symbol_value > 0 and stop_price > 0 and latest_low <= stop_price
+        if stop_loss_exit:
             action = BotSignalAction.SELL
+            exit_trigger_price = stop_loss_price
+            notional = min(effective_symbol_value, max_order_usd if max_order_usd > 0 else effective_symbol_value)
+            confidence = Decimal("0.84")
+            reason = "Stop loss percent protected the open paper position"
+        elif stop_exit:
+            action = BotSignalAction.SELL
+            exit_trigger_price = stop_price
             notional = min(effective_symbol_value, max_order_usd if max_order_usd > 0 else effective_symbol_value)
             confidence = Decimal("0.82")
             if stop_snapshot["stop_source"] == "trailing_stop":
@@ -1025,6 +1069,18 @@ class BotEngineService:
                 reason = "ATR stop invalidated the open paper position"
             else:
                 reason = "AlphaTrend stop invalidated the open paper position"
+        elif take_profit_exit:
+            action = BotSignalAction.SELL
+            exit_trigger_price = take_profit_price
+            notional = min(effective_symbol_value, max_order_usd if max_order_usd > 0 else effective_symbol_value)
+            confidence = Decimal("0.80")
+            reason = "Take profit percent target reached"
+        elif breakeven_exit:
+            action = BotSignalAction.SELL
+            exit_trigger_price = breakeven_price
+            notional = min(effective_symbol_value, max_order_usd if max_order_usd > 0 else effective_symbol_value)
+            confidence = Decimal("0.79")
+            reason = "Breakeven guard protected the open paper position"
         elif exit_passed and effective_symbol_value > 0:
             action = BotSignalAction.SELL
             notional = min(effective_symbol_value, max_order_usd if max_order_usd > 0 else effective_symbol_value)
@@ -1057,7 +1113,8 @@ class BotEngineService:
             notional = Decimal("0")
             confidence = Decimal("0.10")
 
-        quantity = notional / latest_price if latest_price > 0 and notional > 0 else Decimal("0")
+        signal_price = exit_trigger_price if action == BotSignalAction.SELL and exit_trigger_price > 0 else latest_price
+        quantity = notional / signal_price if signal_price > 0 and notional > 0 else Decimal("0")
         risk_snapshot = {
             "rule_version": self._strategy_rule_version(strategy),
             "max_order_usd": _json_number(max_order_usd),
@@ -1080,6 +1137,19 @@ class BotEngineService:
             "trailing_stop_percent": _json_number(stop_snapshot["trailing_stop_percent"]),
             "trailing_armed": stop_snapshot["trailing_armed"],
             "trailing_stop_price": _json_number(stop_snapshot["trailing_stop_price"]),
+            "stop_loss_percent": _json_number(stop_loss_percent),
+            "take_profit_percent": _json_number(take_profit_percent),
+            "breakeven_activation_percent": _json_number(breakeven_activation_percent),
+            "gain_percent": _json_number(gain_percent),
+            "drawdown_from_entry_percent": _json_number(drawdown_from_entry_percent),
+            "peak_gain_percent": _json_number(peak_gain_percent),
+            "breakeven_armed": breakeven_armed,
+            "stop_loss_price": _json_number(stop_loss_price),
+            "take_profit_price": _json_number(take_profit_price),
+            "breakeven_price": _json_number(breakeven_price),
+            "exit_trigger_price": _json_number(exit_trigger_price),
+            "latest_high": _json_number(latest_high),
+            "latest_low": _json_number(latest_low),
             "stop_distance_percent": _json_number(sizing["stop_distance_percent"]),
             "risk_per_trade_percent": _json_number(sizing["risk_per_trade_percent"]),
             "sizing_capital_usd": _json_number(sizing["sizing_capital"]),
@@ -1089,6 +1159,9 @@ class BotEngineService:
             "entry_passed": entry_passed,
             "exit_passed": exit_passed,
             "stop_exit": stop_exit,
+            "stop_loss_exit": stop_loss_exit,
+            "take_profit_exit": take_profit_exit,
+            "breakeven_exit": breakeven_exit,
             "entry_conditions": entry_evaluations,
             "exit_conditions": exit_evaluations,
             "fallback_indicators": fallback_indicators,
@@ -1105,12 +1178,14 @@ class BotEngineService:
                 "stop_source": stop_snapshot["stop_source"],
                 "trailing_armed": stop_snapshot["trailing_armed"],
                 "trailing_stop_price": _json_number(stop_snapshot["trailing_stop_price"]),
+                "breakeven_armed": breakeven_armed,
+                "peak_gain_percent": _json_number(peak_gain_percent),
             }
         decision = {
             "action": action.value,
             "symbol": symbol,
             "confidence": _json_number(confidence),
-            "price_usd": _json_number(latest_price),
+            "price_usd": _json_number(signal_price),
             "quantity": _json_number(quantity),
             "notional_usd": _json_number(notional),
             "reason": reason,
@@ -2049,8 +2124,10 @@ class BotEngineService:
             exit_passed, exit_evaluations = self._evaluate_rule_group(rule_config, "exit", frames, index)
             entry_passed, entry_evaluations = self._evaluate_rule_group(rule_config, "entry", frames, index)
             exit_reason = "rule_exit"
+            exit_price = price
             if units > 0 and entry_price > 0:
                 latest_high = Decimal(str(_candle_high_value(candle, float(price)) or price))
+                latest_low = Decimal(str(_candle_low_value(candle, float(price)) or price))
                 stop_snapshot = self._risk_stop_snapshot(
                     risk_config=risk,
                     frames=frames,
@@ -2062,34 +2139,43 @@ class BotEngineService:
                     highest_since_entry=highest_since_entry,
                     previous_active_stop=active_stop_price,
                 )
+                highest_since_entry = _safe_decimal(stop_snapshot["highest_since_entry"], highest_since_entry)
                 active_stop_price = stop_snapshot["active_stop_price"]
                 gain_percent = (price - entry_price) / entry_price * Decimal("100")
+                intrabar_gain_percent = (latest_high - entry_price) / entry_price * Decimal("100")
                 peak_gain_percent = (highest_since_entry - entry_price) / entry_price * Decimal("100")
                 max_gain_since_entry = max(max_gain_since_entry, peak_gain_percent)
                 if breakeven_activation_percent > 0 and max_gain_since_entry >= breakeven_activation_percent:
                     breakeven_armed = True
                 trailing_armed = bool(stop_snapshot["trailing_armed"])
-                drawdown_from_entry = (entry_price - price) / entry_price * Decimal("100")
-                if stop_loss_percent > 0 and drawdown_from_entry >= stop_loss_percent:
+                gain_percent = max(gain_percent, intrabar_gain_percent)
+                drawdown_from_entry = (entry_price - latest_low) / entry_price * Decimal("100")
+                stop_loss_price = entry_price * (Decimal("1") - stop_loss_percent / Decimal("100"))
+                take_profit_price = entry_price * (Decimal("1") + take_profit_percent / Decimal("100"))
+                if stop_loss_percent > 0 and latest_low <= stop_loss_price:
                     exit_passed = True
                     exit_reason = "stop_loss"
-                elif active_stop_price > 0 and price <= active_stop_price:
+                    exit_price = stop_loss_price
+                elif active_stop_price > 0 and latest_low <= active_stop_price:
                     exit_passed = True
+                    exit_price = active_stop_price
                     if stop_snapshot["stop_source"] == "trailing_stop":
                         exit_reason = "trailing_stop"
                     elif stop_snapshot["stop_model"] == "atr":
                         exit_reason = "atr_stop"
                     else:
                         exit_reason = "alpha_trend_stop"
-                elif take_profit_percent > 0 and gain_percent >= take_profit_percent:
+                elif take_profit_percent > 0 and latest_high >= take_profit_price:
                     exit_passed = True
                     exit_reason = "take_profit"
-                elif breakeven_armed and price <= entry_price:
+                    exit_price = take_profit_price
+                elif breakeven_armed and latest_low <= entry_price:
                     exit_passed = True
                     exit_reason = "breakeven_guard"
+                    exit_price = entry_price
 
             if units > 0 and exit_passed:
-                execution_price = price * (Decimal("1") - slippage_percent / Decimal("100"))
+                execution_price = exit_price * (Decimal("1") - slippage_percent / Decimal("100"))
                 gross_proceeds = units * execution_price
                 fee_usd = gross_proceeds * fee_percent / Decimal("100")
                 proceeds = max(Decimal("0"), gross_proceeds - fee_usd)
@@ -2108,7 +2194,7 @@ class BotEngineService:
                         "timestamp": _candle_timestamp(candle).isoformat(),
                         "action": "sell",
                         "reason": exit_reason,
-                        "price": _json_number(price),
+                        "price": _json_number(exit_price),
                         "execution_price": _json_number(execution_price),
                         "fee_usd": _json_number(fee_usd),
                         "equity": _json_number(equity),
