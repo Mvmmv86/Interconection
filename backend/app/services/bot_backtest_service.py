@@ -209,9 +209,7 @@ class BotBacktestService:
         slippage_percent = self._bounded_percent(risk.get("slippage_percent", cost_snapshot.get("slippage_percent", 0)), 20)
         stop_loss_percent = Decimal(str(risk.get("stop_loss_percent", 0) or 0))
         take_profit_percent = Decimal(str(risk.get("take_profit_percent", 0) or 0))
-        trailing_stop_percent = Decimal(str(risk.get("trailing_stop_percent", 0) or 0))
         breakeven_activation_percent = Decimal(str(risk.get("breakeven_activation_percent", 0) or 0))
-        stop_model = str(risk.get("stop_model") or "alpha_trend")
 
         cash = Decimal(str(run.initial_capital_usd))
         initial_capital = cash
@@ -227,6 +225,7 @@ class BotBacktestService:
         lowest_since_entry = Decimal("0")
         breakeven_armed = False
         trailing_armed = False
+        active_stop_price = Decimal("0")
         equity_curve: list[dict] = []
         drawdown_curve: list[dict] = []
         realized_net_pnl = Decimal("0")
@@ -287,27 +286,34 @@ class BotBacktestService:
                 peak_gain_percent = (highest_since_entry - entry_price) / entry_price * Decimal("100")
                 if breakeven_activation_percent > 0 and peak_gain_percent >= breakeven_activation_percent:
                     breakeven_armed = True
-                if trailing_stop_percent > 0 and peak_gain_percent >= trailing_stop_percent:
-                    trailing_armed = True
                 drawdown_from_entry = (entry_price - price) / entry_price * Decimal("100")
-                trailing_drawdown = (
-                    (highest_since_entry - price) / highest_since_entry * Decimal("100")
-                    if highest_since_entry > 0
-                    else Decimal("0")
+                stop_snapshot = self.engine._risk_stop_snapshot(
+                    risk_config=risk,
+                    frames=frames,
+                    candles=candles,
+                    index=index,
+                    price=price,
+                    latest_high=high,
+                    entry_price=entry_price,
+                    highest_since_entry=highest_since_entry,
+                    previous_active_stop=active_stop_price,
                 )
-                alpha_stop = self.engine._condition_value(frames, "bc_alpha_trend", "stop", index)
+                active_stop_price = stop_snapshot["active_stop_price"]
+                trailing_armed = bool(stop_snapshot["trailing_armed"])
                 if stop_loss_percent > 0 and drawdown_from_entry >= stop_loss_percent:
                     exit_passed = True
                     exit_reason = "stop_loss"
-                elif stop_model == "alpha_trend" and alpha_stop is not None and alpha_stop > 0 and price <= Decimal(str(alpha_stop)):
+                elif active_stop_price > 0 and price <= active_stop_price:
                     exit_passed = True
-                    exit_reason = "alpha_trend_stop"
+                    if stop_snapshot["stop_source"] == "trailing_stop":
+                        exit_reason = "trailing_stop"
+                    elif stop_snapshot["stop_model"] == "atr":
+                        exit_reason = "atr_stop"
+                    else:
+                        exit_reason = "alpha_trend_stop"
                 elif take_profit_percent > 0 and gain_percent >= take_profit_percent:
                     exit_passed = True
                     exit_reason = "take_profit"
-                elif trailing_armed and trailing_drawdown >= trailing_stop_percent:
-                    exit_passed = True
-                    exit_reason = "trailing_stop"
                 elif breakeven_armed and price <= entry_price:
                     exit_passed = True
                     exit_reason = "breakeven_guard"
@@ -366,18 +372,29 @@ class BotBacktestService:
                 lowest_since_entry = Decimal("0")
                 breakeven_armed = False
                 trailing_armed = False
+                active_stop_price = Decimal("0")
                 continue
 
             current_position_value = units * price
             allow_averaging = str(risk.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
             if entry_passed and cash > 0 and (units == 0 or allow_averaging):
-                alpha_stop = self.engine._condition_value(frames, "bc_alpha_trend", "stop", index)
+                stop_snapshot = self.engine._risk_stop_snapshot(
+                    risk_config=risk,
+                    frames=frames,
+                    candles=candles,
+                    index=index,
+                    price=price,
+                    latest_high=high,
+                )
+                if stop_snapshot["invalid_for_entry"]:
+                    continue
                 sizing = self.engine._sizing_snapshot(
                     risk,
                     latest_price=price,
                     current_symbol_value=current_position_value,
                     sizing_capital=cash + current_position_value,
-                    alpha_stop=alpha_stop,
+                    stop_price=stop_snapshot["active_stop_price"],
+                    stop_model=stop_snapshot["stop_model"],
                 )
                 spend = min(cash, sizing["notional_cap"])
                 if spend <= 0:
@@ -408,6 +425,7 @@ class BotBacktestService:
                 lowest_since_entry = low if lowest_since_entry <= 0 else min(lowest_since_entry, low)
                 breakeven_armed = False
                 trailing_armed = False
+                active_stop_price = sizing["stop_price"]
                 set_committed_value(
                     run,
                     "diagnostics",

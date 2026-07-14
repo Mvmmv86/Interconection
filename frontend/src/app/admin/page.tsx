@@ -290,6 +290,9 @@ export default function PlatformAdminPage() {
     maxPositionUsd: '1000',
     stopLossPercent: '3',
     takeProfitPercent: '8',
+    stopModel: 'alpha_trend',
+    atrStopLength: '14',
+    atrStopMultiplier: '2',
     trailingStopPercent: '2',
     breakevenPercent: '4',
     cooldownMinutes: '60',
@@ -305,6 +308,9 @@ export default function PlatformAdminPage() {
     maxPositionUsd: '1000',
     stopLossPercent: '3',
     takeProfitPercent: '8',
+    stopModel: 'alpha_trend',
+    atrStopLength: '14',
+    atrStopMultiplier: '2',
     trailingStopPercent: '2',
     breakevenPercent: '4',
     feePercent: '0.1',
@@ -698,6 +704,9 @@ export default function PlatformAdminPage() {
         max_position_usd: parseNumber(botStrategyForm.maxPositionUsd, 1000),
         stop_loss_percent: parseNumber(botStrategyForm.stopLossPercent, 3),
         take_profit_percent: parseNumber(botStrategyForm.takeProfitPercent, 8),
+        stop_model: botStrategyForm.stopModel,
+        atr_stop_length: Math.max(1, Math.round(parseNumber(botStrategyForm.atrStopLength, 14))),
+        atr_stop_multiplier: parseNumber(botStrategyForm.atrStopMultiplier, 2),
         trailing_stop_percent: parseNumber(botStrategyForm.trailingStopPercent, 2),
         breakeven_activation_percent: parseNumber(botStrategyForm.breakevenPercent, 4),
         cooldown_minutes: Math.max(0, Math.round(parseNumber(botStrategyForm.cooldownMinutes, 60))),
@@ -742,6 +751,9 @@ export default function PlatformAdminPage() {
       maxPositionUsd: '1000',
       stopLossPercent: '3',
       takeProfitPercent: '8',
+      stopModel: 'alpha_trend',
+      atrStopLength: '14',
+      atrStopMultiplier: '2',
       trailingStopPercent: '2',
       breakevenPercent: '4',
       cooldownMinutes: '60',
@@ -783,6 +795,9 @@ export default function PlatformAdminPage() {
         max_position_usd: numberOrZero(backtestForm.maxPositionUsd),
         stop_loss_percent: numberOrZero(backtestForm.stopLossPercent),
         take_profit_percent: numberOrZero(backtestForm.takeProfitPercent),
+        stop_model: backtestForm.stopModel,
+        atr_stop_length: Math.max(1, Math.round(numberOrZero(backtestForm.atrStopLength) || 14)),
+        atr_stop_multiplier: numberOrZero(backtestForm.atrStopMultiplier) || 2,
         trailing_stop_percent: numberOrZero(backtestForm.trailingStopPercent),
         breakeven_activation_percent: numberOrZero(backtestForm.breakevenPercent),
         fee_percent: numberOrZero(backtestForm.feePercent),
@@ -2017,9 +2032,26 @@ export default function PlatformAdminPage() {
                         <p className="text-heading-sm text-text-primary">5. Risco operacional</p>
                         <p className="mb-3 text-caption text-text-muted">Esses limites sao aplicados pelo motor antes de gerar sinal.</p>
                         <div className="grid gap-3 md:grid-cols-3">
+                          <div>
+                            <InfoLabel label="Stop principal" info="Modelo dinamico usado pelo paper e pelo backtest: AlphaTrend ou ATR." />
+                            <Select
+                              value={botStrategyForm.stopModel}
+                              options={[
+                                { value: 'alpha_trend', label: 'AlphaTrend' },
+                                { value: 'atr', label: 'ATR' },
+                              ]}
+                              onChange={(event) => setBotStrategyForm((current) => ({
+                                ...current,
+                                stopModel: event.target.value,
+                              }))}
+                              className="h-10 py-0"
+                            />
+                          </div>
                           {[
                             ['maxOrderUsd', 'Max ordem USD', 'Valor maximo por sinal/ordem simulada.', botStrategyForm.maxOrderUsd],
                             ['maxPositionUsd', 'Max posicao USD', 'Exposicao maxima permitida no ativo.', botStrategyForm.maxPositionUsd],
+                            ['atrStopLength', 'ATR periodo', 'Periodo do ATR quando o stop principal for ATR.', botStrategyForm.atrStopLength],
+                            ['atrStopMultiplier', 'ATR multiplicador', 'Distancia do stop em multiplos de ATR.', botStrategyForm.atrStopMultiplier],
                             ['stopLossPercent', 'Stop loss %', 'Perda maxima por posicao antes de sair.', botStrategyForm.stopLossPercent],
                             ['takeProfitPercent', 'Take profit %', 'Alvo de lucro para saida parcial/total.', botStrategyForm.takeProfitPercent],
                             ['trailingStopPercent', 'Trailing stop %', 'Distancia dinamica para proteger lucro quando o preco anda a favor.', botStrategyForm.trailingStopPercent],
@@ -2124,9 +2156,26 @@ export default function PlatformAdminPage() {
                           Risco e execucao do backtest
                         </p>
                         <div className="grid gap-3 md:grid-cols-4">
+                          <label className="grid gap-1 text-caption text-text-tertiary">
+                            Stop principal
+                            <Select
+                              value={backtestForm.stopModel}
+                              options={[
+                                { value: 'alpha_trend', label: 'AlphaTrend' },
+                                { value: 'atr', label: 'ATR' },
+                              ]}
+                              onChange={(event) => setBacktestForm((current) => ({
+                                ...current,
+                                stopModel: event.target.value,
+                              }))}
+                              className="h-9 py-0 text-caption"
+                            />
+                          </label>
                           {[
                             ['maxOrderUsd', 'Max ordem USD'],
                             ['maxPositionUsd', 'Max posicao USD'],
+                            ['atrStopLength', 'ATR periodo'],
+                            ['atrStopMultiplier', 'ATR mult.'],
                             ['stopLossPercent', 'Stop loss %'],
                             ['takeProfitPercent', 'Take profit %'],
                             ['trailingStopPercent', 'Trailing %'],

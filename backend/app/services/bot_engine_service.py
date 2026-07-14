@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, time, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from typing import Any, Mapping, Sequence
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
@@ -65,6 +66,18 @@ def _safe_float(value: object, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return parsed if math.isfinite(parsed) else default
+
+
+def _safe_decimal(value: object, default: Decimal = Decimal("0")) -> Decimal:
+    if value is None:
+        return default
+    if isinstance(value, Decimal):
+        return value
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return default
+    return parsed if parsed.is_finite() else default
 
 
 def _safe_int(value: object, default: int = 1) -> int:
@@ -416,6 +429,13 @@ class BotEngineService:
             risk_snapshot=risk_snapshot,
             generated_at=run.completed_at or now,
         )
+        if decision.get("symbol"):
+            instance.risk_config = self._paper_state_after_decision(
+                risk_config=instance.risk_config or {},
+                symbol=str(decision["symbol"]),
+                decision=decision,
+                risk_snapshot=risk_snapshot,
+            )
         instance.status = BotInstanceStatus.ACTIVE
         instance.last_run_at = run.completed_at
         instance.last_heartbeat_at = run.completed_at
@@ -532,7 +552,9 @@ class BotEngineService:
         latest_price: Decimal,
         current_symbol_value: Decimal,
         sizing_capital: Decimal,
-        alpha_stop: float | None,
+        alpha_stop: float | None = None,
+        stop_price: Decimal | None = None,
+        stop_model: str = "alpha_trend",
     ) -> dict:
         """Shared risk-distance sizing used by live paper decisions and backtests."""
         max_order_usd = Decimal(str(risk_config.get("max_order_usd", 100) or 100))
@@ -540,10 +562,12 @@ class BotEngineService:
         risk_per_trade_percent = Decimal(str(risk_config.get("risk_per_trade_percent", 0) or 0))
         max_exposure_per_trade_percent = Decimal(str(risk_config.get("max_exposure_per_trade_percent", 0) or 0))
         allow_averaging = str(risk_config.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
-        stop_price = Decimal(str(alpha_stop)) if alpha_stop is not None and alpha_stop > 0 else Decimal("0")
+        resolved_stop_price = stop_price if stop_price is not None and stop_price > 0 else Decimal("0")
+        if resolved_stop_price <= 0 and alpha_stop is not None and alpha_stop > 0:
+            resolved_stop_price = Decimal(str(alpha_stop))
         stop_distance_percent = (
-            abs(latest_price - stop_price) / latest_price * Decimal("100")
-            if latest_price > 0 and stop_price > 0
+            abs(latest_price - resolved_stop_price) / latest_price * Decimal("100")
+            if latest_price > 0 and resolved_stop_price > 0
             else Decimal("0")
         )
         resolved_capital = sizing_capital
@@ -578,7 +602,8 @@ class BotEngineService:
             "risk_per_trade_percent": risk_per_trade_percent,
             "max_exposure_per_trade_percent": max_exposure_per_trade_percent,
             "allow_averaging": allow_averaging,
-            "stop_price": stop_price,
+            "stop_price": resolved_stop_price,
+            "stop_model": stop_model,
             "stop_distance_percent": stop_distance_percent,
             "sizing_capital": resolved_capital,
             "sizing_capital_source": sizing_capital_source,
@@ -589,6 +614,158 @@ class BotEngineService:
             "notional_cap": notional_cap,
             "sizing_model": "risk_distance" if risk_amount > 0 and stop_distance_percent > 0 else "max_order_fallback",
         }
+
+    def _risk_decimal(self, risk_config: Mapping[str, Any], key: str, default: Decimal) -> Decimal:
+        return _safe_decimal(risk_config.get(key), default)
+
+    def _normalized_stop_model(self, risk_config: Mapping[str, Any]) -> str:
+        raw_model = str(risk_config.get("stop_model") or "alpha_trend").strip().lower().replace("-", "_")
+        aliases = {
+            "alpha": "alpha_trend",
+            "alphatrend": "alpha_trend",
+            "bc_alpha_trend": "alpha_trend",
+            "atr_stop": "atr",
+        }
+        model = aliases.get(raw_model, raw_model)
+        return model if model in {"alpha_trend", "atr"} else "alpha_trend"
+
+    def _atr_stop_snapshot(
+        self,
+        *,
+        risk_config: Mapping[str, Any],
+        candles: Sequence[Mapping[str, Any]],
+        index: int,
+        price: Decimal,
+    ) -> dict[str, Any]:
+        atr_length = max(1, _safe_int(risk_config.get("atr_stop_length"), 14))
+        atr_multiplier = self._risk_decimal(risk_config, "atr_stop_multiplier", Decimal("2"))
+        atr_values = _rma(self._true_range(candles), atr_length)
+        atr_value = atr_values[index] if 0 <= index < len(atr_values) else None
+        atr_decimal = _safe_decimal(atr_value, Decimal("0")) if atr_value is not None else Decimal("0")
+        atr_stop = price - (atr_decimal * atr_multiplier) if atr_decimal > 0 and atr_multiplier > 0 else Decimal("0")
+        return {
+            "atr_stop_length": atr_length,
+            "atr_stop_multiplier": atr_multiplier,
+            "atr_value": atr_decimal,
+            "atr_stop": atr_stop,
+        }
+
+    def _risk_stop_snapshot(
+        self,
+        *,
+        risk_config: Mapping[str, Any],
+        frames: Mapping[str, Mapping[str, Any]],
+        candles: Sequence[Mapping[str, Any]],
+        index: int,
+        price: Decimal,
+        latest_high: Decimal | None = None,
+        entry_price: Decimal | None = None,
+        highest_since_entry: Decimal | None = None,
+        previous_active_stop: Decimal | None = None,
+    ) -> dict[str, Any]:
+        stop_model = self._normalized_stop_model(risk_config)
+        alpha_stop_value = self._condition_value(frames, "bc_alpha_trend", "stop", index)
+        alpha_stop = _safe_decimal(alpha_stop_value, Decimal("0")) if alpha_stop_value is not None else Decimal("0")
+        atr_snapshot = self._atr_stop_snapshot(
+            risk_config=risk_config,
+            candles=candles,
+            index=index,
+            price=price,
+        )
+        atr_stop = _safe_decimal(atr_snapshot["atr_stop"], Decimal("0"))
+
+        base_stop = alpha_stop if stop_model == "alpha_trend" else atr_stop
+        base_source = stop_model
+        blocks: list[str] = []
+        if base_stop <= 0:
+            blocks.append(f"{stop_model}_stop_unavailable")
+        elif base_stop >= price:
+            blocks.append(f"{stop_model}_stop_above_or_equal_price")
+
+        active_stop = base_stop if base_stop > 0 else Decimal("0")
+        stop_source = base_source
+        trailing_percent = self._risk_decimal(risk_config, "trailing_stop_percent", Decimal("0"))
+        trailing_stop = Decimal("0")
+        trailing_armed = False
+        resolved_high = latest_high if latest_high is not None and latest_high > 0 else price
+        resolved_entry = entry_price if entry_price is not None and entry_price > 0 else Decimal("0")
+        resolved_highest = highest_since_entry if highest_since_entry is not None and highest_since_entry > 0 else resolved_high
+        resolved_highest = max(resolved_highest, resolved_high, price)
+
+        if trailing_percent > 0 and resolved_entry > 0:
+            peak_gain_percent = (resolved_highest - resolved_entry) / resolved_entry * Decimal("100")
+            if peak_gain_percent >= trailing_percent:
+                trailing_armed = True
+                trailing_stop = resolved_highest * (Decimal("1") - trailing_percent / Decimal("100"))
+                if trailing_stop > active_stop:
+                    active_stop = trailing_stop
+                    stop_source = "trailing_stop"
+
+        if previous_active_stop is not None and previous_active_stop > 0 and active_stop > 0:
+            active_stop = max(active_stop, previous_active_stop)
+            if active_stop == previous_active_stop and stop_source != "trailing_stop":
+                stop_source = "previous_active_stop"
+
+        invalid_for_entry = active_stop <= 0 or active_stop >= price
+        if invalid_for_entry and not blocks:
+            blocks.append("active_stop_invalid")
+
+        return {
+            "stop_model": stop_model,
+            "stop_source": stop_source,
+            "active_stop_price": active_stop,
+            "alpha_trend_stop": alpha_stop,
+            "atr_stop": atr_stop,
+            "atr_value": _safe_decimal(atr_snapshot["atr_value"], Decimal("0")),
+            "atr_stop_length": atr_snapshot["atr_stop_length"],
+            "atr_stop_multiplier": _safe_decimal(atr_snapshot["atr_stop_multiplier"], Decimal("0")),
+            "trailing_stop_percent": trailing_percent,
+            "trailing_armed": trailing_armed,
+            "trailing_stop_price": trailing_stop,
+            "highest_since_entry": resolved_highest,
+            "invalid_for_entry": invalid_for_entry,
+            "blocks": blocks,
+        }
+
+    def _paper_state_after_decision(
+        self,
+        *,
+        risk_config: Mapping[str, Any],
+        symbol: str,
+        decision: Mapping[str, Any],
+        risk_snapshot: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        normalized_symbol = normalize_strategy_symbol(symbol)
+        next_config = dict(risk_config or {})
+        current_state = next_config.get("paper_trade_state")
+        state_by_symbol = dict(current_state) if isinstance(current_state, Mapping) else {}
+        action = str(decision.get("action") or "HOLD").upper()
+        price = _safe_decimal(decision.get("price_usd"), Decimal("0"))
+
+        if action == "BUY" and price > 0:
+            state_by_symbol[normalized_symbol] = {
+                "entry_price": _json_number(price),
+                "notional_usd": risk_snapshot.get("order_notional_usd") or decision.get("notional_usd"),
+                "highest_since_entry": _json_number(price),
+                "active_stop_price": risk_snapshot.get("active_stop_price"),
+                "initial_stop_price": risk_snapshot.get("active_stop_price"),
+                "stop_model": risk_snapshot.get("stop_model"),
+                "stop_source": risk_snapshot.get("stop_source"),
+                "trailing_armed": bool(risk_snapshot.get("trailing_armed")),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        elif action == "SELL":
+            state_by_symbol.pop(normalized_symbol, None)
+        else:
+            state_update = risk_snapshot.get("paper_trade_state_update")
+            if isinstance(state_update, Mapping) and normalized_symbol in state_by_symbol:
+                next_state = dict(state_by_symbol.get(normalized_symbol) or {})
+                next_state.update(state_update)
+                next_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+                state_by_symbol[normalized_symbol] = next_state
+
+        next_config["paper_trade_state"] = state_by_symbol
+        return next_config
 
     async def _decide_v1_legacy(self, instance: BotInstance, market_snapshot: dict) -> tuple[dict, dict]:
         template_type = instance.template.type if instance.template else BotTemplateType.CUSTOM
@@ -790,14 +967,35 @@ class BotEngineService:
             for item in positions
             if normalize_strategy_symbol(str(item.get("symbol") or "")) == symbol
         )
-        alpha_stop = self._condition_value(frames, "bc_alpha_trend", "stop", latest_index)
+        latest_high = Decimal(str(_candle_high_value(candles[-1], float(latest_price)) or latest_price))
+        paper_state_map = risk_config.get("paper_trade_state") if isinstance(risk_config, Mapping) else {}
+        symbol_state = {}
+        if isinstance(paper_state_map, Mapping):
+            symbol_state = dict(paper_state_map.get(symbol) or paper_state_map.get(normalize_strategy_symbol(symbol)) or {})
+        state_entry_price = _safe_decimal(symbol_state.get("entry_price"), Decimal("0"))
+        state_notional = _safe_decimal(symbol_state.get("notional_usd"), Decimal("0"))
+        state_highest = _safe_decimal(symbol_state.get("highest_since_entry"), Decimal("0"))
+        state_active_stop = _safe_decimal(symbol_state.get("active_stop_price"), Decimal("0"))
+        effective_symbol_value = current_symbol_value if current_symbol_value > 0 else state_notional
+        stop_snapshot = self._risk_stop_snapshot(
+            risk_config=risk_config,
+            frames=frames,
+            candles=candles,
+            index=latest_index,
+            price=latest_price,
+            latest_high=latest_high,
+            entry_price=state_entry_price if effective_symbol_value > 0 else None,
+            highest_since_entry=state_highest if effective_symbol_value > 0 else None,
+            previous_active_stop=state_active_stop if effective_symbol_value > 0 else None,
+        )
         portfolio_capital = Decimal(str(market_snapshot.get("total_value_usd") or 0))
         sizing = self._sizing_snapshot(
             risk_config,
             latest_price=latest_price,
-            current_symbol_value=current_symbol_value,
+            current_symbol_value=effective_symbol_value,
             sizing_capital=portfolio_capital,
-            alpha_stop=alpha_stop,
+            stop_price=stop_snapshot["active_stop_price"],
+            stop_model=stop_snapshot["stop_model"],
         )
         max_order_usd = sizing["max_order_usd"]
         max_position_usd = sizing["max_position_usd"]
@@ -807,24 +1005,26 @@ class BotEngineService:
         reason = "Strategy v2 conditions did not pass"
         confidence = Decimal("0.25")
         notional = Decimal("0")
-        stop_model = str(risk_config.get("stop_model") or "alpha_trend")
-        stop_exit = (
-            stop_model == "alpha_trend"
-            and current_symbol_value > 0
-            and stop_price > 0
-            and latest_price <= stop_price
-        )
+        stop_model = stop_snapshot["stop_model"]
+        stop_exit = effective_symbol_value > 0 and stop_price > 0 and latest_price <= stop_price
         if stop_exit:
             action = BotSignalAction.SELL
-            notional = min(current_symbol_value, max_order_usd if max_order_usd > 0 else current_symbol_value)
+            notional = min(effective_symbol_value, max_order_usd if max_order_usd > 0 else effective_symbol_value)
             confidence = Decimal("0.82")
-            reason = "AlphaTrend stop invalidated the open paper position"
-        elif exit_passed and current_symbol_value > 0:
+            if stop_snapshot["stop_source"] == "trailing_stop":
+                reason = "Trailing stop protected the open paper position"
+            elif stop_model == "atr":
+                reason = "ATR stop invalidated the open paper position"
+            else:
+                reason = "AlphaTrend stop invalidated the open paper position"
+        elif exit_passed and effective_symbol_value > 0:
             action = BotSignalAction.SELL
-            notional = min(current_symbol_value, max_order_usd if max_order_usd > 0 else current_symbol_value)
+            notional = min(effective_symbol_value, max_order_usd if max_order_usd > 0 else effective_symbol_value)
             confidence = Decimal("0.78")
             reason = "Strategy v2 exit conditions passed"
-        elif entry_passed and (current_symbol_value <= 0 or allow_averaging):
+        elif entry_passed and stop_snapshot["invalid_for_entry"]:
+            reason = f"Strategy v2 entry passed but {stop_model} stop is unavailable"
+        elif entry_passed and (effective_symbol_value <= 0 or allow_averaging):
             action = BotSignalAction.BUY
             notional = sizing["notional_cap"]
             confidence = Decimal("0.74")
@@ -837,10 +1037,12 @@ class BotEngineService:
             risk_blocks.append("symbol_not_allowed")
         if max_daily_signals > 0 and signal_count_today >= max_daily_signals:
             risk_blocks.append("daily_signal_limit")
-        if action == BotSignalAction.BUY and max_position_usd > 0 and current_symbol_value + notional > max_position_usd:
+        if action == BotSignalAction.BUY and max_position_usd > 0 and effective_symbol_value + notional > max_position_usd:
             risk_blocks.append("max_position_usd")
         if max_order_usd <= 0 and action in {BotSignalAction.BUY, BotSignalAction.SELL}:
             risk_blocks.append("max_order_usd_disabled")
+        if entry_passed and stop_snapshot["invalid_for_entry"]:
+            risk_blocks.extend(stop_snapshot["blocks"])
         if risk_blocks:
             action = BotSignalAction.HOLD
             reason = f"Risk guard blocked strategy v2 signal: {', '.join(risk_blocks)}"
@@ -859,7 +1061,16 @@ class BotEngineService:
             "timeframe": timeframe,
             "candle_source": candle_source,
             "stop_model": stop_model,
-            "alpha_trend_stop": _json_number(stop_price),
+            "stop_source": stop_snapshot["stop_source"],
+            "active_stop_price": _json_number(stop_price),
+            "alpha_trend_stop": _json_number(stop_snapshot["alpha_trend_stop"]),
+            "atr_stop": _json_number(stop_snapshot["atr_stop"]),
+            "atr_value": _json_number(stop_snapshot["atr_value"]),
+            "atr_stop_length": stop_snapshot["atr_stop_length"],
+            "atr_stop_multiplier": _json_number(stop_snapshot["atr_stop_multiplier"]),
+            "trailing_stop_percent": _json_number(stop_snapshot["trailing_stop_percent"]),
+            "trailing_armed": stop_snapshot["trailing_armed"],
+            "trailing_stop_price": _json_number(stop_snapshot["trailing_stop_price"]),
             "stop_distance_percent": _json_number(sizing["stop_distance_percent"]),
             "risk_per_trade_percent": _json_number(sizing["risk_per_trade_percent"]),
             "sizing_capital_usd": _json_number(sizing["sizing_capital"]),
@@ -877,6 +1088,15 @@ class BotEngineService:
             "blocks": risk_blocks,
             "live_guard": "disabled",
         }
+        if effective_symbol_value > 0 and action != BotSignalAction.SELL:
+            risk_snapshot["paper_trade_state_update"] = {
+                "highest_since_entry": _json_number(stop_snapshot["highest_since_entry"]),
+                "notional_usd": _json_number(effective_symbol_value),
+                "active_stop_price": _json_number(stop_price),
+                "stop_source": stop_snapshot["stop_source"],
+                "trailing_armed": stop_snapshot["trailing_armed"],
+                "trailing_stop_price": _json_number(stop_snapshot["trailing_stop_price"]),
+            }
         decision = {
             "action": action.value,
             "symbol": symbol,
@@ -1787,6 +2007,7 @@ class BotEngineService:
         entry_count = 0
         exit_count = 0
         logs: list[dict] = []
+        active_stop_price = Decimal("0")
         risk = {
             **(strategy.risk_defaults or {}),
             **(risk_overrides or {}),
@@ -1801,7 +2022,7 @@ class BotEngineService:
         slippage_percent = Decimal(str(risk.get("slippage_percent", 0) or 0))
         fee_percent = max(Decimal("0"), min(fee_percent, Decimal("10")))
         slippage_percent = max(Decimal("0"), min(slippage_percent, Decimal("20")))
-        stop_model = str(risk.get("stop_model") or "alpha_trend")
+        stop_model = self._normalized_stop_model(risk)
         allow_averaging = str(risk.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
 
         for index, candle in enumerate(candles):
@@ -1820,33 +2041,40 @@ class BotEngineService:
             entry_passed, entry_evaluations = self._evaluate_rule_group(rule_config, "entry", frames, index)
             exit_reason = "rule_exit"
             if units > 0 and entry_price > 0:
+                latest_high = Decimal(str(_candle_high_value(candle, float(price)) or price))
+                stop_snapshot = self._risk_stop_snapshot(
+                    risk_config=risk,
+                    frames=frames,
+                    candles=candles,
+                    index=index,
+                    price=price,
+                    latest_high=latest_high,
+                    entry_price=entry_price,
+                    highest_since_entry=highest_since_entry,
+                    previous_active_stop=active_stop_price,
+                )
+                active_stop_price = stop_snapshot["active_stop_price"]
                 gain_percent = (price - entry_price) / entry_price * Decimal("100")
                 peak_gain_percent = (highest_since_entry - entry_price) / entry_price * Decimal("100")
                 max_gain_since_entry = max(max_gain_since_entry, peak_gain_percent)
                 if breakeven_activation_percent > 0 and max_gain_since_entry >= breakeven_activation_percent:
                     breakeven_armed = True
-                if trailing_stop_percent > 0 and peak_gain_percent >= trailing_stop_percent:
-                    trailing_armed = True
+                trailing_armed = bool(stop_snapshot["trailing_armed"])
                 drawdown_from_entry = (entry_price - price) / entry_price * Decimal("100")
-                trailing_drawdown = (
-                    (highest_since_entry - price) / highest_since_entry * Decimal("100")
-                    if highest_since_entry > 0
-                    else Decimal("0")
-                )
                 if stop_loss_percent > 0 and drawdown_from_entry >= stop_loss_percent:
                     exit_passed = True
                     exit_reason = "stop_loss"
-                elif stop_model == "alpha_trend":
-                    alpha_stop = self._condition_value(frames, "bc_alpha_trend", "stop", index)
-                    if alpha_stop is not None and alpha_stop > 0 and price <= Decimal(str(alpha_stop)):
-                        exit_passed = True
+                elif active_stop_price > 0 and price <= active_stop_price:
+                    exit_passed = True
+                    if stop_snapshot["stop_source"] == "trailing_stop":
+                        exit_reason = "trailing_stop"
+                    elif stop_snapshot["stop_model"] == "atr":
+                        exit_reason = "atr_stop"
+                    else:
                         exit_reason = "alpha_trend_stop"
                 elif take_profit_percent > 0 and gain_percent >= take_profit_percent:
                     exit_passed = True
                     exit_reason = "take_profit"
-                elif trailing_armed and trailing_drawdown >= trailing_stop_percent:
-                    exit_passed = True
-                    exit_reason = "trailing_stop"
                 elif breakeven_armed and price <= entry_price:
                     exit_passed = True
                     exit_reason = "breakeven_guard"
@@ -1884,10 +2112,21 @@ class BotEngineService:
                 max_gain_since_entry = Decimal("0")
                 breakeven_armed = False
                 trailing_armed = False
+                active_stop_price = Decimal("0")
                 continue
 
             position_value = units * price
             if entry_passed and cash > 0 and position_value < max_position_usd and (units == 0 or allow_averaging):
+                entry_stop_snapshot = self._risk_stop_snapshot(
+                    risk_config=risk,
+                    frames=frames,
+                    candles=candles,
+                    index=index,
+                    price=price,
+                    latest_high=Decimal(str(_candle_high_value(candle, float(price)) or price)),
+                )
+                if entry_stop_snapshot["invalid_for_entry"]:
+                    continue
                 available_capacity = max(Decimal("0"), max_position_usd - position_value)
                 spend = min(cash, max_order_usd, available_capacity)
                 if spend > 0:
@@ -1905,6 +2144,7 @@ class BotEngineService:
                     max_gain_since_entry = Decimal("0")
                     breakeven_armed = False
                     trailing_armed = False
+                    active_stop_price = entry_stop_snapshot["active_stop_price"]
                     entry_count += 1
                     equity = cash + units * price
                     logs.append(
@@ -1949,6 +2189,8 @@ class BotEngineService:
                 "fee_percent": _json_number(fee_percent),
                 "slippage_percent": _json_number(slippage_percent),
                 "stop_model": stop_model,
+                "atr_stop_length": _safe_int(risk.get("atr_stop_length"), 14),
+                "atr_stop_multiplier": _json_number(_safe_decimal(risk.get("atr_stop_multiplier"), Decimal("2"))),
                 "allow_averaging": allow_averaging,
             },
             "engine_note": "strategy_rules_v2: evaluated selected indicators and entry/exit rule groups with dedicated handlers for the seeded indicator catalog.",

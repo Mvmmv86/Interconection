@@ -696,7 +696,7 @@ def _backtest_indicator_parameters(run: BotBacktestRun) -> dict[str, object]:
     return merged
 
 
-def _backtest_indicator_points(candles: list[MarketCandle], values: list[object], max_points: int = 1500) -> list[dict[str, object]]:
+def _backtest_indicator_points(candles: list[MarketCandle], values: list[object], max_points: int = 12000) -> list[dict[str, object]]:
     points: list[dict[str, object]] = []
     for candle, value in zip(candles, values, strict=False):
         if value is None:
@@ -729,6 +729,62 @@ def _backtest_chart_indicators(engine: BotEngineService, candles: list[MarketCan
             },
         }
     }
+
+
+def _chart_timeframe_seconds(timeframe: str) -> int:
+    normalized = str(timeframe or "1h").lower()
+    if normalized.endswith("m"):
+        return max(60, int(normalized[:-1] or "1") * 60)
+    if normalized.endswith("h"):
+        return max(3600, int(normalized[:-1] or "1") * 3600)
+    if normalized.endswith("d"):
+        return max(86400, int(normalized[:-1] or "1") * 86400)
+    return 3600
+
+
+def _chart_expected_rows(timeframe: str, period_start: datetime, period_end: datetime) -> int:
+    seconds = _chart_timeframe_seconds(timeframe)
+    return max(1, int((period_end - period_start).total_seconds() // seconds))
+
+
+async def _ensure_backtest_chart_candles(
+    db: DBSession,
+    run: BotBacktestRun,
+    *,
+    chart_timeframe: str,
+    current_count: int,
+    candle_limit: int,
+) -> bool:
+    if run.exchange_id is None:
+        return False
+    expected_rows = _chart_expected_rows(chart_timeframe, run.period_start, run.period_end)
+    target_rows = min(expected_rows, candle_limit)
+    if current_count >= max(1, int(target_rows * 0.9)):
+        return False
+    service = MarketDataIngestionService(db)
+    try:
+        await service.sync_exchange_candles(
+            exchange_id=run.exchange_id,
+            organization_id=run.organization_id,
+            symbols=[run.symbol],
+            timeframes=[chart_timeframe],
+            limit=min(max(expected_rows + 20, 500), candle_limit),
+            market_type=run.market_type,
+            period_start=run.period_start,
+            period_end=run.period_end,
+        )
+        await db.flush()
+        return True
+    except Exception:
+        logger.exception(
+            "Failed to hydrate backtest chart timeframe",
+            extra={
+                "run_id": str(run.id),
+                "symbol": run.symbol,
+                "timeframe": chart_timeframe,
+            },
+        )
+        return False
 
 
 def _market_ranking_response(
@@ -1864,6 +1920,14 @@ async def get_bot_backtest_chart(
         MarketCandle.open_time <= run.period_end,
     )
     candle_count_full = await db.scalar(select(func.count()).select_from(MarketCandle).where(*candle_filters))
+    if await _ensure_backtest_chart_candles(
+        db,
+        run,
+        chart_timeframe=chart_timeframe,
+        current_count=int(candle_count_full or 0),
+        candle_limit=candle_limit,
+    ):
+        candle_count_full = await db.scalar(select(func.count()).select_from(MarketCandle).where(*candle_filters))
     candle_result = await db.execute(
         select(MarketCandle)
         .where(*candle_filters)
@@ -1871,7 +1935,7 @@ async def get_bot_backtest_chart(
         .limit(candle_limit)
     )
     candles = candle_result.scalars().all()
-    sampled_candles = _sample_backtest_chart_items(list(candles))
+    sampled_candles = _sample_backtest_chart_items(list(candles), max_points=12000)
     indicators = _backtest_chart_indicators(BotEngineService(db), list(candles), run)
 
     trade_result = await db.execute(

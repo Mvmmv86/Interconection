@@ -30,6 +30,10 @@ type TemplateConfig = {
   maxOrderUsd: string;
   maxPositionUsd: string;
   maxDailySignals: string;
+  stopModel: StopModel;
+  atrStopLength: string;
+  atrStopMultiplier: string;
+  trailingStopPercent: string;
   allowedSymbols: string;
   basketMode: BasketMode;
   basketTimeframe: RankingTimeframe;
@@ -40,6 +44,7 @@ type TemplateConfig = {
 };
 
 type BasketMode = 'market_extremes' | 'scanner' | 'manual';
+type StopModel = 'alpha_trend' | 'atr';
 type RankingDirection = 'gainers' | 'losers';
 type RankingTimeframe = '1h' | '24h' | '7d' | '30d';
 type PlanName = 'free' | 'pro' | 'enterprise';
@@ -49,6 +54,10 @@ type BacktestForm = {
   initialCapitalUsd: string;
   feePercent: string;
   slippagePercent: string;
+  stopModel: StopModel;
+  atrStopLength: string;
+  atrStopMultiplier: string;
+  trailingStopPercent: string;
 };
 type BacktestSelection = {
   instance: BotInstance;
@@ -81,6 +90,10 @@ const defaultTemplateConfig: TemplateConfig = {
   maxOrderUsd: '100',
   maxPositionUsd: '1000',
   maxDailySignals: '20',
+  stopModel: 'alpha_trend',
+  atrStopLength: '14',
+  atrStopMultiplier: '2',
+  trailingStopPercent: '0',
   allowedSymbols: '',
   basketMode: 'market_extremes',
   basketTimeframe: '7d',
@@ -96,6 +109,10 @@ const defaultBacktestForm: BacktestForm = {
   initialCapitalUsd: '10000',
   feePercent: '0.1',
   slippagePercent: '0.05',
+  stopModel: 'alpha_trend',
+  atrStopLength: '14',
+  atrStopMultiplier: '2',
+  trailingStopPercent: '0',
 };
 
 function splitCsv(value: string) {
@@ -534,6 +551,15 @@ function BacktestCandleChart({
   const nearestTime = useCallback((iso: string | null) => {
     const rawTime = Math.floor(new Date(iso || '').getTime() / 1000);
     if (!Number.isFinite(rawTime) || !chartData.length) return null;
+    const firstTime = Number(chartData[0].time);
+    const lastTime = Number(chartData[chartData.length - 1].time);
+    const candleGap = chartData.length > 1
+      ? Math.max(60, Number(chartData[1].time) - Number(chartData[0].time))
+      : 3600;
+    const snapTolerance = candleGap * 2;
+    if (rawTime < firstTime - snapTolerance || rawTime > lastTime + snapTolerance) {
+      return null;
+    }
     let left = 0;
     let right = chartData.length - 1;
     while (left < right) {
@@ -543,9 +569,10 @@ function BacktestCandleChart({
     }
     const candidate = chartData[left];
     const previous = chartData[Math.max(0, left - 1)];
-    return Math.abs(Number(candidate.time) - rawTime) < Math.abs(Number(previous.time) - rawTime)
-      ? candidate.time
-      : previous.time;
+    const best = Math.abs(Number(candidate.time) - rawTime) < Math.abs(Number(previous.time) - rawTime)
+      ? candidate
+      : previous;
+    return Math.abs(Number(best.time) - rawTime) <= snapTolerance ? best.time : null;
   }, [chartData]);
 
   useEffect(() => {
@@ -1245,6 +1272,10 @@ export default function BotsPage() {
         max_order_usd: asNumber(config.maxOrderUsd, 100),
         max_position_usd: asNumber(config.maxPositionUsd, 1000),
         max_daily_signals: Math.max(0, Math.floor(asNumber(config.maxDailySignals, 20))),
+        stop_model: config.stopModel,
+        atr_stop_length: Math.max(1, Math.floor(asNumber(config.atrStopLength, 14))),
+        atr_stop_multiplier: asNumber(config.atrStopMultiplier, 2),
+        trailing_stop_percent: Math.max(0, asNumber(config.trailingStopPercent, 0)),
         allowed_symbols: allowedSymbols,
         basket_policy: basketPolicy,
         market_basket: usesManualBasket
@@ -1400,6 +1431,14 @@ export default function BotsPage() {
 
   const openBacktest = (instance: BotInstance, symbol: string) => {
     setError(null);
+    const riskConfig = isRecord(instance.risk_config) ? instance.risk_config : {};
+    const inheritedBacktestForm: BacktestForm = {
+      ...defaultBacktestForm,
+      stopModel: String(riskConfig.stop_model || defaultBacktestForm.stopModel) === 'atr' ? 'atr' : 'alpha_trend',
+      atrStopLength: String(riskConfig.atr_stop_length || defaultBacktestForm.atrStopLength),
+      atrStopMultiplier: String(riskConfig.atr_stop_multiplier || defaultBacktestForm.atrStopMultiplier),
+      trailingStopPercent: String(riskConfig.trailing_stop_percent || defaultBacktestForm.trailingStopPercent),
+    };
     setBacktestSelection({ instance, symbol });
     setBacktestRun(null);
     setBacktestTrades([]);
@@ -1409,8 +1448,8 @@ export default function BotsPage() {
     setBacktestTradesError(null);
     setBacktestChartError(null);
     setBacktestError(null);
-    setBacktestForm(defaultBacktestForm);
-    setChartTimeframe(defaultBacktestForm.timeframe);
+    setBacktestForm(inheritedBacktestForm);
+    setChartTimeframe(inheritedBacktestForm.timeframe);
   };
 
   const updateBacktestForm = (patch: Partial<BacktestForm>) => {
@@ -1443,6 +1482,12 @@ export default function BotsPage() {
       period_end: periodEnd.toISOString(),
       fee_percent: asNumber(backtestForm.feePercent, 0.1),
       slippage_percent: asNumber(backtestForm.slippagePercent, 0.05),
+      risk_overrides: {
+        stop_model: backtestForm.stopModel,
+        atr_stop_length: Math.max(1, Math.floor(asNumber(backtestForm.atrStopLength, 14))),
+        atr_stop_multiplier: asNumber(backtestForm.atrStopMultiplier, 2),
+        trailing_stop_percent: Math.max(0, asNumber(backtestForm.trailingStopPercent, 0)),
+      },
     });
     setIsBacktestSubmitting(false);
     if (!result.success || !result.data) {
@@ -1886,6 +1931,54 @@ export default function BotsPage() {
                         />
                       </div>
                       <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-3">
+                        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-body-sm font-semibold text-text-primary">Risco e stop operacional</p>
+                            <p className="text-caption text-text-tertiary">
+                              O paper e o backtest usam o mesmo modelo de stop. O trailing nunca aumenta o risco inicial.
+                            </p>
+                          </div>
+                          <Select
+                            value={config.stopModel}
+                            options={[
+                              { value: 'alpha_trend', label: 'Stop AlphaTrend' },
+                              { value: 'atr', label: 'Stop ATR' },
+                            ]}
+                            onChange={(event) => updateTemplateConfig(template.id, { stopModel: event.target.value as StopModel })}
+                            className="h-9 min-w-[170px] py-0 text-caption"
+                          />
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <label className="grid gap-1 text-caption text-text-tertiary">
+                            ATR periodo
+                            <input
+                              value={config.atrStopLength}
+                              onChange={(event) => updateTemplateConfig(template.id, { atrStopLength: event.target.value })}
+                              disabled={config.stopModel !== 'atr'}
+                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
+                            />
+                          </label>
+                          <label className="grid gap-1 text-caption text-text-tertiary">
+                            ATR multiplicador
+                            <input
+                              value={config.atrStopMultiplier}
+                              onChange={(event) => updateTemplateConfig(template.id, { atrStopMultiplier: event.target.value })}
+                              disabled={config.stopModel !== 'atr'}
+                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
+                            />
+                          </label>
+                          <label className="grid gap-1 text-caption text-text-tertiary">
+                            Trailing %
+                            <input
+                              value={config.trailingStopPercent}
+                              onChange={(event) => updateTemplateConfig(template.id, { trailingStopPercent: event.target.value })}
+                              placeholder="0 desliga"
+                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-3">
                           <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                               <p className="text-body-sm font-semibold text-text-primary">Modo da cesta do bot</p>
@@ -2068,9 +2161,15 @@ export default function BotsPage() {
                     Exchange: {instance.exchange_name || 'Nao vinculada'} - Ultimo ciclo: {formatDateTime(instance.last_run_at)}
                   </p>
                   <div className="mt-3 grid gap-3 rounded-lg border border-border-subtle bg-background-primary/60 p-3 text-caption text-text-secondary">
-                    <div className="grid gap-2 md:grid-cols-3">
+                    <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-5">
                       <p>Max ordem: {formatCompactUsd(Number(riskConfig.max_order_usd || 0))}</p>
                       <p>Max posicao: {formatCompactUsd(Number(riskConfig.max_position_usd || 0))}</p>
+                      <p>
+                        Stop: {String(riskConfig.stop_model || 'alpha_trend') === 'atr'
+                          ? `ATR ${riskConfig.atr_stop_length || 14}x${riskConfig.atr_stop_multiplier || 2}`
+                          : 'AlphaTrend'}
+                      </p>
+                      <p>Trailing: {Number(riskConfig.trailing_stop_percent || 0)}%</p>
                       <p>
                         Cesta: {basket.source === 'market_extremes'
                           ? 'Auto altas + quedas'
@@ -2540,10 +2639,53 @@ export default function BotsPage() {
                           className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                         />
                       </label>
-                      <div className="rounded-lg border border-border-subtle bg-background-secondary/70 p-3">
+                      <label className="space-y-1 text-caption text-text-secondary">
+                        Modelo de stop
+                        <Select
+                          value={backtestForm.stopModel}
+                          options={[
+                            { value: 'alpha_trend', label: 'AlphaTrend' },
+                            { value: 'atr', label: 'ATR' },
+                          ]}
+                          onChange={(event) => updateBacktestForm({ stopModel: event.target.value as StopModel })}
+                          className="h-10 py-0"
+                        />
+                      </label>
+                      <label className="space-y-1 text-caption text-text-secondary">
+                        ATR periodo
+                        <input
+                          value={backtestForm.atrStopLength}
+                          onChange={(event) => updateBacktestForm({ atrStopLength: event.target.value })}
+                          disabled={backtestForm.stopModel !== 'atr'}
+                          className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
+                        />
+                      </label>
+                      <label className="space-y-1 text-caption text-text-secondary">
+                        ATR multiplicador
+                        <input
+                          value={backtestForm.atrStopMultiplier}
+                          onChange={(event) => updateBacktestForm({ atrStopMultiplier: event.target.value })}
+                          disabled={backtestForm.stopModel !== 'atr'}
+                          className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
+                        />
+                      </label>
+                      <label className="space-y-1 text-caption text-text-secondary">
+                        Trailing %
+                        <input
+                          value={backtestForm.trailingStopPercent}
+                          onChange={(event) => updateBacktestForm({ trailingStopPercent: event.target.value })}
+                          placeholder="0 desliga"
+                          className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                        />
+                      </label>
+                      <div className="rounded-lg border border-border-subtle bg-background-secondary/70 p-3 sm:col-span-2">
                         <p className="text-[10px] uppercase tracking-[0.16em] text-text-tertiary">Modelo</p>
-                        <p className="mt-1 text-caption font-semibold text-text-primary">Long-only + AlphaTrend stop</p>
-                        <p className="mt-1 text-[11px] text-text-tertiary">Short e live seguem bloqueados nesta fase.</p>
+                        <p className="mt-1 text-caption font-semibold text-text-primary">
+                          Long-only + {backtestForm.stopModel === 'atr' ? 'ATR stop' : 'AlphaTrend stop'}
+                        </p>
+                        <p className="mt-1 text-[11px] text-text-tertiary">
+                          Backtest usa o mesmo resolvedor de stop do paper. Short e live seguem bloqueados nesta fase.
+                        </p>
                       </div>
                     </div>
                     <Button
