@@ -33,6 +33,7 @@ type TemplateConfig = {
   stopModel: StopModel;
   atrStopLength: string;
   atrStopMultiplier: string;
+  atrStopBufferPercent: string;
   trailingStopPercent: string;
   allowedSymbols: string;
   basketMode: BasketMode;
@@ -57,6 +58,7 @@ type BacktestForm = {
   stopModel: StopModel;
   atrStopLength: string;
   atrStopMultiplier: string;
+  atrStopBufferPercent: string;
   trailingStopPercent: string;
 };
 type BacktestSelection = {
@@ -90,9 +92,10 @@ const defaultTemplateConfig: TemplateConfig = {
   maxOrderUsd: '100',
   maxPositionUsd: '1000',
   maxDailySignals: '20',
-  stopModel: 'alpha_trend',
+  stopModel: 'atr',
   atrStopLength: '14',
   atrStopMultiplier: '2',
+  atrStopBufferPercent: '0.10',
   trailingStopPercent: '0',
   allowedSymbols: '',
   basketMode: 'market_extremes',
@@ -109,9 +112,10 @@ const defaultBacktestForm: BacktestForm = {
   initialCapitalUsd: '10000',
   feePercent: '0.1',
   slippagePercent: '0.05',
-  stopModel: 'alpha_trend',
+  stopModel: 'atr',
   atrStopLength: '14',
   atrStopMultiplier: '2',
+  atrStopBufferPercent: '0.10',
   trailingStopPercent: '0',
 };
 
@@ -1275,6 +1279,7 @@ export default function BotsPage() {
         stop_model: config.stopModel,
         atr_stop_length: Math.max(1, Math.floor(asNumber(config.atrStopLength, 14))),
         atr_stop_multiplier: asNumber(config.atrStopMultiplier, 2),
+        atr_stop_buffer_percent: Math.max(0, asNumber(config.atrStopBufferPercent, 0.1)),
         trailing_stop_percent: Math.max(0, asNumber(config.trailingStopPercent, 0)),
         allowed_symbols: allowedSymbols,
         basket_policy: basketPolicy,
@@ -1437,6 +1442,7 @@ export default function BotsPage() {
       stopModel: String(riskConfig.stop_model || defaultBacktestForm.stopModel) === 'atr' ? 'atr' : 'alpha_trend',
       atrStopLength: String(riskConfig.atr_stop_length || defaultBacktestForm.atrStopLength),
       atrStopMultiplier: String(riskConfig.atr_stop_multiplier || defaultBacktestForm.atrStopMultiplier),
+      atrStopBufferPercent: String(riskConfig.atr_stop_buffer_percent ?? defaultBacktestForm.atrStopBufferPercent),
       trailingStopPercent: String(riskConfig.trailing_stop_percent || defaultBacktestForm.trailingStopPercent),
     };
     setBacktestSelection({ instance, symbol });
@@ -1486,6 +1492,7 @@ export default function BotsPage() {
         stop_model: backtestForm.stopModel,
         atr_stop_length: Math.max(1, Math.floor(asNumber(backtestForm.atrStopLength, 14))),
         atr_stop_multiplier: asNumber(backtestForm.atrStopMultiplier, 2),
+        atr_stop_buffer_percent: Math.max(0, asNumber(backtestForm.atrStopBufferPercent, 0.1)),
         trailing_stop_percent: Math.max(0, asNumber(backtestForm.trailingStopPercent, 0)),
       },
     });
@@ -1948,7 +1955,7 @@ export default function BotsPage() {
                             className="h-9 min-w-[170px] py-0 text-caption"
                           />
                         </div>
-                        <div className="grid gap-3 md:grid-cols-3">
+                        <div className="grid gap-3 md:grid-cols-4">
                           <label className="grid gap-1 text-caption text-text-tertiary">
                             ATR periodo
                             <input
@@ -1964,6 +1971,16 @@ export default function BotsPage() {
                               value={config.atrStopMultiplier}
                               onChange={(event) => updateTemplateConfig(template.id, { atrStopMultiplier: event.target.value })}
                               disabled={config.stopModel !== 'atr'}
+                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
+                            />
+                          </label>
+                          <label className="grid gap-1 text-caption text-text-tertiary">
+                            Buffer ATR %
+                            <input
+                              value={config.atrStopBufferPercent}
+                              onChange={(event) => updateTemplateConfig(template.id, { atrStopBufferPercent: event.target.value })}
+                              disabled={config.stopModel !== 'atr'}
+                              placeholder="0.10"
                               className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
                             />
                           </label>
@@ -2165,8 +2182,8 @@ export default function BotsPage() {
                       <p>Max ordem: {formatCompactUsd(Number(riskConfig.max_order_usd || 0))}</p>
                       <p>Max posicao: {formatCompactUsd(Number(riskConfig.max_position_usd || 0))}</p>
                       <p>
-                        Stop: {String(riskConfig.stop_model || 'alpha_trend') === 'atr'
-                          ? `ATR ${riskConfig.atr_stop_length || 14}x${riskConfig.atr_stop_multiplier || 2}`
+                        Stop: {String(riskConfig.stop_model || 'atr') === 'atr'
+                          ? `ATR ${riskConfig.atr_stop_length || 14}x${riskConfig.atr_stop_multiplier || 2} - ${riskConfig.atr_stop_buffer_percent ?? 0.1}%`
                           : 'AlphaTrend'}
                       </p>
                       <p>Trailing: {Number(riskConfig.trailing_stop_percent || 0)}%</p>
@@ -2666,6 +2683,16 @@ export default function BotsPage() {
                           value={backtestForm.atrStopMultiplier}
                           onChange={(event) => updateBacktestForm({ atrStopMultiplier: event.target.value })}
                           disabled={backtestForm.stopModel !== 'atr'}
+                          className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
+                        />
+                      </label>
+                      <label className="space-y-1 text-caption text-text-secondary">
+                        Buffer ATR %
+                        <input
+                          value={backtestForm.atrStopBufferPercent}
+                          onChange={(event) => updateBacktestForm({ atrStopBufferPercent: event.target.value })}
+                          disabled={backtestForm.stopModel !== 'atr'}
+                          placeholder="0.10"
                           className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
                         />
                       </label>

@@ -639,13 +639,20 @@ class BotEngineService:
     ) -> dict[str, Any]:
         atr_length = max(1, _safe_int(risk_config.get("atr_stop_length"), 14))
         atr_multiplier = self._risk_decimal(risk_config, "atr_stop_multiplier", Decimal("2"))
+        atr_buffer_percent = max(
+            Decimal("0"),
+            self._risk_decimal(risk_config, "atr_stop_buffer_percent", Decimal("0")),
+        )
         atr_values = _rma(self._true_range(candles), atr_length)
         atr_value = atr_values[index] if 0 <= index < len(atr_values) else None
         atr_decimal = _safe_decimal(atr_value, Decimal("0")) if atr_value is not None else Decimal("0")
         atr_stop = price - (atr_decimal * atr_multiplier) if atr_decimal > 0 and atr_multiplier > 0 else Decimal("0")
+        if atr_stop > 0 and atr_buffer_percent > 0:
+            atr_stop *= Decimal("1") - (atr_buffer_percent / Decimal("100"))
         return {
             "atr_stop_length": atr_length,
             "atr_stop_multiplier": atr_multiplier,
+            "atr_stop_buffer_percent": atr_buffer_percent,
             "atr_value": atr_decimal,
             "atr_stop": atr_stop,
         }
@@ -719,6 +726,7 @@ class BotEngineService:
             "atr_value": _safe_decimal(atr_snapshot["atr_value"], Decimal("0")),
             "atr_stop_length": atr_snapshot["atr_stop_length"],
             "atr_stop_multiplier": _safe_decimal(atr_snapshot["atr_stop_multiplier"], Decimal("0")),
+            "atr_stop_buffer_percent": _safe_decimal(atr_snapshot["atr_stop_buffer_percent"], Decimal("0")),
             "trailing_stop_percent": trailing_percent,
             "trailing_armed": trailing_armed,
             "trailing_stop_price": trailing_stop,
@@ -1068,6 +1076,7 @@ class BotEngineService:
             "atr_value": _json_number(stop_snapshot["atr_value"]),
             "atr_stop_length": stop_snapshot["atr_stop_length"],
             "atr_stop_multiplier": _json_number(stop_snapshot["atr_stop_multiplier"]),
+            "atr_stop_buffer_percent": _json_number(stop_snapshot["atr_stop_buffer_percent"]),
             "trailing_stop_percent": _json_number(stop_snapshot["trailing_stop_percent"]),
             "trailing_armed": stop_snapshot["trailing_armed"],
             "trailing_stop_price": _json_number(stop_snapshot["trailing_stop_price"]),
@@ -2191,6 +2200,7 @@ class BotEngineService:
                 "stop_model": stop_model,
                 "atr_stop_length": _safe_int(risk.get("atr_stop_length"), 14),
                 "atr_stop_multiplier": _json_number(_safe_decimal(risk.get("atr_stop_multiplier"), Decimal("2"))),
+                "atr_stop_buffer_percent": _json_number(_safe_decimal(risk.get("atr_stop_buffer_percent"), Decimal("0"))),
                 "allow_averaging": allow_averaging,
             },
             "engine_note": "strategy_rules_v2: evaluated selected indicators and entry/exit rule groups with dedicated handlers for the seeded indicator catalog.",
