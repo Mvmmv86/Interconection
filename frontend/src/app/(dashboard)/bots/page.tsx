@@ -65,7 +65,7 @@ type BacktestSelection = {
   instance: BotInstance;
   symbol: string;
 };
-type ChartIndicatorKey = 'bcAlphaTrend' | 'ma20' | 'ma50' | 'supportResistance';
+type ChartIndicatorKey = 'bcAlphaTrend' | 'atrStop' | 'ma20' | 'ma50' | 'supportResistance';
 type ChartIndicatorState = Record<ChartIndicatorKey, boolean>;
 type BacktestCrosshairLegend = {
   time: string;
@@ -439,6 +439,20 @@ function BacktestCandleChart({
       })
       .filter((point): point is { time: UTCTimestamp; value: number } => point !== null);
   }, [chart?.indicators]);
+  const atrStop = useMemo(() => {
+    const points =
+      chart?.indicators?.atr_stop?.series?.stop ||
+      chart?.indicators?.atr_stop?.series?.value ||
+      [];
+    return points
+      .map((point) => {
+        const time = Math.floor(new Date(point.time).getTime() / 1000) as UTCTimestamp;
+        const value = Number(point.value);
+        if (!Number.isFinite(Number(time)) || !Number.isFinite(value)) return null;
+        return { time, value };
+      })
+      .filter((point): point is { time: UTCTimestamp; value: number } => point !== null);
+  }, [chart?.indicators]);
   const bcAlphaTrend = useMemo(() => {
     if (officialBcAlphaTrend.length) return officialBcAlphaTrend;
     const count = chartData.length;
@@ -673,6 +687,18 @@ function BacktestCandleChart({
         series.setData(bcAlphaTrend);
       }
 
+      if (indicators.atrStop && atrStop.length) {
+        const series = chartApiInstance.addSeries(LineSeries, {
+          color: '#dc2626',
+          lineWidth: 2,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          title: 'ATR Stop',
+        });
+        series.setData(atrStop);
+      }
+
       if (indicators.ma20 && ma20.length) {
         const series = chartApiInstance.addSeries(LineSeries, {
           color: '#3b82f6',
@@ -769,7 +795,7 @@ function BacktestCandleChart({
       }
       chartApi?.remove();
     };
-  }, [bcAlphaTrend, chartData, indicators, ma20, ma50, nearestTime, priceLines, tradeList]);
+  }, [atrStop, bcAlphaTrend, chartData, indicators, ma20, ma50, nearestTime, priceLines, tradeList]);
 
   if (loading) {
     return (
@@ -803,6 +829,7 @@ function BacktestCandleChart({
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em]">
           {indicators.bcAlphaTrend && <span className="text-accent-purple">BC AlphaTrend</span>}
+          {indicators.atrStop && atrStop.length > 0 && <span className="text-status-error">ATR Stop</span>}
           {indicators.ma20 && <span className="text-accent-blue">MA20</span>}
           {indicators.ma50 && <span className="text-status-warning">MA50</span>}
           {indicators.supportResistance && <span className="text-status-success">Suporte</span>}
@@ -823,6 +850,7 @@ function BacktestCandleChart({
       </div>
       <p className="text-[10px] text-text-tertiary">
         Powered by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer" className="text-accent-blue hover:underline">TradingView</a> Lightweight Charts(TM). Use scroll/pinch para zoom, arraste para navegar no tempo e o crosshair para preco preciso.
+        {' '}Para auditoria exata do stop executado, compare no mesmo timeframe usado pelo backtest.
       </p>
     </div>
   );
@@ -981,6 +1009,7 @@ export default function BotsPage() {
   const [chartTimeframe, setChartTimeframe] = useState(defaultBacktestForm.timeframe);
   const [chartIndicators, setChartIndicators] = useState<ChartIndicatorState>({
     bcAlphaTrend: true,
+    atrStop: defaultBacktestForm.stopModel === 'atr',
     ma20: true,
     ma50: true,
     supportResistance: true,
@@ -992,6 +1021,15 @@ export default function BotsPage() {
   const [isBacktestSubmitting, setIsBacktestSubmitting] = useState(false);
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!backtestSelection) return;
+    setChartIndicators((current) => ({
+      ...current,
+      atrStop: backtestForm.stopModel === 'atr',
+      bcAlphaTrend: backtestForm.stopModel === 'alpha_trend' ? true : current.bcAlphaTrend,
+    }));
+  }, [backtestForm.stopModel, backtestSelection]);
   const didLoadInitialRanking = useRef(false);
 
   const clientOptions = useMemo(
@@ -2910,6 +2948,7 @@ export default function BotsPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       {([
                         { key: 'bcAlphaTrend', label: 'AlphaTrend' },
+                        { key: 'atrStop', label: 'ATR Stop' },
                         { key: 'ma20', label: 'MA20' },
                         { key: 'ma50', label: 'MA50' },
                         { key: 'supportResistance', label: 'S/R' },
@@ -2936,7 +2975,7 @@ export default function BotsPage() {
                         );
                       })}
                       <span className="rounded-lg border border-border-subtle px-2 py-1 text-caption text-text-tertiary">
-                        Visual independente; trades preservados e indicadores recalculados no timeframe visual
+                        Visual independente: trades preservados; indicadores e ATR Stop recalculados no timeframe visual
                       </span>
                     </div>
                   </div>

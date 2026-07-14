@@ -87,7 +87,7 @@ from app.schemas.bot import (
     BotTemplateResponse,
 )
 from app.services.audit_service import record_audit_event, record_audit_event_immediate
-from app.services.bot_engine_service import BotEngineService
+from app.services.bot_engine_service import BotEngineService, _rma
 from app.services.bot_scheduler_service import BotSchedulerService
 from app.services.market_data_ingestion_service import (
     MarketDataIngestionService,
@@ -708,15 +708,76 @@ def _backtest_indicator_points(candles: list[MarketCandle], values: list[object]
     return _sample_backtest_chart_items(points, max_points=max_points)
 
 
+def _backtest_atr_stop_points(engine: BotEngineService, candles: list[MarketCandle], run: BotBacktestRun) -> list[dict[str, object]]:
+    risk_config = run.risk_snapshot if isinstance(run.risk_snapshot, dict) else {}
+    try:
+        atr_length_raw = risk_config.get("atr_stop_length")
+        atr_length = max(1, int(atr_length_raw if atr_length_raw is not None else 14))
+    except (TypeError, ValueError):
+        atr_length = 14
+    try:
+        atr_multiplier_raw = risk_config.get("atr_stop_multiplier")
+        atr_multiplier = Decimal(str(atr_multiplier_raw if atr_multiplier_raw is not None else 2))
+    except Exception:
+        atr_multiplier = Decimal("2")
+    try:
+        atr_buffer_raw = risk_config.get("atr_stop_buffer_percent")
+        atr_buffer_percent = max(Decimal("0"), Decimal(str(atr_buffer_raw if atr_buffer_raw is not None else 0)))
+    except Exception:
+        atr_buffer_percent = Decimal("0")
+    try:
+        atr_values = _rma(engine._true_range(candles), atr_length)
+    except Exception:
+        logger.exception(
+            "Failed to calculate ATR stop chart series",
+            extra={"run_id": str(run.id), "symbol": run.symbol},
+        )
+        return []
+    points: list[dict[str, object]] = []
+    for candle, atr_value in zip(candles, atr_values, strict=False):
+        try:
+            price = Decimal(str(candle.close))
+            atr_decimal = Decimal(str(atr_value)) if atr_value is not None else Decimal("0")
+            atr_stop = price - (atr_decimal * atr_multiplier) if atr_decimal > 0 and atr_multiplier > 0 else Decimal("0")
+            if atr_stop > 0 and atr_buffer_percent > 0:
+                atr_stop *= Decimal("1") - (atr_buffer_percent / Decimal("100"))
+            value = float(atr_stop)
+        except Exception:
+            logger.exception(
+                "Failed to calculate ATR stop chart series",
+                extra={"run_id": str(run.id), "symbol": run.symbol},
+            )
+            break
+        if not math.isfinite(value) or value <= 0:
+            continue
+        points.append({"time": candle.open_time, "value": value})
+    return _sample_backtest_chart_items(points, max_points=12000)
+
+
 def _backtest_chart_indicators(engine: BotEngineService, candles: list[MarketCandle], run: BotBacktestRun) -> dict[str, object]:
     if not candles:
         return {}
     parameters = _backtest_indicator_parameters(run)
+    risk_config = run.risk_snapshot if isinstance(run.risk_snapshot, dict) else {}
+    atr_stop_points = _backtest_atr_stop_points(engine, candles, run)
     try:
         alpha_trend = engine._calculate_indicator("bc_alpha_trend", parameters, candles)
     except Exception:
         logger.exception("Failed to calculate backtest chart indicators", extra={"run_id": str(run.id), "symbol": run.symbol})
-        return {"bc_alpha_trend": {"status": "unavailable", "label": "BC AlphaTrend"}}
+        return {
+            "bc_alpha_trend": {"status": "unavailable", "label": "BC AlphaTrend"},
+            "atr_stop": {
+                "status": "ok" if atr_stop_points else "unavailable",
+                "label": "ATR Stop",
+                "source": "bot_engine_service",
+                "parameters": {
+                    "atr_stop_length": risk_config.get("atr_stop_length", 14),
+                    "atr_stop_multiplier": risk_config.get("atr_stop_multiplier", 2),
+                    "atr_stop_buffer_percent": risk_config.get("atr_stop_buffer_percent", 0),
+                },
+                "series": {"stop": atr_stop_points},
+            },
+        }
     return {
         "bc_alpha_trend": {
             "status": "ok",
@@ -727,7 +788,18 @@ def _backtest_chart_indicators(engine: BotEngineService, candles: list[MarketCan
                 "value": _backtest_indicator_points(candles, alpha_trend.get("value") or []),
                 "stop": _backtest_indicator_points(candles, alpha_trend.get("stop") or []),
             },
-        }
+        },
+        "atr_stop": {
+            "status": "ok" if atr_stop_points else "unavailable",
+            "label": "ATR Stop",
+            "source": "bot_engine_service",
+            "parameters": {
+                "atr_stop_length": risk_config.get("atr_stop_length", 14),
+                "atr_stop_multiplier": risk_config.get("atr_stop_multiplier", 2),
+                "atr_stop_buffer_percent": risk_config.get("atr_stop_buffer_percent", 0),
+            },
+            "series": {"stop": atr_stop_points},
+        },
     }
 
 
