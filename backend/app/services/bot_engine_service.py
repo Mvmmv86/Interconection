@@ -1951,39 +1951,66 @@ class BotEngineService:
         frames: dict[str, dict[str, list[float | None]]],
         index: int,
     ) -> bool:
+        return bool(self._condition_evaluation(condition, frames, index).get("passed"))
+
+    def _condition_evaluation(
+        self,
+        condition: dict,
+        frames: dict[str, dict[str, list[float | None]]],
+        index: int,
+    ) -> dict:
         left = self._condition_value(frames, condition.get("indicator"), condition.get("output", "value"), index)
+        previous_left = self._condition_value(frames, condition.get("indicator"), condition.get("output", "value"), index - 1)
+        evaluation = {
+            "indicator": condition.get("indicator"),
+            "output": condition.get("output", "value"),
+            "operator": condition.get("operator"),
+            "right_type": condition.get("right_type", "value"),
+            "value": condition.get("value"),
+            "value_max": condition.get("value_max"),
+            "compare_to": condition.get("compare_to"),
+            "left_value": left,
+            "previous_left_value": previous_left,
+            "right_value": None,
+            "previous_right_value": None,
+            "right_max_value": None,
+            "passed": False,
+        }
         if left is None:
-            return False
+            return evaluation
         right_type = str(condition.get("right_type") or "value")
         operator = str(condition.get("operator") or "greater_than")
         if right_type == "indicator":
             compare_to = condition.get("compare_to") if isinstance(condition.get("compare_to"), dict) else {}
             right = self._condition_value(frames, compare_to.get("indicator"), compare_to.get("output", "value"), index)
-            previous_left = self._condition_value(frames, condition.get("indicator"), condition.get("output", "value"), index - 1)
             previous_right = self._condition_value(frames, compare_to.get("indicator"), compare_to.get("output", "value"), index - 1)
         else:
             right = _safe_float(condition.get("value"), 0.0)
-            previous_left = self._condition_value(frames, condition.get("indicator"), condition.get("output", "value"), index - 1)
             previous_right = right
+        evaluation["right_value"] = right
+        evaluation["previous_right_value"] = previous_right
         if right is None:
-            return False
+            return evaluation
+        passed = False
         if operator == "greater_than":
-            return left > right
-        if operator == "less_than":
-            return left < right
-        if operator == "greater_or_equal":
-            return left >= right
-        if operator == "less_or_equal":
-            return left <= right
-        if operator == "crosses_above":
-            return previous_left is not None and previous_right is not None and previous_left <= previous_right and left > right
-        if operator == "crosses_below":
-            return previous_left is not None and previous_right is not None and previous_left >= previous_right and left < right
-        if operator == "between":
+            passed = left > right
+        elif operator == "less_than":
+            passed = left < right
+        elif operator == "greater_or_equal":
+            passed = left >= right
+        elif operator == "less_or_equal":
+            passed = left <= right
+        elif operator == "crosses_above":
+            passed = previous_left is not None and previous_right is not None and previous_left <= previous_right and left > right
+        elif operator == "crosses_below":
+            passed = previous_left is not None and previous_right is not None and previous_left >= previous_right and left < right
+        elif operator == "between":
             upper = _safe_float(condition.get("value_max"), right)
             low_bound, high_bound = sorted([right, upper])
-            return low_bound <= left <= high_bound
-        return False
+            evaluation["right_max_value"] = upper
+            passed = low_bound <= left <= high_bound
+        evaluation["passed"] = passed
+        return evaluation
 
     def _evaluate_rule_group(
         self,
@@ -1997,12 +2024,7 @@ class BotEngineService:
         if not conditions:
             return False, []
         evaluations = [
-            {
-                "indicator": condition.get("indicator"),
-                "output": condition.get("output", "value"),
-                "operator": condition.get("operator"),
-                "passed": self._compare_condition(condition, frames, index),
-            }
+            self._condition_evaluation(condition, frames, index)
             for condition in conditions
             if isinstance(condition, dict)
         ]

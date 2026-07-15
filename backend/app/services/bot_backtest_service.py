@@ -34,6 +34,7 @@ from app.services.bot_engine_service import (
     _candle_high_value,
     _candle_low_value,
     _candle_timestamp,
+    _candle_volume_value,
     _json_number,
 )
 from app.services.market_data_ingestion_service import (
@@ -221,6 +222,11 @@ class BotBacktestService:
         entry_fee = Decimal("0")
         entry_slippage = Decimal("0")
         entry_reason = "rule_entry"
+        entry_conditions_snapshot: list[dict] = []
+        entry_indicator_snapshot: dict = {}
+        entry_candle_snapshot: dict = {}
+        entry_stop_snapshot: dict = {}
+        entry_sizing_snapshot: dict = {}
         highest_since_entry = Decimal("0")
         lowest_since_entry = Decimal("0")
         breakeven_armed = False
@@ -281,12 +287,15 @@ class BotBacktestService:
             exit_passed, exit_evaluations = self.engine._evaluate_rule_group(strategy.rule_config or {}, "exit", frames, index)
             entry_passed, entry_evaluations = self.engine._evaluate_rule_group(strategy.rule_config or {}, "entry", frames, index)
             exit_reason = "rule_exit"
+            exit_trigger_price = price
+            exit_levels: dict = {}
+            exit_stop_snapshot: dict = {}
             if units > 0 and entry_price > 0:
                 gain_percent = (price - entry_price) / entry_price * Decimal("100")
                 peak_gain_percent = (highest_since_entry - entry_price) / entry_price * Decimal("100")
                 if breakeven_activation_percent > 0 and peak_gain_percent >= breakeven_activation_percent:
                     breakeven_armed = True
-                drawdown_from_entry = (entry_price - price) / entry_price * Decimal("100")
+                drawdown_from_entry = (entry_price - low) / entry_price * Decimal("100")
                 stop_snapshot = self.engine._risk_stop_snapshot(
                     risk_config=risk,
                     frames=frames,
@@ -298,32 +307,55 @@ class BotBacktestService:
                     highest_since_entry=highest_since_entry,
                     previous_active_stop=active_stop_price,
                 )
+                exit_stop_snapshot = self._json_safe(stop_snapshot)
                 active_stop_price = stop_snapshot["active_stop_price"]
                 trailing_armed = bool(stop_snapshot["trailing_armed"])
-                if stop_loss_percent > 0 and drawdown_from_entry >= stop_loss_percent:
+                stop_loss_price = entry_price * (Decimal("1") - stop_loss_percent / Decimal("100"))
+                take_profit_price = entry_price * (Decimal("1") + take_profit_percent / Decimal("100"))
+                exit_levels = self._json_safe(
+                    {
+                        "latest_close": price,
+                        "latest_high": high,
+                        "latest_low": low,
+                        "gain_percent_close": gain_percent,
+                        "drawdown_from_entry_percent": drawdown_from_entry,
+                        "peak_gain_percent": peak_gain_percent,
+                        "active_stop_price": active_stop_price,
+                        "stop_loss_price": stop_loss_price if stop_loss_percent > 0 else None,
+                        "take_profit_price": take_profit_price if take_profit_percent > 0 else None,
+                        "breakeven_price": entry_price if breakeven_armed else None,
+                        "breakeven_armed": breakeven_armed,
+                        "trailing_armed": trailing_armed,
+                    }
+                )
+                if stop_loss_percent > 0 and low <= stop_loss_price:
                     exit_passed = True
                     exit_reason = "stop_loss"
-                elif active_stop_price > 0 and price <= active_stop_price:
+                    exit_trigger_price = stop_loss_price
+                elif active_stop_price > 0 and low <= active_stop_price:
                     exit_passed = True
+                    exit_trigger_price = active_stop_price
                     if stop_snapshot["stop_source"] == "trailing_stop":
                         exit_reason = "trailing_stop"
                     elif stop_snapshot["stop_model"] == "atr":
                         exit_reason = "atr_stop"
                     else:
                         exit_reason = "alpha_trend_stop"
-                elif take_profit_percent > 0 and gain_percent >= take_profit_percent:
+                elif take_profit_percent > 0 and high >= take_profit_price:
                     exit_passed = True
                     exit_reason = "take_profit"
-                elif breakeven_armed and price <= entry_price:
+                    exit_trigger_price = take_profit_price
+                elif breakeven_armed and low <= entry_price:
                     exit_passed = True
                     exit_reason = "breakeven_guard"
+                    exit_trigger_price = entry_price
 
             if units > 0 and exit_passed:
                 bars_held = max(1, index - entry_index)
                 net_pnl, gross_pnl, fee_paid, slippage_paid, return_percent = self._close_trade(
                     run=run,
                     timestamp=timestamp,
-                    price=price,
+                    price=exit_trigger_price,
                     units=units,
                     entry_time=entry_time or timestamp,
                     entry_price=entry_execution_price or entry_price,
@@ -334,12 +366,21 @@ class BotBacktestService:
                     entry_reason=entry_reason,
                     exit_reason=exit_reason,
                     bars_held=bars_held,
+                    entry_conditions=entry_conditions_snapshot,
+                    entry_indicators=entry_indicator_snapshot,
+                    entry_candle=entry_candle_snapshot,
+                    entry_stop=entry_stop_snapshot,
+                    entry_sizing=entry_sizing_snapshot,
                     exit_evaluations=exit_evaluations,
+                    exit_indicators=self._indicator_snapshot(frames, index, exit_evaluations),
+                    exit_candle=self._candle_snapshot(candle, index),
+                    exit_stop=exit_stop_snapshot,
+                    exit_levels=exit_levels,
                     fee_percent=fee_percent,
                     slippage_percent=slippage_percent,
                 )
                 bars_in_market += bars_held
-                gross_proceeds = units * (price * (Decimal("1") - slippage_percent / Decimal("100")))
+                gross_proceeds = units * (exit_trigger_price * (Decimal("1") - slippage_percent / Decimal("100")))
                 cash += max(Decimal("0"), gross_proceeds - fee_paid)
                 realized_net_pnl += net_pnl
                 realized_gross_pnl += gross_pnl
@@ -368,6 +409,11 @@ class BotBacktestService:
                 entry_index = 0
                 entry_fee = Decimal("0")
                 entry_slippage = Decimal("0")
+                entry_conditions_snapshot = []
+                entry_indicator_snapshot = {}
+                entry_candle_snapshot = {}
+                entry_stop_snapshot = {}
+                entry_sizing_snapshot = {}
                 highest_since_entry = Decimal("0")
                 lowest_since_entry = Decimal("0")
                 breakeven_armed = False
@@ -378,7 +424,7 @@ class BotBacktestService:
             current_position_value = units * price
             allow_averaging = str(risk.get("allow_averaging", "false")).lower() in {"1", "true", "yes", "on"}
             if entry_passed and cash > 0 and (units == 0 or allow_averaging):
-                stop_snapshot = self.engine._risk_stop_snapshot(
+                entry_stop_raw = self.engine._risk_stop_snapshot(
                     risk_config=risk,
                     frames=frames,
                     candles=candles,
@@ -386,15 +432,15 @@ class BotBacktestService:
                     price=price,
                     latest_high=high,
                 )
-                if stop_snapshot["invalid_for_entry"]:
+                if entry_stop_raw["invalid_for_entry"]:
                     continue
                 sizing = self.engine._sizing_snapshot(
                     risk,
                     latest_price=price,
                     current_symbol_value=current_position_value,
                     sizing_capital=cash + current_position_value,
-                    stop_price=stop_snapshot["active_stop_price"],
-                    stop_model=stop_snapshot["stop_model"],
+                    stop_price=entry_stop_raw["active_stop_price"],
+                    stop_model=entry_stop_raw["stop_model"],
                 )
                 spend = min(cash, sizing["notional_cap"])
                 if spend <= 0:
@@ -426,6 +472,11 @@ class BotBacktestService:
                 breakeven_armed = False
                 trailing_armed = False
                 active_stop_price = sizing["stop_price"]
+                entry_conditions_snapshot = self._json_safe(entry_evaluations)
+                entry_indicator_snapshot = self._indicator_snapshot(frames, index, entry_evaluations)
+                entry_candle_snapshot = self._candle_snapshot(candle, index)
+                entry_stop_snapshot = self._json_safe(entry_stop_raw)
+                entry_sizing_snapshot = self._json_safe(sizing)
                 set_committed_value(
                     run,
                     "diagnostics",
@@ -466,7 +517,16 @@ class BotBacktestService:
                 entry_reason=entry_reason,
                 exit_reason="end_of_period",
                 bars_held=bars_held,
+                entry_conditions=entry_conditions_snapshot,
+                entry_indicators=entry_indicator_snapshot,
+                entry_candle=entry_candle_snapshot,
+                entry_stop=entry_stop_snapshot,
+                entry_sizing=entry_sizing_snapshot,
                 exit_evaluations=[],
+                exit_indicators={},
+                exit_candle=self._candle_snapshot(last_candle, len(candles) - 1),
+                exit_stop={},
+                exit_levels={},
                 fee_percent=fee_percent,
                 slippage_percent=slippage_percent,
             )
@@ -682,6 +742,88 @@ class BotBacktestService:
                 "local_coverage_before": local_before,
             }
 
+    def _json_safe(self, value: object) -> object:
+        if isinstance(value, Decimal):
+            return _json_number(value)
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {str(key): self._json_safe(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._json_safe(item) for item in value]
+        if isinstance(value, tuple):
+            return [self._json_safe(item) for item in value]
+        return value
+
+    def _indicator_snapshot(
+        self,
+        frames: dict[str, dict[str, list[float | None]]],
+        index: int,
+        condition_evaluations: list[dict] | None = None,
+    ) -> dict:
+        snapshot: dict[str, dict] = {}
+        for indicator_key in self._audit_indicator_keys(frames, condition_evaluations):
+            outputs = frames.get(indicator_key)
+            if not isinstance(outputs, dict):
+                continue
+            indicator_values: dict[str, dict] = {}
+            for output_key, series in list(outputs.items())[:8]:
+                if not isinstance(series, list):
+                    continue
+                value = series[index] if 0 <= index < len(series) else None
+                previous = series[index - 1] if index > 0 and index - 1 < len(series) else None
+                if value is None and previous is None:
+                    continue
+                indicator_values[str(output_key)] = {
+                    "value": _json_number(value) if value is not None else None,
+                    "previous": _json_number(previous) if previous is not None else None,
+                }
+            if indicator_values:
+                snapshot[str(indicator_key)] = indicator_values
+        return snapshot
+
+    def _audit_indicator_keys(
+        self,
+        frames: dict[str, dict[str, list[float | None]]],
+        condition_evaluations: list[dict] | None,
+    ) -> list[str]:
+        selected: list[str] = []
+        for condition in condition_evaluations or []:
+            if not isinstance(condition, dict):
+                continue
+            for key_name in ("indicator", "compare_to"):
+                value = condition.get(key_name)
+                if isinstance(value, str) and value in frames and value not in selected:
+                    selected.append(value)
+        fallback_candidates = (
+            "bc_alpha_trend",
+            "alpha_trend",
+            "atr",
+            "atr_stop",
+            "ma20",
+            "ma50",
+            "sma20",
+            "sma50",
+        )
+        for indicator_key in fallback_candidates:
+            if indicator_key in frames and indicator_key not in selected:
+                selected.append(indicator_key)
+        if not selected:
+            selected.extend(list(frames.keys())[:4])
+        return selected[:8]
+
+    def _candle_snapshot(self, candle: object, index: int) -> dict:
+        close = _candle_close_value(candle)
+        return {
+            "index": index,
+            "time": _candle_timestamp(candle).isoformat(),
+            "open": _json_number(getattr(candle, "open", close)),
+            "high": _json_number(_candle_high_value(candle, close)),
+            "low": _json_number(_candle_low_value(candle, close)),
+            "close": _json_number(close),
+            "volume": _json_number(_candle_volume_value(candle)),
+        }
+
     async def _available_history(self, run: BotBacktestRun) -> dict:
         """Return the stored candle range for the exact market requested."""
         exchange = normalize_exchange_key(run.exchange)
@@ -788,7 +930,16 @@ class BotBacktestService:
         entry_reason: str,
         exit_reason: str,
         bars_held: int,
+        entry_conditions: list[dict],
+        entry_indicators: dict,
+        entry_candle: dict,
+        entry_stop: dict,
+        entry_sizing: dict,
         exit_evaluations: list[dict],
+        exit_indicators: dict,
+        exit_candle: dict,
+        exit_stop: dict,
+        exit_levels: dict,
         fee_percent: Decimal,
         slippage_percent: Decimal,
     ) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal]:
@@ -831,7 +982,40 @@ class BotBacktestService:
                 entry_reason=entry_reason,
                 exit_reason=exit_reason,
                 bars_held=bars_held,
-                raw_payload={"exit_conditions": exit_evaluations},
+                raw_payload=self._json_safe(
+                    {
+                        "entry_conditions": entry_conditions,
+                        "exit_conditions": exit_evaluations,
+                        "entry": {
+                            "reason": entry_reason,
+                            "conditions": entry_conditions,
+                            "indicators": entry_indicators,
+                            "candle": entry_candle,
+                            "stop": entry_stop,
+                            "sizing": entry_sizing,
+                            "execution_price": entry_price,
+                        },
+                        "exit": {
+                            "reason": exit_reason,
+                            "conditions": exit_evaluations,
+                            "indicators": exit_indicators,
+                            "candle": exit_candle,
+                            "stop": exit_stop,
+                            "levels": exit_levels,
+                            "trigger_price": price,
+                            "execution_price": execution_price,
+                            "gross_pnl": gross_pnl,
+                            "net_pnl": net_pnl,
+                            "return_percent": return_percent,
+                        },
+                        "risk_controls": {
+                            "fee_percent": fee_percent,
+                            "slippage_percent": slippage_percent,
+                            "mae_percent": mae_percent,
+                            "mfe_percent": mfe_percent,
+                        },
+                    }
+                ),
             )
         )
         return net_pnl, gross_pnl, exit_fee, exit_slippage, return_percent

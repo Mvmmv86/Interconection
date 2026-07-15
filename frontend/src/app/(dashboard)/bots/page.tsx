@@ -321,6 +321,80 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function auditRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function auditNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function auditValueLabel(value: unknown) {
+  const parsed = auditNumber(value);
+  if (parsed === null) return '-';
+  const abs = Math.abs(parsed);
+  const decimals = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.01 ? 6 : 8;
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: decimals }).format(parsed);
+}
+
+function operatorLabel(value: unknown) {
+  const normalized = String(value || '').replace(/_/g, ' ');
+  return normalized || 'condition';
+}
+
+function auditConditions(value: unknown) {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function auditConditionLabels(value: unknown) {
+  return auditConditions(value).slice(0, 4).map((condition) => {
+    const left = auditValueLabel(condition.left_value);
+    const right = auditValueLabel(condition.right_value);
+    const passed = Boolean(condition.passed);
+    return {
+      key: `${String(condition.indicator || 'indicator')}:${String(condition.output || 'value')}:${String(condition.operator || '')}`,
+      label: `${String(condition.indicator || 'indicador')}.${String(condition.output || 'value')} ${operatorLabel(condition.operator)} ${right}`,
+      detail: `valor ${left}`,
+      passed,
+    };
+  });
+}
+
+function auditIndicatorLabels(value: unknown) {
+  const record = auditRecord(value);
+  return Object.entries(record).slice(0, 4).map(([indicatorKey, outputs]) => {
+    const outputRecord = auditRecord(outputs);
+    const firstOutput = Object.entries(outputRecord)[0];
+    const firstValue = firstOutput ? auditRecord(firstOutput[1]).value : null;
+    return {
+      key: indicatorKey,
+      label: `${indicatorKey}${firstOutput ? `.${firstOutput[0]}` : ''}`,
+      value: auditValueLabel(firstValue),
+    };
+  });
+}
+
+function auditStopLabels(value: unknown, levels?: unknown) {
+  const stop = auditRecord(value);
+  const levelRecord = auditRecord(levels);
+  const items = [
+    ['Stop ativo', stop.active_stop_price ?? levelRecord.active_stop_price],
+    ['Fonte', stop.stop_source ?? stop.stop_model],
+    ['SL', levelRecord.stop_loss_price],
+    ['TP', levelRecord.take_profit_price],
+    ['BE', levelRecord.breakeven_price],
+    ['Gatilho', levelRecord.latest_low ?? levelRecord.latest_close],
+  ];
+  return items
+    .filter(([, itemValue]) => itemValue !== null && itemValue !== undefined && itemValue !== '')
+    .slice(0, 6)
+    .map(([label, itemValue]) => ({
+      label: String(label),
+      value: auditNumber(itemValue) !== null ? auditValueLabel(itemValue) : String(itemValue),
+    }));
+}
+
 function numericCurvePoints(points: unknown[] | undefined, key: string, transform?: (value: number) => number) {
   const source = Array.isArray(points) ? points : [];
   return source
@@ -3149,17 +3223,91 @@ export default function BotsPage() {
                           </div>
                         ) : displayedBacktestTrades.length ? (
                           <div className="max-h-72 overflow-y-auto">
-                            {displayedBacktestTrades.map((trade) => (
-                              <div key={trade.id} className="grid grid-cols-[1.1fr_1.1fr_1fr_0.8fr_0.8fr_0.9fr_0.9fr] border-t border-border-subtle px-3 py-2 text-caption text-text-secondary">
-                                <span>{formatDateTime(trade.entry_time)}</span>
-                                <span>{trade.exit_time ? formatDateTime(trade.exit_time) : 'aberto'}</span>
-                                <span>{formatCompactUsd(trade.entry_price)} {'->'} {trade.exit_price ? formatCompactUsd(trade.exit_price) : '-'}</span>
-                                <span className={metricTone(Number(trade.net_pnl))}>{formatCompactUsd(Number(trade.net_pnl))}</span>
-                                <span className={metricTone(Number(trade.return_percent))}>{formatPercent(Number(trade.return_percent))}</span>
-                                <span>{formatPercent(Number(trade.mae_percent))} / {formatPercent(Number(trade.mfe_percent))}</span>
-                                <span>{trade.exit_reason || trade.entry_reason || '-'}</span>
-                              </div>
-                            ))}
+                            {displayedBacktestTrades.map((trade) => {
+                              const payload = auditRecord(trade.raw_payload);
+                              const entryAudit = auditRecord(payload.entry);
+                              const exitAudit = auditRecord(payload.exit);
+                              const entryConditions = auditConditionLabels(entryAudit.conditions || payload.entry_conditions);
+                              const exitConditions = auditConditionLabels(exitAudit.conditions || payload.exit_conditions);
+                              const entryIndicators = auditIndicatorLabels(entryAudit.indicators);
+                              const exitIndicators = auditIndicatorLabels(exitAudit.indicators);
+                              const stopLabels = auditStopLabels(exitAudit.stop, exitAudit.levels);
+                              const hasAudit =
+                                entryConditions.length > 0 ||
+                                exitConditions.length > 0 ||
+                                entryIndicators.length > 0 ||
+                                exitIndicators.length > 0 ||
+                                stopLabels.length > 0;
+                              return (
+                                <div key={trade.id} className="border-t border-border-subtle">
+                                  <div className="grid grid-cols-[1.1fr_1.1fr_1fr_0.8fr_0.8fr_0.9fr_0.9fr] px-3 py-2 text-caption text-text-secondary">
+                                    <span>{formatDateTime(trade.entry_time)}</span>
+                                    <span>{trade.exit_time ? formatDateTime(trade.exit_time) : 'aberto'}</span>
+                                    <span>{formatCompactUsd(trade.entry_price)} {'->'} {trade.exit_price ? formatCompactUsd(trade.exit_price) : '-'}</span>
+                                    <span className={metricTone(Number(trade.net_pnl))}>{formatCompactUsd(Number(trade.net_pnl))}</span>
+                                    <span className={metricTone(Number(trade.return_percent))}>{formatPercent(Number(trade.return_percent))}</span>
+                                    <span>{formatPercent(Number(trade.mae_percent))} / {formatPercent(Number(trade.mfe_percent))}</span>
+                                    <span>{trade.exit_reason || trade.entry_reason || '-'}</span>
+                                  </div>
+                                  <details className="bg-background-secondary/30 px-3 pb-3 pt-1 text-[10px] text-text-tertiary">
+                                    <summary className="cursor-pointer select-none py-2 font-semibold uppercase tracking-[0.14em] text-text-secondary">
+                                      Ver auditoria do trade
+                                    </summary>
+                                    <div className="grid gap-2 lg:grid-cols-3">
+                                    <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-2">
+                                      <p className="mb-1 font-semibold uppercase tracking-[0.14em] text-accent-blue">Entrada</p>
+                                      {entryConditions.length ? (
+                                        <div className="space-y-1">
+                                          {entryConditions.map((condition, index) => (
+                                            <p key={`${condition.key}:${index}`} className={condition.passed ? 'text-status-success' : 'text-status-error'}>
+                                              {condition.passed ? 'check' : 'block'} · {condition.label} · {condition.detail}
+                                            </p>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <p>{hasAudit ? 'Sem gates de entrada gravados.' : 'Auditoria detalhada disponível nos novos backtests.'}</p>
+                                      )}
+                                    </div>
+                                    <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-2">
+                                      <p className="mb-1 font-semibold uppercase tracking-[0.14em] text-accent-purple">Indicadores</p>
+                                      <div className="grid grid-cols-2 gap-1">
+                                        {[...entryIndicators, ...exitIndicators].slice(0, 8).map((indicator, index) => (
+                                          <span key={`${trade.id}:${indicator.key}:${indicator.label}:${index}`} className="rounded-md bg-background-secondary px-2 py-1">
+                                            {indicator.label}: <strong className="text-text-primary">{indicator.value}</strong>
+                                          </span>
+                                        ))}
+                                      </div>
+                                      {!entryIndicators.length && !exitIndicators.length && (
+                                        <p>{hasAudit ? 'Sem snapshot de indicadores.' : 'Reexecute o backtest para preencher os indicadores por trade.'}</p>
+                                      )}
+                                    </div>
+                                    <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-2">
+                                      <p className="mb-1 font-semibold uppercase tracking-[0.14em] text-status-warning">Saida / stop</p>
+                                      {stopLabels.length ? (
+                                        <div className="grid grid-cols-2 gap-1">
+                                          {stopLabels.map((item) => (
+                                            <span key={`${trade.id}:${item.label}`} className="rounded-md bg-background-secondary px-2 py-1">
+                                              {item.label}: <strong className="text-text-primary">{item.value}</strong>
+                                            </span>
+                                          ))}
+                                        </div>
+                                      ) : exitConditions.length ? (
+                                        <div className="space-y-1">
+                                          {exitConditions.map((condition, index) => (
+                                            <p key={`${condition.key}:${index}`} className={condition.passed ? 'text-status-success' : 'text-text-tertiary'}>
+                                              {condition.passed ? 'check' : 'idle'} · {condition.label} · {condition.detail}
+                                            </p>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <p>{hasAudit ? 'Sem detalhe de stop.' : 'Novo backtest vai gravar o nivel exato de saida.'}</p>
+                                      )}
+                                    </div>
+                                    </div>
+                                  </details>
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : (
                           <div className="px-3 py-6 text-center text-caption text-text-tertiary">
