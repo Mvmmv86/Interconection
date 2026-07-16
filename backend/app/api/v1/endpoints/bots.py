@@ -32,6 +32,11 @@ from app.models.bot import (
     BotBacktestTrade,
     BotIndicator,
     BotInstance,
+    BotInstanceAsset,
+    BotInstanceAssetBucket,
+    BotInstanceAssetPlaybook,
+    BotInstanceAssetSource,
+    BotInstanceAssetStatus,
     BotInstanceMode,
     BotInstanceStatus,
     BotRun,
@@ -60,6 +65,7 @@ from app.schemas.bot import (
     BotBacktestTradeResponse,
     BotBasketRefreshResponse,
     BotIndicatorResponse,
+    BotInstanceAssetResponse,
     BotInstanceBacktestCreate,
     BotInstanceCreate,
     BotInstanceResponse,
@@ -172,6 +178,33 @@ def _template_response(
     )
 
 
+def _asset_response(asset: BotInstanceAsset) -> BotInstanceAssetResponse:
+    return BotInstanceAssetResponse(
+        id=asset.id,
+        organization_id=asset.organization_id,
+        instance_id=asset.instance_id,
+        symbol=asset.symbol,
+        source=_enum_value(asset.source),
+        bucket=_enum_value(asset.bucket),
+        playbook=_enum_value(asset.playbook),
+        status=_enum_value(asset.status),
+        approved_for_live=asset.approved_for_live,
+        origin_rank=asset.origin_rank,
+        origin_timeframe=asset.origin_timeframe,
+        origin_direction=asset.origin_direction,
+        performance_percent=float(asset.performance_percent) if asset.performance_percent is not None else None,
+        snapshot_id=asset.snapshot_id,
+        last_backtest_run_id=asset.last_backtest_run_id,
+        last_backtest_score=float(asset.last_backtest_score) if asset.last_backtest_score is not None else None,
+        approved_by_user_id=asset.approved_by_user_id,
+        approved_at=asset.approved_at,
+        ignored_at=asset.ignored_at,
+        metadata_json=dict(asset.metadata_json or {}),
+        created_at=asset.created_at,
+        updated_at=asset.updated_at,
+    )
+
+
 def _instance_response(instance: BotInstance) -> BotInstanceResponse:
     return BotInstanceResponse(
         id=instance.id,
@@ -199,6 +232,7 @@ def _instance_response(instance: BotInstance) -> BotInstanceResponse:
         paused_at=instance.paused_at,
         disabled_at=instance.disabled_at,
         created_by_user_id=instance.created_by_user_id,
+        assets=[_asset_response(asset) for asset in getattr(instance, "assets", [])],
         created_at=instance.created_at,
         updated_at=instance.updated_at,
     )
@@ -339,6 +373,7 @@ async def _load_instance_for_response(db: DBSession, instance_id: UUID) -> BotIn
             selectinload(BotInstance.organization),
             selectinload(BotInstance.client),
             selectinload(BotInstance.exchange),
+            selectinload(BotInstance.assets),
         )
         .where(BotInstance.id == instance_id)
     )
@@ -444,6 +479,7 @@ async def _load_customer_bot_instance_for_action(
             selectinload(BotInstance.template),
             selectinload(BotInstance.strategy),
             selectinload(BotInstance.exchange),
+            selectinload(BotInstance.assets),
             selectinload(BotInstance.client),
         )
         .where(
@@ -469,6 +505,202 @@ async def _load_customer_bot_instance_for_action(
     return instance
 
 
+def _direction_context(direction: str | None) -> tuple[BotInstanceAssetBucket, BotInstanceAssetPlaybook]:
+    normalized = (direction or "").strip().lower()
+    if normalized in {"loser", "losers", "queda", "quedas", "down", "downside", "fallers"}:
+        return BotInstanceAssetBucket.LOSER, BotInstanceAssetPlaybook.REVERSAL
+    if normalized in {"gainer", "gainers", "alta", "altas", "up", "upside", "leaders"}:
+        return BotInstanceAssetBucket.GAINER, BotInstanceAssetPlaybook.PULLBACK
+    return BotInstanceAssetBucket.NEUTRAL, BotInstanceAssetPlaybook.NEUTRAL
+
+
+def _asset_source_from_basket(basket_metadata: dict) -> BotInstanceAssetSource:
+    source = str(basket_metadata.get("source") or basket_metadata.get("selection_mode") or "").lower()
+    if source == "manual":
+        return BotInstanceAssetSource.MANUAL
+    if source in {"scanner", "market_ranking", "market_extremes"}:
+        return BotInstanceAssetSource.SCANNER
+    return BotInstanceAssetSource.STATIC
+
+
+def _symbol_context_map(basket_metadata: dict) -> dict[str, dict]:
+    context: dict[str, dict] = {}
+
+    def remember(symbol_value: object, payload: dict) -> None:
+        symbol = normalize_strategy_symbol(str(symbol_value or ""))
+        if symbol:
+            context[symbol] = {**context.get(symbol, {}), **payload}
+
+    items = basket_metadata.get("items")
+    if isinstance(items, list):
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            direction = item.get("direction") or item.get("bucket")
+            rank = item.get("rank") or item.get("position") or index
+            performance = (
+                item.get("performance_percent")
+                or item.get("change_percent")
+                or item.get("change")
+                or item.get("score")
+            )
+            remember(
+                item.get("symbol"),
+                {
+                    "direction": direction,
+                    "rank": rank,
+                    "performance_percent": performance,
+                    "timeframe": item.get("timeframe") or basket_metadata.get("timeframe"),
+                    "snapshot_id": item.get("snapshot_id") or basket_metadata.get("snapshot_id"),
+                },
+            )
+
+    legs = basket_metadata.get("legs")
+    if isinstance(legs, list):
+        for leg in legs:
+            if not isinstance(leg, dict):
+                continue
+            direction = leg.get("direction") or leg.get("bucket")
+            timeframe = leg.get("timeframe") or basket_metadata.get("timeframe")
+            snapshot_id = leg.get("snapshot_id") or basket_metadata.get("snapshot_id")
+            symbols = leg.get("symbols") or leg.get("selected_symbols") or []
+            if isinstance(symbols, list):
+                for index, symbol in enumerate(symbols, start=1):
+                    remember(
+                        symbol,
+                        {
+                            "direction": direction,
+                            "rank": index,
+                            "timeframe": timeframe,
+                            "snapshot_id": snapshot_id,
+                        },
+                    )
+            leg_items = leg.get("items")
+            if isinstance(leg_items, list):
+                for index, item in enumerate(leg_items, start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    remember(
+                        item.get("symbol"),
+                        {
+                            "direction": direction or item.get("direction"),
+                            "rank": item.get("rank") or item.get("position") or index,
+                            "performance_percent": (
+                                item.get("performance_percent")
+                                or item.get("change_percent")
+                                or item.get("change")
+                                or item.get("score")
+                            ),
+                            "timeframe": item.get("timeframe") or timeframe,
+                            "snapshot_id": item.get("snapshot_id") or snapshot_id,
+                        },
+                    )
+
+    direction = basket_metadata.get("direction")
+    symbols = basket_metadata.get("symbols") or basket_metadata.get("selected_symbols") or []
+    if isinstance(symbols, list):
+        for index, symbol in enumerate(symbols, start=1):
+            remember(
+                symbol,
+                {
+                    "direction": direction,
+                    "rank": index,
+                    "timeframe": basket_metadata.get("timeframe"),
+                    "snapshot_id": basket_metadata.get("snapshot_id"),
+                },
+            )
+
+    return context
+
+
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+async def _sync_instance_assets_from_basket(
+    db: DBSession,
+    instance: BotInstance,
+    symbols: list[str],
+    basket_metadata: dict,
+) -> None:
+    normalized_symbols = [normalize_strategy_symbol(symbol) for symbol in symbols]
+    normalized_symbols = [symbol for symbol in normalized_symbols if symbol]
+    if not normalized_symbols:
+        return
+
+    await db.execute(
+        select(BotInstance.id)
+        .where(BotInstance.id == instance.id)
+        .with_for_update()
+    )
+
+    existing_rows = await db.execute(
+        select(BotInstanceAsset)
+        .where(BotInstanceAsset.instance_id == instance.id)
+        .with_for_update()
+    )
+    existing = {asset.symbol: asset for asset in existing_rows.scalars().all()}
+    source = _asset_source_from_basket(basket_metadata)
+    context_by_symbol = _symbol_context_map(basket_metadata)
+    now = datetime.now(timezone.utc)
+
+    for index, symbol in enumerate(normalized_symbols, start=1):
+        context = context_by_symbol.get(symbol, {})
+        bucket, playbook = _direction_context(context.get("direction"))
+        asset = existing.get(symbol)
+        if asset is None:
+            asset = BotInstanceAsset(
+                organization_id=instance.organization_id,
+                instance_id=instance.id,
+                symbol=symbol,
+                status=BotInstanceAssetStatus.CANDIDATE,
+            )
+            db.add(asset)
+            existing[symbol] = asset
+
+        asset.source = source
+        asset.bucket = bucket
+        if asset.status == BotInstanceAssetStatus.CANDIDATE:
+            asset.playbook = playbook
+        asset.origin_rank = int(context.get("rank") or index)
+        asset.origin_timeframe = str(context.get("timeframe") or basket_metadata.get("timeframe") or "") or None
+        asset.origin_direction = str(context.get("direction") or "") or None
+        asset.performance_percent = _decimal_or_none(context.get("performance_percent"))
+        asset.snapshot_id = str(context.get("snapshot_id") or basket_metadata.get("snapshot_id") or "") or None
+        asset.metadata_json = {
+            **dict(asset.metadata_json or {}),
+            "last_seen_at": now.isoformat(),
+            "basket_source": basket_metadata.get("source"),
+            "basket_mode": basket_metadata.get("mode") or basket_metadata.get("selection_mode"),
+        }
+
+    current_symbol_set = set(normalized_symbols)
+    for symbol, asset in existing.items():
+        if symbol in current_symbol_set:
+            continue
+        if asset.status == BotInstanceAssetStatus.APPROVED or asset.approved_for_live:
+            asset.metadata_json = {
+                **dict(asset.metadata_json or {}),
+                "last_missing_from_basket_at": now.isoformat(),
+                "missing_from_basket_reason": "preserved_operator_approved_asset",
+            }
+            continue
+        asset.status = BotInstanceAssetStatus.DISABLED
+        asset.approved_for_live = False
+        asset.metadata_json = {
+            **dict(asset.metadata_json or {}),
+            "disabled_at": now.isoformat(),
+            "disabled_reason": "not_in_latest_resolved_basket",
+        }
+
+    await db.flush()
+
+
 async def _resolve_instance_basket_for_action(
     db: DBSession,
     instance: BotInstance,
@@ -492,6 +724,7 @@ async def _resolve_instance_basket_for_action(
                 "basket": basket_metadata,
             },
         )
+    await _sync_instance_assets_from_basket(db, instance, symbols, basket_metadata)
     return symbols, basket_metadata
 
 
@@ -1212,6 +1445,7 @@ async def list_bot_instances(
             selectinload(BotInstance.organization),
             selectinload(BotInstance.client),
             selectinload(BotInstance.exchange),
+            selectinload(BotInstance.assets),
         )
         .where(BotInstance.organization_id == permission_ctx.organization_id)
         .where(BotInstance.status != BotInstanceStatus.DISABLED)
@@ -1277,6 +1511,7 @@ async def create_bot_instance(
             selectinload(BotInstance.organization),
             selectinload(BotInstance.client),
             selectinload(BotInstance.exchange),
+            selectinload(BotInstance.assets),
         )
         .where(
             BotInstance.organization_id == organization_id,
@@ -1340,6 +1575,7 @@ async def create_bot_instance(
                 selectinload(BotInstance.organization),
                 selectinload(BotInstance.client),
                 selectinload(BotInstance.exchange),
+                selectinload(BotInstance.assets),
             )
             .where(
                 BotInstance.organization_id == organization_id,
@@ -1408,6 +1644,7 @@ async def update_bot_instance(
             selectinload(BotInstance.organization),
             selectinload(BotInstance.client),
             selectinload(BotInstance.exchange),
+            selectinload(BotInstance.assets),
         )
         .where(
             BotInstance.id == instance_id,
@@ -1678,6 +1915,7 @@ async def queue_bot_instance_backtest(
             selectinload(BotInstance.template).selectinload(BotTemplate.parameters),
             selectinload(BotInstance.strategy),
             selectinload(BotInstance.exchange),
+            selectinload(BotInstance.assets),
         )
         .where(
             BotInstance.id == instance_id,
@@ -2740,6 +2978,7 @@ async def list_admin_bot_instances(
             selectinload(BotInstance.organization),
             selectinload(BotInstance.client),
             selectinload(BotInstance.exchange),
+            selectinload(BotInstance.assets),
         )
         .order_by(BotInstance.created_at.desc())
         .offset(skip)
@@ -2768,6 +3007,7 @@ async def update_admin_bot_instance(
             selectinload(BotInstance.organization),
             selectinload(BotInstance.client),
             selectinload(BotInstance.exchange),
+            selectinload(BotInstance.assets),
         )
         .where(BotInstance.id == instance_id)
         .with_for_update()

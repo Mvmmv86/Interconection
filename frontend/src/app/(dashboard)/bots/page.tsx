@@ -959,19 +959,62 @@ function asStringArray(value: unknown): string[] {
   return value.map((item) => String(item || '').trim()).filter(Boolean);
 }
 
+type BotInstanceAssetView = {
+  symbol?: string;
+  source?: string;
+  bucket?: string;
+  playbook?: string;
+  status?: string;
+  approved_for_live?: boolean;
+  origin_rank?: number | null;
+  origin_timeframe?: string | null;
+  performance_percent?: number | null;
+};
+
+function instanceAssets(instance: BotInstance): BotInstanceAssetView[] {
+  const rawAssets = (instance as unknown as { assets?: BotInstanceAssetView[] }).assets;
+  if (!Array.isArray(rawAssets)) return [];
+  return rawAssets
+    .map((asset) => ({ ...asset, symbol: normalizeBotSymbol(String(asset.symbol || '')) }))
+    .filter((asset) => Boolean(asset.symbol) && String(asset.status || '').toLowerCase() !== 'disabled');
+}
+
+function legFromAssets(assets: BotInstanceAssetView[], bucket: 'loser' | 'gainer') {
+  const filtered = assets.filter((asset) => String(asset.bucket || '').toLowerCase() === bucket);
+  if (!filtered.length) return null;
+  return {
+    direction: bucket === 'loser' ? 'losers' : 'gainers',
+    symbols: filtered.map((asset) => asset.symbol).filter(Boolean),
+  };
+}
+
+function assetContextLabel(asset: BotInstanceAssetView | undefined) {
+  if (!asset) return null;
+  const bucket = String(asset.bucket || '').toLowerCase();
+  const playbook = String(asset.playbook || '').toLowerCase();
+  if (bucket === 'loser') return playbook === 'reversal' ? 'queda/reversao' : 'queda';
+  if (bucket === 'gainer') return playbook === 'pullback' ? 'alta/pullback' : 'alta';
+  if (String(asset.source || '').toLowerCase() === 'manual') return 'manual';
+  return playbook && playbook !== 'neutral' ? playbook : null;
+}
+
 function botBasketView(instance: BotInstance) {
   const riskConfig = isRecord(instance.risk_config) ? instance.risk_config : {};
   const activeBasket = isRecord(riskConfig.active_basket) ? riskConfig.active_basket : {};
   const basketPolicy = isRecord(riskConfig.basket_policy) ? riskConfig.basket_policy : {};
   const marketBasket = isRecord(riskConfig.market_basket) ? riskConfig.market_basket : {};
+  const assets = instanceAssets(instance);
   const activeSymbols = asStringArray(activeBasket.symbols);
   const manualSymbols = asStringArray(riskConfig.allowed_symbols);
-  const symbols = activeSymbols.length ? activeSymbols : manualSymbols;
+  const assetSymbols = assets.map((asset) => asset.symbol).filter(Boolean) as string[];
+  const symbols = assetSymbols.length ? assetSymbols : activeSymbols.length ? activeSymbols : manualSymbols;
   const source = String(activeBasket.source || basketPolicy.source || marketBasket.source || (manualSymbols.length ? 'manual' : 'static'));
-  const legs = Array.isArray(activeBasket.legs) ? activeBasket.legs.filter(isRecord) : [];
+  const persistedLegs = [legFromAssets(assets, 'loser'), legFromAssets(assets, 'gainer')].filter(Boolean) as Record<string, unknown>[];
+  const legs = persistedLegs.length ? persistedLegs : Array.isArray(activeBasket.legs) ? activeBasket.legs.filter(isRecord) : [];
   return {
     source,
     symbols,
+    assets,
     nextRefreshAt: typeof activeBasket.next_refresh_at === 'string' ? activeBasket.next_refresh_at : null,
     generatedAt: typeof activeBasket.generated_at === 'string' ? activeBasket.generated_at : null,
     legs,
@@ -2070,8 +2113,8 @@ export default function BotsPage() {
                           className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
                         />
                       </div>
-                      <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-3">
-                        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="rounded-xl border border-border-subtle bg-background-primary/60 p-4">
+                        <div className="mb-4 grid gap-3 lg:grid-cols-[1fr_220px] lg:items-end">
                           <div>
                             <p className="text-body-sm font-semibold text-text-primary">Risco e stop operacional</p>
                             <p className="text-caption text-text-tertiary">
@@ -2085,78 +2128,78 @@ export default function BotsPage() {
                               { value: 'atr', label: 'Stop ATR' },
                             ]}
                             onChange={(event) => updateTemplateConfig(template.id, { stopModel: event.target.value as StopModel })}
-                            className="h-9 min-w-[170px] py-0 text-caption"
+                            className="h-10 min-w-0 py-0 text-caption"
                           />
                         </div>
-                        <div className="grid gap-3 md:grid-cols-4">
-                          <label className="grid gap-1 text-caption text-text-tertiary">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
                             ATR periodo
                             <input
                               value={config.atrStopLength}
                               onChange={(event) => updateTemplateConfig(template.id, { atrStopLength: event.target.value })}
                               disabled={config.stopModel !== 'atr'}
-                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
+                              className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
                             />
                           </label>
-                          <label className="grid gap-1 text-caption text-text-tertiary">
+                          <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
                             ATR multiplicador
                             <input
                               value={config.atrStopMultiplier}
                               onChange={(event) => updateTemplateConfig(template.id, { atrStopMultiplier: event.target.value })}
                               disabled={config.stopModel !== 'atr'}
-                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
+                              className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
                             />
                           </label>
-                          <label className="grid gap-1 text-caption text-text-tertiary">
+                          <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
                             Buffer ATR %
                             <input
                               value={config.atrStopBufferPercent}
                               onChange={(event) => updateTemplateConfig(template.id, { atrStopBufferPercent: event.target.value })}
                               disabled={config.stopModel !== 'atr'}
                               placeholder="0.10"
-                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
+                              className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue disabled:opacity-50"
                             />
                           </label>
-                          <label className="grid gap-1 text-caption text-text-tertiary">
+                          <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
                             Stop loss %
                             <input
                               value={config.stopLossPercent}
                               onChange={(event) => updateTemplateConfig(template.id, { stopLossPercent: event.target.value })}
                               placeholder="3"
-                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                              className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue"
                             />
                           </label>
-                          <label className="grid gap-1 text-caption text-text-tertiary">
+                          <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
                             Take profit %
                             <input
                               value={config.takeProfitPercent}
                               onChange={(event) => updateTemplateConfig(template.id, { takeProfitPercent: event.target.value })}
                               placeholder="8"
-                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                              className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue"
                             />
                           </label>
-                          <label className="grid gap-1 text-caption text-text-tertiary">
+                          <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
                             Breakeven apos %
                             <input
                               value={config.breakevenPercent}
                               onChange={(event) => updateTemplateConfig(template.id, { breakevenPercent: event.target.value })}
                               placeholder="4"
-                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                              className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue"
                             />
                           </label>
-                          <label className="grid gap-1 text-caption text-text-tertiary">
+                          <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
                             Trailing %
                             <input
                               value={config.trailingStopPercent}
                               onChange={(event) => updateTemplateConfig(template.id, { trailingStopPercent: event.target.value })}
                               placeholder="0 desliga"
-                              className="h-10 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm text-text-primary outline-none focus:border-accent-blue"
+                              className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-body-sm normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue"
                             />
                           </label>
                         </div>
                       </div>
-                      <div className="rounded-lg border border-border-subtle bg-background-primary/60 p-3">
-                          <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="rounded-xl border border-border-subtle bg-background-primary/60 p-4">
+                          <div className="mb-4 grid gap-3 lg:grid-cols-[1fr_240px] lg:items-end">
                             <div>
                               <p className="text-body-sm font-semibold text-text-primary">Modo da cesta do bot</p>
                               <p className="text-caption text-text-tertiary">
@@ -2171,7 +2214,7 @@ export default function BotsPage() {
                                 { value: 'manual', label: 'Manual: operador escolhe' },
                               ]}
                               onChange={(event) => updateTemplateConfig(template.id, { basketMode: event.target.value as BasketMode })}
-                              className="h-9 min-w-[190px] py-0 text-caption"
+                              className="h-10 min-w-0 py-0 text-caption"
                             />
                           </div>
                           {config.basketMode === 'manual' ? (
@@ -2236,44 +2279,59 @@ export default function BotsPage() {
                               </p>
                             </div>
                           ) : config.basketMode === 'market_extremes' ? (
-                            <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-                              <Select
-                                value={config.basketTimeframe}
-                                options={[
-                                  { value: '1h', label: 'Janela 1h' },
-                                  { value: '24h', label: 'Janela 24h' },
-                                  { value: '7d', label: 'Janela 7d' },
-                                  { value: '30d', label: 'Janela 30d' },
-                                ]}
-                                onChange={(event) => updateTemplateConfig(template.id, { basketTimeframe: event.target.value as RankingTimeframe })}
-                                className="h-9 py-0 text-caption"
-                              />
-                              <input
-                                value={config.basketTopLosers}
-                                onChange={(event) => updateTemplateConfig(template.id, { basketTopLosers: event.target.value })}
-                                placeholder="Top quedas"
-                                className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
-                              />
-                              <input
-                                value={config.basketTopGainers}
-                                onChange={(event) => updateTemplateConfig(template.id, { basketTopGainers: event.target.value })}
-                                placeholder="Top altas"
-                                className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
-                              />
-                              <input
-                                value={config.basketRefreshDays}
-                                onChange={(event) => updateTemplateConfig(template.id, { basketRefreshDays: event.target.value })}
-                                placeholder="Atualizar a cada dias"
-                                className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
-                              />
-                              <input
-                                type="time"
-                                value={config.basketRefreshTime}
-                                onChange={(event) => updateTemplateConfig(template.id, { basketRefreshTime: event.target.value })}
-                                className="h-9 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption text-text-primary outline-none focus:border-accent-blue"
-                              />
+                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                              <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                                Janela do ranking
+                                <Select
+                                  value={config.basketTimeframe}
+                                  options={[
+                                    { value: '1h', label: '1 hora' },
+                                    { value: '24h', label: '24 horas' },
+                                    { value: '7d', label: '7 dias' },
+                                    { value: '30d', label: '30 dias' },
+                                  ]}
+                                  onChange={(event) => updateTemplateConfig(template.id, { basketTimeframe: event.target.value as RankingTimeframe })}
+                                  className="h-10 min-w-0 py-0 text-caption"
+                                />
+                              </label>
+                              <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                                Top quedas
+                                <input
+                                  value={config.basketTopLosers}
+                                  onChange={(event) => updateTemplateConfig(template.id, { basketTopLosers: event.target.value })}
+                                  placeholder="10"
+                                  className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue"
+                                />
+                              </label>
+                              <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                                Top altas
+                                <input
+                                  value={config.basketTopGainers}
+                                  onChange={(event) => updateTemplateConfig(template.id, { basketTopGainers: event.target.value })}
+                                  placeholder="10"
+                                  className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue"
+                                />
+                              </label>
+                              <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                                Recalcular a cada
+                                <input
+                                  value={config.basketRefreshDays}
+                                  onChange={(event) => updateTemplateConfig(template.id, { basketRefreshDays: event.target.value })}
+                                  placeholder="7 dias"
+                                  className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue"
+                                />
+                              </label>
+                              <label className="grid min-w-0 gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+                                Horario
+                                <input
+                                  type="time"
+                                  value={config.basketRefreshTime}
+                                  onChange={(event) => updateTemplateConfig(template.id, { basketRefreshTime: event.target.value })}
+                                  className="h-10 w-full min-w-0 rounded-lg border border-border-subtle bg-background-primary px-3 text-caption normal-case tracking-normal text-text-primary outline-none focus:border-accent-blue"
+                                />
+                              </label>
                               <div className="rounded-lg border border-accent-blue/20 bg-accent-blue/10 px-3 py-2 text-caption text-accent-blue">
-                                Ex.: 10 quedas + 10 altas
+                                Ex.: 10 quedas + 10 altas, recalculo semanal as 09:00.
                               </div>
                             </div>
                           ) : (
@@ -2320,6 +2378,7 @@ export default function BotsPage() {
                 const instanceSignals = signalsByInstance[instance.id] || [];
                 const latestSignal = instanceSignals[0];
                 const signalBySymbol = latestSignalMap(instanceSignals);
+                const assetsBySymbol = new Map(basket.assets.map((asset) => [String(asset.symbol || ''), asset]));
                 const gateRows = botGateRows(latestSignal);
                 return (
                 <div key={instance.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
@@ -2369,16 +2428,26 @@ export default function BotsPage() {
                         <div className="flex flex-wrap gap-1.5">
                           {basket.symbols.slice(0, 24).map((symbol) => {
                             const status = symbolStatus(signalBySymbol.get(symbol));
+                            const asset = assetsBySymbol.get(symbol);
+                            const contextLabel = assetContextLabel(asset);
                             return (
                               <button
                                 key={symbol}
                                 type="button"
                                 onClick={() => openBacktest(instance, symbol)}
-                                className={`rounded-md border px-2 py-1 text-[10px] font-semibold transition ${status.className}`}
+                                className={`rounded-md border px-2 py-1 text-left text-[10px] font-semibold transition ${status.className}`}
                                 title={`${symbol}: ${status.title}. Clique para backtest.`}
                               >
                                 <span>{symbol}</span>
                                 <span className="ml-1 opacity-70">{status.label}</span>
+                                {contextLabel && (
+                                  <span className="ml-1 rounded bg-background-primary/80 px-1 uppercase tracking-[0.12em] opacity-70">
+                                    {contextLabel}
+                                  </span>
+                                )}
+                                {asset?.approved_for_live && (
+                                  <span className="ml-1 rounded bg-status-success/10 px-1 text-status-success">live ok</span>
+                                )}
                               </button>
                             );
                           })}

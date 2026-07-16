@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, List, Optional
 from uuid import UUID
 
@@ -46,6 +47,40 @@ class BotInstanceMode(str, enum.Enum):
 
     PAPER = "paper"
     LIVE = "live"
+
+
+class BotInstanceAssetSource(str, enum.Enum):
+    """Where a monitored bot asset came from."""
+
+    SCANNER = "scanner"
+    MANUAL = "manual"
+    STATIC = "static"
+
+
+class BotInstanceAssetBucket(str, enum.Enum):
+    """Market bucket used by the bot playbook."""
+
+    GAINER = "gainer"
+    LOSER = "loser"
+    NEUTRAL = "neutral"
+
+
+class BotInstanceAssetPlaybook(str, enum.Enum):
+    """Decision playbook applied to the asset."""
+
+    REVERSAL = "reversal"
+    PULLBACK = "pullback"
+    CONTINUATION = "continuation"
+    NEUTRAL = "neutral"
+
+
+class BotInstanceAssetStatus(str, enum.Enum):
+    """Operator lifecycle for a monitored asset."""
+
+    CANDIDATE = "candidate"
+    APPROVED = "approved"
+    IGNORED = "ignored"
+    DISABLED = "disabled"
 
 
 class BotInstanceStatus(str, enum.Enum):
@@ -315,6 +350,68 @@ class BotInstance(Base, UUIDMixin, TimestampMixin):
     runs: Mapped[List["BotRun"]] = relationship("BotRun", back_populates="instance")
     signals: Mapped[List["BotSignal"]] = relationship("BotSignal", back_populates="instance")
     backtest_runs: Mapped[List["BotBacktestRun"]] = relationship("BotBacktestRun", back_populates="instance")
+    assets: Mapped[List["BotInstanceAsset"]] = relationship(
+        "BotInstanceAsset",
+        back_populates="instance",
+        cascade="all, delete-orphan",
+        order_by="BotInstanceAsset.symbol",
+    )
+
+
+class BotInstanceAsset(Base, UUIDMixin, TimestampMixin):
+    """Per-instance asset selected by scanner/manual curation."""
+
+    __tablename__ = "bot_instance_assets"
+    __table_args__ = (
+        UniqueConstraint("instance_id", "symbol", name="uq_bot_instance_assets_instance_symbol"),
+        Index("ix_bot_instance_assets_org_instance", "organization_id", "instance_id"),
+        Index("ix_bot_instance_assets_instance_status", "instance_id", "status"),
+        Index("ix_bot_instance_assets_org_status", "organization_id", "status"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[UUID] = mapped_column(ForeignKey("bot_instances.id", ondelete="CASCADE"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(40), nullable=False)
+    source: Mapped[BotInstanceAssetSource] = mapped_column(
+        SAEnum(BotInstanceAssetSource),
+        default=BotInstanceAssetSource.SCANNER,
+        nullable=False,
+    )
+    bucket: Mapped[BotInstanceAssetBucket] = mapped_column(
+        SAEnum(BotInstanceAssetBucket),
+        default=BotInstanceAssetBucket.NEUTRAL,
+        nullable=False,
+    )
+    playbook: Mapped[BotInstanceAssetPlaybook] = mapped_column(
+        SAEnum(BotInstanceAssetPlaybook),
+        default=BotInstanceAssetPlaybook.NEUTRAL,
+        nullable=False,
+    )
+    status: Mapped[BotInstanceAssetStatus] = mapped_column(
+        SAEnum(BotInstanceAssetStatus),
+        default=BotInstanceAssetStatus.CANDIDATE,
+        nullable=False,
+    )
+    approved_for_live: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    origin_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    origin_timeframe: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    origin_direction: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    performance_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8), nullable=True)
+    snapshot_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    last_backtest_run_id: Mapped[Optional[UUID]] = mapped_column(
+        ForeignKey("bot_backtest_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    last_backtest_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 4), nullable=True)
+    approved_by_user_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ignored_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    instance: Mapped["BotInstance"] = relationship("BotInstance", back_populates="assets")
+    approved_by: Mapped[Optional["User"]] = relationship("User")
+    last_backtest_run: Mapped[Optional["BotBacktestRun"]] = relationship("BotBacktestRun")
 
 
 class BotRun(Base, UUIDMixin, TimestampMixin):

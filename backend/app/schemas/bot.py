@@ -152,6 +152,42 @@ class AdminBotInstanceUpdate(BaseSchema):
     last_error: Optional[str] = None
 
 
+class BotInstanceAssetResponse(BaseSchema):
+    """Asset monitored by a customer bot instance."""
+
+    id: UUID
+    organization_id: UUID
+    instance_id: UUID
+    symbol: str
+    source: str
+    bucket: str
+    playbook: str
+    status: str
+    approved_for_live: bool
+    origin_rank: Optional[int] = None
+    origin_timeframe: Optional[str] = None
+    origin_direction: Optional[str] = None
+    performance_percent: Optional[float] = None
+    snapshot_id: Optional[str] = None
+    last_backtest_run_id: Optional[UUID] = None
+    last_backtest_score: Optional[float] = None
+    approved_by_user_id: Optional[UUID] = None
+    approved_at: Optional[datetime] = None
+    ignored_at: Optional[datetime] = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class BotInstanceAssetUpdate(BaseSchema):
+    """Patch operator curation for an instance asset."""
+
+    status: Optional[str] = Field(default=None, max_length=40)
+    playbook: Optional[str] = Field(default=None, max_length=40)
+    bucket: Optional[str] = Field(default=None, max_length=40)
+    approved_for_live: Optional[bool] = None
+
+
 class BotInstanceResponse(BaseSchema):
     """Customer bot instance row."""
 
@@ -180,6 +216,7 @@ class BotInstanceResponse(BaseSchema):
     paused_at: Optional[datetime] = None
     disabled_at: Optional[datetime] = None
     created_by_user_id: Optional[UUID] = None
+    assets: list[BotInstanceAssetResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
