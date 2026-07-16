@@ -9,7 +9,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.bot import BotInstance, BotInstanceMode, BotInstanceStatus, BotTemplate
+from app.models.bot import BotInstance, BotInstanceAssetStatus, BotInstanceMode, BotInstanceStatus, BotTemplate
 from app.services.bot_engine_service import BotEngineService
 from app.services.market_data_ingestion_service import (
     MarketDataIngestionService,
@@ -85,6 +85,7 @@ class BotSchedulerService:
                     selectinload(BotInstance.template).selectinload(BotTemplate.parameters),
                     selectinload(BotInstance.client),
                     selectinload(BotInstance.exchange),
+                    selectinload(BotInstance.assets),
                 )
                 .where(
                     BotInstance.mode == BotInstanceMode.PAPER,
@@ -119,17 +120,44 @@ class BotSchedulerService:
                 )
                 timeframe = resolve_strategy_timeframe(instance.strategy, instance)
                 market_type = resolve_strategy_market_type(instance.strategy, instance)
-                if not symbols:
+                approved_symbols = [
+                    asset.symbol
+                    for asset in sorted(
+                        instance.assets or [],
+                        key=lambda asset: (
+                            asset.origin_rank is None,
+                            asset.origin_rank or 0,
+                            asset.symbol,
+                        ),
+                    )
+                    if asset.status == BotInstanceAssetStatus.APPROVED and asset.approved_for_live
+                ]
+                if not symbols and not approved_symbols:
                     skipped.append({
                         "instance_id": str(instance.id),
                         "reason": "missing_symbols",
                         "basket": basket_metadata,
                     })
                     continue
+                if not approved_symbols:
+                    skipped.append({
+                        "instance_id": str(instance.id),
+                        "reason": "missing_approved_assets",
+                        "candidate_symbols": symbols,
+                        "basket": basket_metadata,
+                    })
+                    continue
+                basket_metadata = {
+                    **dict(basket_metadata or {}),
+                    "operational_source": "approved_assets",
+                    "operational_symbols": approved_symbols,
+                    "candidate_symbols": symbols,
+                    "requires_operator_approval": True,
+                }
                 market_snapshot = await engine.build_market_snapshot(instance)
                 market_snapshot["market_basket"] = basket_metadata
-                market_snapshot["allowed_symbols"] = symbols
-                for symbol in symbols:
+                market_snapshot["allowed_symbols"] = approved_symbols
+                for symbol in approved_symbols:
                     if attempted_cycles >= max_cycles:
                         break
                     attempted_cycles += 1

@@ -6,6 +6,7 @@ import type { SeriesMarker, UTCTimestamp } from 'lightweight-charts';
 import {
   api,
   type BotInstance,
+  type BotInstanceAsset,
   type BotBacktestChart,
   type BotBacktestRun,
   type BotBacktestTrade,
@@ -960,6 +961,7 @@ function asStringArray(value: unknown): string[] {
 }
 
 type BotInstanceAssetView = {
+  id?: string;
   symbol?: string;
   source?: string;
   bucket?: string;
@@ -969,10 +971,14 @@ type BotInstanceAssetView = {
   origin_rank?: number | null;
   origin_timeframe?: string | null;
   performance_percent?: number | null;
+  approved_at?: string | null;
+  ignored_at?: string | null;
+  last_backtest_run_id?: string | null;
+  last_backtest_score?: number | null;
 };
 
 function instanceAssets(instance: BotInstance): BotInstanceAssetView[] {
-  const rawAssets = (instance as unknown as { assets?: BotInstanceAssetView[] }).assets;
+  const rawAssets = (instance as unknown as { assets?: BotInstanceAsset[] }).assets;
   if (!Array.isArray(rawAssets)) return [];
   return rawAssets
     .map((asset) => ({ ...asset, symbol: normalizeBotSymbol(String(asset.symbol || '')) }))
@@ -1006,10 +1012,11 @@ function botBasketView(instance: BotInstance) {
   const assets = instanceAssets(instance);
   const activeSymbols = asStringArray(activeBasket.symbols);
   const manualSymbols = asStringArray(riskConfig.allowed_symbols);
-  const assetSymbols = assets.map((asset) => asset.symbol).filter(Boolean) as string[];
+  const monitoredAssets = assets.filter((asset) => String(asset.status || '').toLowerCase() !== 'ignored');
+  const assetSymbols = monitoredAssets.map((asset) => asset.symbol).filter(Boolean) as string[];
   const symbols = assetSymbols.length ? assetSymbols : activeSymbols.length ? activeSymbols : manualSymbols;
   const source = String(activeBasket.source || basketPolicy.source || marketBasket.source || (manualSymbols.length ? 'manual' : 'static'));
-  const persistedLegs = [legFromAssets(assets, 'loser'), legFromAssets(assets, 'gainer')].filter(Boolean) as Record<string, unknown>[];
+  const persistedLegs = [legFromAssets(monitoredAssets, 'loser'), legFromAssets(monitoredAssets, 'gainer')].filter(Boolean) as Record<string, unknown>[];
   const legs = persistedLegs.length ? persistedLegs : Array.isArray(activeBasket.legs) ? activeBasket.legs.filter(isRecord) : [];
   return {
     source,
@@ -1126,6 +1133,7 @@ export default function BotsPage() {
   const [isRunningId, setIsRunningId] = useState<string | null>(null);
   const [isRefreshingBasketId, setIsRefreshingBasketId] = useState<string | null>(null);
   const [isSavingBasketId, setIsSavingBasketId] = useState<string | null>(null);
+  const [isUpdatingAssetKey, setIsUpdatingAssetKey] = useState<string | null>(null);
   const [isActivatingId, setIsActivatingId] = useState<string | null>(null);
   const [backtestSelection, setBacktestSelection] = useState<BacktestSelection | null>(null);
   const [basketEditor, setBasketEditor] = useState<BasketEditorState | null>(null);
@@ -1522,6 +1530,30 @@ export default function BotsPage() {
     await loadBots();
   };
 
+  const updateAssetCuration = async (
+    instance: BotInstance,
+    asset: BotInstanceAssetView,
+    action: 'approve' | 'ignore' | 'candidate'
+  ) => {
+    const symbol = normalizeBotSymbol(String(asset.symbol || ''));
+    if (!symbol) return;
+    const key = `${instance.id}:${symbol}:${action}`;
+    setIsUpdatingAssetKey(key);
+    setError(null);
+    const payload = action === 'approve'
+      ? { status: 'approved', approved_for_live: true }
+      : action === 'ignore'
+        ? { status: 'ignored', approved_for_live: false }
+        : { status: 'candidate', approved_for_live: false };
+    const result = await api.updateBotInstanceAsset(instance.id, symbol, payload);
+    setIsUpdatingAssetKey(null);
+    if (!result.success) {
+      setError(result.error || 'Nao foi possivel atualizar a curadoria do ativo');
+      return;
+    }
+    await loadBots();
+  };
+
   const openBasketEditor = (instance: BotInstance) => {
     const basket = botBasketView(instance);
     setBasketSearch('');
@@ -1585,6 +1617,11 @@ export default function BotsPage() {
     setIsSavingBasketId(null);
     if (!result.success) {
       setError(result.error || 'Nao foi possivel salvar a cesta manual do bot');
+      return;
+    }
+    const refreshResult = await api.refreshBotInstanceBasket(basketEditor.instance.id);
+    if (!refreshResult.success) {
+      setError(refreshResult.error || 'Cesta salva, mas nao foi possivel materializar os candidatos agora');
       return;
     }
     setBasketSearch('');
@@ -2379,6 +2416,9 @@ export default function BotsPage() {
                 const latestSignal = instanceSignals[0];
                 const signalBySymbol = latestSignalMap(instanceSignals);
                 const assetsBySymbol = new Map(basket.assets.map((asset) => [String(asset.symbol || ''), asset]));
+                const approvedAssets = basket.assets.filter((asset) => String(asset.status || '').toLowerCase() === 'approved' && asset.approved_for_live);
+                const candidateAssets = basket.assets.filter((asset) => String(asset.status || '').toLowerCase() === 'candidate');
+                const ignoredAssets = basket.assets.filter((asset) => String(asset.status || '').toLowerCase() === 'ignored');
                 const gateRows = botGateRows(latestSignal);
                 return (
                 <div key={instance.id} className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
@@ -2420,7 +2460,7 @@ export default function BotsPage() {
                     </div>
                     <div>
                       <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-text-primary">Ativos monitorados</span>
+                        <span className="font-semibold text-text-primary">Ativos da cesta</span>
                         {basket.generatedAt && <Badge variant="blue" size="sm">gerada {formatDateTime(basket.generatedAt)}</Badge>}
                         {basket.nextRefreshAt && <Badge variant="purple" size="sm">proxima {formatDateTime(basket.nextRefreshAt)}</Badge>}
                       </div>
@@ -2469,6 +2509,132 @@ export default function BotsPage() {
                             </p>
                           </div>
                         ))}
+                      </div>
+                    )}
+                    {basket.assets.length > 0 && (
+                      <div className="rounded-lg border border-border-subtle bg-background-secondary/70 p-3">
+                        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-text-primary">Curadoria operacional</p>
+                            <p className="text-text-tertiary">
+                              Candidatos podem ser backtestados. Apenas aprovados entram no paper operacional e no scheduler.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            <Badge variant="success" size="sm">{approvedAssets.length} aprovados</Badge>
+                            <Badge variant="yellow" size="sm">{candidateAssets.length} candidatos</Badge>
+                            {ignoredAssets.length > 0 && <Badge variant="default" size="sm">{ignoredAssets.length} ignorados</Badge>}
+                          </div>
+                        </div>
+                        <div className="grid gap-3 xl:grid-cols-3">
+                          <div className="rounded-lg border border-status-warning/20 bg-background-primary/70 p-3">
+                            <p className="text-caption font-semibold uppercase tracking-[0.14em] text-status-warning">Candidatos para validar</p>
+                            <div className="mt-2 flex max-h-52 flex-col gap-2 overflow-y-auto pr-1">
+                              {candidateAssets.length ? candidateAssets.map((asset) => {
+                                const symbol = normalizeBotSymbol(String(asset.symbol || ''));
+                                return (
+                                  <div key={symbol} className="rounded-md border border-border-subtle bg-background-secondary/70 p-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div>
+                                        <p className="text-caption font-semibold text-text-primary">{symbol}</p>
+                                        <p className="text-[10px] text-text-tertiary">{assetContextLabel(asset) || 'candidato'} {asset.origin_rank ? `#${asset.origin_rank}` : ''}</p>
+                                      </div>
+                                      <Badge variant="yellow" size="sm">candidate</Badge>
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                      <Button type="button" size="sm" variant="secondary" onClick={() => openBacktest(instance, symbol)}>
+                                        Backtest
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        disabled={isUpdatingAssetKey === `${instance.id}:${symbol}:approve` || !can('bots:edit')}
+                                        onClick={() => updateAssetCuration(instance, asset, 'approve')}
+                                      >
+                                        Aprovar
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="ghost"
+                                        disabled={isUpdatingAssetKey === `${instance.id}:${symbol}:ignore` || !can('bots:edit')}
+                                        onClick={() => updateAssetCuration(instance, asset, 'ignore')}
+                                      >
+                                        Ignorar
+                                      </Button>
+                                    </div>
+                                  </div>
+                                );
+                              }) : (
+                                <p className="text-caption text-text-tertiary">Sem candidatos pendentes.</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-status-success/20 bg-background-primary/70 p-3">
+                            <p className="text-caption font-semibold uppercase tracking-[0.14em] text-status-success">Aprovados para paper/live</p>
+                            <div className="mt-2 flex max-h-52 flex-col gap-2 overflow-y-auto pr-1">
+                              {approvedAssets.length ? approvedAssets.map((asset) => {
+                                const symbol = normalizeBotSymbol(String(asset.symbol || ''));
+                                return (
+                                  <div key={symbol} className="rounded-md border border-status-success/20 bg-status-success/5 p-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div>
+                                        <p className="text-caption font-semibold text-text-primary">{symbol}</p>
+                                        <p className="text-[10px] text-text-tertiary">{assetContextLabel(asset) || 'aprovado'} {asset.approved_at ? `desde ${formatDateTime(asset.approved_at)}` : ''}</p>
+                                      </div>
+                                      <Badge variant="success" size="sm">approved</Badge>
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                      <Button type="button" size="sm" variant="secondary" onClick={() => openBacktest(instance, symbol)}>
+                                        Backtest
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="ghost"
+                                        disabled={isUpdatingAssetKey === `${instance.id}:${symbol}:candidate` || !can('bots:edit')}
+                                        onClick={() => updateAssetCuration(instance, asset, 'candidate')}
+                                      >
+                                        Remover live
+                                      </Button>
+                                    </div>
+                                  </div>
+                                );
+                              }) : (
+                                <p className="text-caption text-text-tertiary">Nenhum ativo aprovado ainda.</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-border-subtle bg-background-primary/70 p-3">
+                            <p className="text-caption font-semibold uppercase tracking-[0.14em] text-text-tertiary">Ignorados</p>
+                            <div className="mt-2 flex max-h-52 flex-col gap-2 overflow-y-auto pr-1">
+                              {ignoredAssets.length ? ignoredAssets.map((asset) => {
+                                const symbol = normalizeBotSymbol(String(asset.symbol || ''));
+                                return (
+                                  <div key={symbol} className="rounded-md border border-border-subtle bg-background-secondary/70 p-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div>
+                                        <p className="text-caption font-semibold text-text-primary">{symbol}</p>
+                                        <p className="text-[10px] text-text-tertiary">{assetContextLabel(asset) || 'ignorado'}</p>
+                                      </div>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="ghost"
+                                        disabled={isUpdatingAssetKey === `${instance.id}:${symbol}:candidate` || !can('bots:edit')}
+                                        onClick={() => updateAssetCuration(instance, asset, 'candidate')}
+                                      >
+                                        Reativar
+                                      </Button>
+                                    </div>
+                                  </div>
+                                );
+                              }) : (
+                                <p className="text-caption text-text-tertiary">Nada ignorado nesta instância.</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     )}
                     <div>
@@ -2531,11 +2697,11 @@ export default function BotsPage() {
                       type="button"
                       size="sm"
                       variant="secondary"
-                      disabled={isRunningId === instance.id || !can('bots:run')}
+                      disabled={isRunningId === instance.id || !can('bots:run') || approvedAssets.length === 0}
                       onClick={() => runPaper(instance)}
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
-                      {isRunningId === instance.id ? 'Rodando cesta...' : 'Rodar cesta paper'}
+                      {isRunningId === instance.id ? 'Rodando aprovados...' : approvedAssets.length ? 'Rodar aprovados paper' : 'Aprove ativos primeiro'}
                     </Button>
                     <Button
                       type="button"

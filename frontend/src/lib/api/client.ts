@@ -560,7 +560,33 @@ interface BotInstance {
   started_at: string | null;
   paused_at: string | null;
   disabled_at: string | null;
+  assets?: BotInstanceAsset[];
   created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BotInstanceAsset {
+  id: string;
+  organization_id: string;
+  instance_id: string;
+  symbol: string;
+  source: string;
+  bucket: string;
+  playbook: string;
+  status: string;
+  approved_for_live: boolean;
+  origin_rank: number | null;
+  origin_timeframe: string | null;
+  origin_direction: string | null;
+  performance_percent: number | null;
+  snapshot_id: string | null;
+  last_backtest_run_id: string | null;
+  last_backtest_score: number | null;
+  approved_by_user_id: string | null;
+  approved_at: string | null;
+  ignored_at: string | null;
+  metadata_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -1742,6 +1768,25 @@ class ApiClient {
     });
   }
 
+  async updateBotInstanceAsset(
+    instanceId: string,
+    symbol: string,
+    data: Partial<{
+      status: string;
+      playbook: string;
+      bucket: string;
+      approved_for_live: boolean;
+    }>
+  ): Promise<ApiResponse<BotInstance>> {
+    return this.request<BotInstance>(
+      `/api/v1/bots/instances/${instanceId}/assets/${encodeURIComponent(symbol)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }
+    );
+  }
+
   async getBotInstanceRuns(instanceId: string): Promise<ApiResponse<BotRun[]>> {
     return this.request<BotRun[]>(`/api/v1/bots/instances/${instanceId}/runs`);
   }
@@ -2030,6 +2075,7 @@ export type {
   AdminBillingPayment,
   BotTemplate,
   BotInstance,
+  BotInstanceAsset,
   BotStrategy,
   BotIndicator,
   BotRun,

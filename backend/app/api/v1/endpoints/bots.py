@@ -66,6 +66,7 @@ from app.schemas.bot import (
     BotBasketRefreshResponse,
     BotIndicatorResponse,
     BotInstanceAssetResponse,
+    BotInstanceAssetUpdate,
     BotInstanceBacktestCreate,
     BotInstanceCreate,
     BotInstanceResponse,
@@ -707,6 +708,7 @@ async def _resolve_instance_basket_for_action(
     *,
     refresh_snapshot: bool,
     force_refresh: bool = False,
+    allow_empty: bool = False,
 ) -> tuple[list[str], dict]:
     ranking_service = MarketRankingService(db)
     fallback_symbols = resolve_strategy_symbols(instance.strategy, instance)
@@ -717,6 +719,8 @@ async def _resolve_instance_basket_for_action(
         force_refresh=force_refresh,
     )
     if not symbols:
+        if allow_empty:
+            return [], basket_metadata
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -726,6 +730,40 @@ async def _resolve_instance_basket_for_action(
         )
     await _sync_instance_assets_from_basket(db, instance, symbols, basket_metadata)
     return symbols, basket_metadata
+
+
+def _parse_asset_enum(enum_cls, value: str | None, field_name: str):
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    for item in enum_cls:
+        if item.value == normalized or item.name.lower() == normalized:
+            return item
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Invalid {field_name}",
+    )
+
+
+async def _approved_operational_symbols(db: DBSession, instance_id: UUID) -> list[str]:
+    result = await db.execute(
+        select(BotInstanceAsset)
+        .where(
+            BotInstanceAsset.instance_id == instance_id,
+            BotInstanceAsset.status == BotInstanceAssetStatus.APPROVED,
+            BotInstanceAsset.approved_for_live.is_(True),
+        )
+        .order_by(BotInstanceAsset.origin_rank.asc().nullslast(), BotInstanceAsset.symbol.asc())
+    )
+    return [normalize_strategy_symbol(asset.symbol) for asset in result.scalars().all() if normalize_strategy_symbol(asset.symbol)]
+
+
+def _with_operational_basket_metadata(basket_metadata: dict, operational_symbols: list[str]) -> dict:
+    metadata = dict(basket_metadata or {})
+    metadata["operational_source"] = "approved_assets"
+    metadata["operational_symbols"] = operational_symbols
+    metadata["requires_operator_approval"] = True
+    return metadata
 
 
 async def _run_paper_symbol(
@@ -1716,6 +1754,105 @@ async def update_bot_instance(
     return _instance_response(await _load_instance_for_response(db, instance.id))
 
 
+@router.patch("/instances/{instance_id}/assets/{symbol}", response_model=BotInstanceResponse)
+async def update_bot_instance_asset(
+    instance_id: UUID,
+    symbol: str,
+    data: BotInstanceAssetUpdate,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:edit", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+    request: Request,
+) -> BotInstanceResponse:
+    """Curate one instance asset before it is allowed into operational paper/live loops."""
+    instance = await _load_customer_bot_instance_for_action(db, permission_ctx, instance_id)
+    normalized_symbol = normalize_strategy_symbol(symbol)
+    if not normalized_symbol:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid asset symbol")
+
+    asset = await db.scalar(
+        select(BotInstanceAsset)
+        .where(
+            BotInstanceAsset.instance_id == instance.id,
+            BotInstanceAsset.symbol == normalized_symbol,
+        )
+        .with_for_update()
+    )
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bot asset not found")
+
+    previous_status = _enum_value(asset.status)
+    now = datetime.now(timezone.utc)
+    requested_status = _parse_asset_enum(BotInstanceAssetStatus, data.status, "asset status")
+    requested_bucket = _parse_asset_enum(BotInstanceAssetBucket, data.bucket, "asset bucket")
+    requested_playbook = _parse_asset_enum(BotInstanceAssetPlaybook, data.playbook, "asset playbook")
+
+    if requested_bucket is not None:
+        asset.bucket = requested_bucket
+    if requested_playbook is not None:
+        asset.playbook = requested_playbook
+
+    if requested_status is None and data.approved_for_live is not None:
+        requested_status = BotInstanceAssetStatus.APPROVED if data.approved_for_live else BotInstanceAssetStatus.CANDIDATE
+
+    if requested_status == BotInstanceAssetStatus.APPROVED:
+        asset.status = BotInstanceAssetStatus.APPROVED
+        asset.approved_for_live = True
+        asset.approved_by_user_id = permission_ctx.user.id
+        asset.approved_at = now
+        asset.ignored_at = None
+    elif requested_status == BotInstanceAssetStatus.IGNORED:
+        asset.status = BotInstanceAssetStatus.IGNORED
+        asset.approved_for_live = False
+        asset.approved_by_user_id = None
+        asset.approved_at = None
+        asset.ignored_at = now
+    elif requested_status == BotInstanceAssetStatus.CANDIDATE:
+        asset.status = BotInstanceAssetStatus.CANDIDATE
+        asset.approved_for_live = False
+        asset.approved_by_user_id = None
+        asset.approved_at = None
+        asset.ignored_at = None
+    elif requested_status == BotInstanceAssetStatus.DISABLED:
+        asset.status = BotInstanceAssetStatus.DISABLED
+        asset.approved_for_live = False
+        asset.approved_by_user_id = None
+        asset.approved_at = None
+        asset.ignored_at = None
+    elif data.approved_for_live is not None:
+        asset.approved_for_live = bool(data.approved_for_live and asset.status == BotInstanceAssetStatus.APPROVED)
+
+    asset.metadata_json = {
+        **dict(asset.metadata_json or {}),
+        "last_operator_action_at": now.isoformat(),
+        "last_operator_action_by": str(permission_ctx.user.id),
+        "previous_status": previous_status,
+        "current_status": _enum_value(asset.status),
+    }
+
+    await db.flush()
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.UPDATE,
+        resource_type="bot_instance_asset",
+        resource_id=asset.id,
+        description="Customer curated bot asset",
+        metadata={
+            "instance_id": str(instance.id),
+            "symbol": normalized_symbol,
+            "previous_status": previous_status,
+            "current_status": _enum_value(asset.status),
+            "approved_for_live": asset.approved_for_live,
+        },
+        request=request,
+    )
+    return _instance_response(await _load_instance_for_response(db, instance.id))
+
+
 @router.post("/instances/{instance_id}/run-paper", response_model=BotRunResponse)
 async def run_bot_instance_paper_cycle(
     instance_id: UUID,
@@ -1733,19 +1870,31 @@ async def run_bot_instance_paper_cycle(
         db,
         instance,
         refresh_snapshot=True,
+        allow_empty=True,
     )
-    requested_symbol = normalize_strategy_symbol(data.symbol) if data.symbol else symbols[0]
-    if requested_symbol not in symbols:
+    operational_symbols = await _approved_operational_symbols(db, instance.id)
+    if not operational_symbols:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Approve at least one bot asset before running operational paper",
+                "candidate_symbols": symbols,
+                "basket": basket_metadata,
+            },
+        )
+    basket_metadata = _with_operational_basket_metadata(basket_metadata, operational_symbols)
+    requested_symbol = normalize_strategy_symbol(data.symbol) if data.symbol else operational_symbols[0]
+    if requested_symbol not in operational_symbols:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Requested symbol is outside the bot basket",
+            detail="Requested symbol is not approved for operational paper",
         )
     requested_timeframe = data.timeframe or resolve_strategy_timeframe(instance.strategy, instance)
 
     engine = BotEngineService(db)
     market_snapshot = await engine.build_market_snapshot(instance)
     market_snapshot["market_basket"] = basket_metadata
-    market_snapshot["allowed_symbols"] = symbols
+    market_snapshot["allowed_symbols"] = operational_symbols
     run = await _run_paper_symbol(
         db,
         instance=instance,
@@ -1788,19 +1937,31 @@ async def run_bot_instance_paper_basket(
         db,
         instance,
         refresh_snapshot=True,
+        allow_empty=True,
     )
+    operational_symbols = await _approved_operational_symbols(db, instance.id)
+    if not operational_symbols:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Approve at least one bot asset before running operational paper",
+                "candidate_symbols": symbols,
+                "basket": basket_metadata,
+            },
+        )
+    basket_metadata = _with_operational_basket_metadata(basket_metadata, operational_symbols)
     requested_timeframe = data.timeframe or resolve_strategy_timeframe(instance.strategy, instance)
     requested_symbol = normalize_strategy_symbol(data.symbol) if data.symbol else None
-    if requested_symbol is not None and requested_symbol not in symbols:
+    if requested_symbol is not None and requested_symbol not in operational_symbols:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Requested symbol is outside the bot basket",
+            detail="Requested symbol is not approved for operational paper",
         )
-    target_symbols = [requested_symbol] if requested_symbol else symbols
+    target_symbols = [requested_symbol] if requested_symbol else operational_symbols
     engine = BotEngineService(db)
     market_snapshot = await engine.build_market_snapshot(instance)
     market_snapshot["market_basket"] = basket_metadata
-    market_snapshot["allowed_symbols"] = symbols
+    market_snapshot["allowed_symbols"] = operational_symbols
     runs: list[BotRunResponse] = []
     skipped: list[dict[str, object]] = []
     for symbol in target_symbols[:50]:
@@ -1946,12 +2107,17 @@ async def queue_bot_instance_backtest(
         fallback_symbols=fallback_symbols,
         refresh_snapshot=False,
     )
-    if not symbols:
+    persisted_asset_symbols = {
+        normalize_strategy_symbol(asset.symbol)
+        for asset in instance.assets
+        if asset.status != BotInstanceAssetStatus.DISABLED and normalize_strategy_symbol(asset.symbol)
+    }
+    if not symbols and symbol not in persisted_asset_symbols:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"message": "Bot instance has no symbols to backtest", "basket": basket_metadata},
         )
-    if symbol not in symbols:
+    if symbol not in symbols and symbol not in persisted_asset_symbols:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Requested symbol is outside the bot basket",
