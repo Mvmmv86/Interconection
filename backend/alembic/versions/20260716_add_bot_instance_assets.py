@@ -120,10 +120,10 @@ def upgrade() -> None:
             bi.organization_id,
             bi.id,
             upper(trim(symbol_value)),
-            'MANUAL',
-            'NEUTRAL',
-            'NEUTRAL',
-            'CANDIDATE',
+            'MANUAL'::botinstanceassetsource,
+            'NEUTRAL'::botinstanceassetbucket,
+            'NEUTRAL'::botinstanceassetplaybook,
+            'CANDIDATE'::botinstanceassetstatus,
             false,
             jsonb_build_object('backfilled_from', 'risk_config.allowed_symbols'),
             now(),
@@ -167,12 +167,12 @@ def upgrade() -> None:
             upper(trim(symbol_value)),
             CASE
                 WHEN coalesce(bi.risk_config #>> '{active_basket,source}', '') = 'manual'
-                THEN 'MANUAL'
-                ELSE 'SCANNER'
+                THEN 'MANUAL'::botinstanceassetsource
+                ELSE 'SCANNER'::botinstanceassetsource
             END,
-            'NEUTRAL',
-            'NEUTRAL',
-            'CANDIDATE',
+            'NEUTRAL'::botinstanceassetbucket,
+            'NEUTRAL'::botinstanceassetplaybook,
+            'CANDIDATE'::botinstanceassetstatus,
             false,
             row_number() OVER (PARTITION BY bi.id ORDER BY symbol_value),
             nullif(bi.risk_config #>> '{active_basket,timeframe}', ''),
@@ -243,10 +243,18 @@ def upgrade() -> None:
             organization_id,
             instance_id,
             symbol,
-            'SCANNER',
-            CASE WHEN direction = 'losers' THEN 'LOSER' WHEN direction = 'gainers' THEN 'GAINER' ELSE 'NEUTRAL' END,
-            CASE WHEN direction = 'losers' THEN 'REVERSAL' WHEN direction = 'gainers' THEN 'PULLBACK' ELSE 'NEUTRAL' END,
-            'CANDIDATE',
+            'SCANNER'::botinstanceassetsource,
+            CASE
+                WHEN direction = 'losers' THEN 'LOSER'::botinstanceassetbucket
+                WHEN direction = 'gainers' THEN 'GAINER'::botinstanceassetbucket
+                ELSE 'NEUTRAL'::botinstanceassetbucket
+            END,
+            CASE
+                WHEN direction = 'losers' THEN 'REVERSAL'::botinstanceassetplaybook
+                WHEN direction = 'gainers' THEN 'PULLBACK'::botinstanceassetplaybook
+                ELSE 'NEUTRAL'::botinstanceassetplaybook
+            END,
+            'CANDIDATE'::botinstanceassetstatus,
             false,
             rank_in_leg,
             nullif(direction, ''),
@@ -258,7 +266,7 @@ def upgrade() -> None:
             source = EXCLUDED.source,
             bucket = EXCLUDED.bucket,
             playbook = CASE
-                WHEN bot_instance_assets.status = 'CANDIDATE' THEN EXCLUDED.playbook
+                WHEN bot_instance_assets.status = 'CANDIDATE'::botinstanceassetstatus THEN EXCLUDED.playbook
                 ELSE bot_instance_assets.playbook
             END,
             origin_rank = EXCLUDED.origin_rank,
