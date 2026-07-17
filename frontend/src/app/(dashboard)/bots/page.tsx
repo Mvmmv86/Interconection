@@ -1174,6 +1174,10 @@ export default function BotsPage() {
   const [backtestTradesError, setBacktestTradesError] = useState<string | null>(null);
   const [backtestChartError, setBacktestChartError] = useState<string | null>(null);
   const [isBacktestSubmitting, setIsBacktestSubmitting] = useState(false);
+  const [pendingBacktestConfirmation, setPendingBacktestConfirmation] = useState<null | {
+    payload: Parameters<typeof api.createBotInstanceBacktest>[1];
+    preflight: NonNullable<Awaited<ReturnType<typeof api.preflightBotInstanceBacktest>>['data']>;
+  }>(null);
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1690,6 +1694,33 @@ export default function BotsPage() {
     setBacktestForm((current) => ({ ...current, ...patch }));
   };
 
+  const enqueueBacktestPayload = async (payload: Parameters<typeof api.createBotInstanceBacktest>[1]) => {
+    if (!backtestSelection) return;
+    setIsBacktestSubmitting(true);
+    const result = await api.createBotInstanceBacktest(backtestSelection.instance.id, payload);
+    setIsBacktestSubmitting(false);
+    if (!result.success || !result.data) {
+      setBacktestError(result.error || 'Nao foi possivel enfileirar o backtest deste ativo');
+      return;
+    }
+    setChartTimeframe(result.data.timeframe || backtestForm.timeframe);
+    setBacktestRun(result.data);
+  };
+
+  const confirmPartialBacktest = async () => {
+    if (!pendingBacktestConfirmation) return;
+    const payload = pendingBacktestConfirmation.payload;
+    setPendingBacktestConfirmation(null);
+    setBacktestError(null);
+    await enqueueBacktestPayload(payload);
+  };
+
+  const cancelPartialBacktest = () => {
+    setPendingBacktestConfirmation(null);
+    setIsBacktestSubmitting(false);
+    setBacktestError('Backtest cancelado antes do envio: historico parcial detectado.');
+  };
+
   const runAssetBacktest = async () => {
     if (!backtestSelection) return;
     setIsBacktestSubmitting(true);
@@ -1734,31 +1765,14 @@ export default function BotsPage() {
       return;
     }
     if (preflight.data.will_run_partial) {
-      const availableStart = formatHistoryDate(preflight.data.period_first_candle_at || preflight.data.first_candle_at) || 'sem inicio disponivel';
-      const availableEnd = formatHistoryDate(preflight.data.period_last_candle_at || preflight.data.last_candle_at) || 'sem fim disponivel';
-      const requestedStart = formatHistoryDate(preflight.data.requested_period_start);
-      const requestedEnd = formatHistoryDate(preflight.data.requested_period_end);
-      const confirmed = window.confirm(
-        `${preflight.data.message}\n\n` +
-        `Janela solicitada: ${requestedStart} ate ${requestedEnd}\n` +
-        `Historico local: ${availableStart} ate ${availableEnd}\n` +
-        `Cobertura atual: ${Number(preflight.data.coverage_percent || 0).toFixed(2)}%\n\n` +
-        `Deseja enfileirar mesmo assim para o worker tentar completar pela exchange?`
-      );
-      if (!confirmed) {
-        setIsBacktestSubmitting(false);
-        setBacktestError('Backtest cancelado antes do envio: historico parcial detectado.');
-        return;
-      }
-    }
-    const result = await api.createBotInstanceBacktest(backtestSelection.instance.id, backtestPayload);
-    setIsBacktestSubmitting(false);
-    if (!result.success || !result.data) {
-      setBacktestError(result.error || 'Nao foi possivel enfileirar o backtest deste ativo');
+      setIsBacktestSubmitting(false);
+      setPendingBacktestConfirmation({
+        payload: backtestPayload,
+        preflight: preflight.data,
+      });
       return;
     }
-    setChartTimeframe(result.data.timeframe || backtestForm.timeframe);
-    setBacktestRun(result.data);
+    await enqueueBacktestPayload(backtestPayload);
   };
 
   const visibleInstances = instances.filter((instance) => instance.status !== 'disabled');
@@ -1783,6 +1797,92 @@ export default function BotsPage() {
         {error && (
           <div className="rounded-xl border border-status-error/30 bg-status-error/10 px-4 py-3 text-body-sm text-status-error">
             {error}
+          </div>
+        )}
+
+        {pendingBacktestConfirmation && (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/55 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-xl rounded-[28px] border border-border-primary bg-background-primary p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-overline uppercase tracking-[0.24em] text-status-warning">Historico parcial</p>
+                  <h2 className="mt-2 text-heading-md text-text-primary">A janela solicitada nao esta completa</h2>
+                  <p className="mt-2 text-body-sm text-text-secondary">
+                    {pendingBacktestConfirmation.preflight.message ||
+                      'O worker tentara completar pela exchange, mas o resultado pode usar apenas o periodo disponivel.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={cancelPartialBacktest}
+                  className="rounded-full border border-border-primary px-3 py-2 text-body-sm text-text-secondary transition hover:border-status-warning/60 hover:text-status-warning"
+                >
+                  Fechar
+                </button>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-border-primary bg-surface-primary p-3">
+                  <p className="text-caption uppercase tracking-[0.18em] text-text-muted">Janela solicitada</p>
+                  <p className="mt-2 text-body-sm font-semibold text-text-primary">
+                    {formatHistoryDate(pendingBacktestConfirmation.preflight.requested_period_start) || 'sem inicio'}
+                  </p>
+                  <p className="text-caption text-text-secondary">
+                    ate {formatHistoryDate(pendingBacktestConfirmation.preflight.requested_period_end) || 'sem fim'}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-border-primary bg-surface-primary p-3">
+                  <p className="text-caption uppercase tracking-[0.18em] text-text-muted">Historico local</p>
+                  <p className="mt-2 text-body-sm font-semibold text-text-primary">
+                    {formatHistoryDate(
+                      pendingBacktestConfirmation.preflight.period_first_candle_at ||
+                        pendingBacktestConfirmation.preflight.first_candle_at
+                    ) || 'sem inicio'}
+                  </p>
+                  <p className="text-caption text-text-secondary">
+                    ate{' '}
+                    {formatHistoryDate(
+                      pendingBacktestConfirmation.preflight.period_last_candle_at ||
+                        pendingBacktestConfirmation.preflight.last_candle_at
+                    ) || 'sem fim'}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-status-warning/30 bg-status-warning/10 p-3">
+                  <p className="text-caption uppercase tracking-[0.18em] text-status-warning">Cobertura</p>
+                  <p className="mt-2 text-heading-sm text-status-warning">
+                    {Number(pendingBacktestConfirmation.preflight.coverage_percent || 0).toFixed(2)}%
+                  </p>
+                  <p className="text-caption text-text-secondary">
+                    {pendingBacktestConfirmation.preflight.period_rows || 0} de{' '}
+                    {pendingBacktestConfirmation.preflight.expected_rows || 0} candles
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-status-warning/30 bg-status-warning/10 p-4 text-body-sm text-text-secondary">
+                O worker ainda pode buscar candles faltantes na exchange antes da simulacao. Se a exchange nao tiver
+                historico suficiente para este ativo, o backtest sera marcado como parcial e as metricas devem ser lidas
+                com cuidado.
+              </div>
+
+              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={cancelPartialBacktest}
+                  className="rounded-2xl border border-border-primary px-5 py-3 text-body-sm font-semibold text-text-secondary transition hover:border-status-error/50 hover:text-status-error"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmPartialBacktest}
+                  disabled={isBacktestSubmitting}
+                  className="rounded-2xl bg-accent-purple px-5 py-3 text-body-sm font-semibold text-white shadow-lg shadow-accent-purple/20 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isBacktestSubmitting ? 'Enfileirando...' : 'Enfileirar mesmo assim'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
