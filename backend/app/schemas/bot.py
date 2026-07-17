@@ -422,6 +422,7 @@ class AdminBotMonitoringSummaryResponse(BaseSchema):
     """Aggregate counters for the admin bot monitoring screen."""
 
     total_assets: int = 0
+    live_monitoring_assets: int = 0
     approved_assets: int = 0
     candidate_assets: int = 0
     ignored_assets: int = 0

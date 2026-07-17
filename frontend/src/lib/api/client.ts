@@ -970,6 +970,7 @@ interface AdminBotMonitoringItem {
 
 interface AdminBotMonitoringSummary {
   total_assets: number;
+  live_monitoring_assets: number;
   approved_assets: number;
   candidate_assets: number;
   ignored_assets: number;

@@ -227,6 +227,7 @@ function formatMoney(cents: number | null | undefined, currency = 'BRL') {
 const emptyBotMonitoring: AdminBotMonitoring = {
   summary: {
     total_assets: 0,
+    live_monitoring_assets: 0,
     approved_assets: 0,
     candidate_assets: 0,
     ignored_assets: 0,
@@ -2706,10 +2707,10 @@ export default function PlatformAdminPage() {
             <div className="space-y-6">
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                 {[
-                  ['Ativos monitorados', botMonitoring.summary.total_assets],
-                  ['Aprovados', botMonitoring.summary.approved_assets],
+                  ['Ativos historicos', botMonitoring.summary.total_assets],
+                  ['Monitoramento real', botMonitoring.summary.live_monitoring_assets],
+                  ['Candidatos', botMonitoring.summary.candidate_assets],
                   ['HOLD recentes', botMonitoring.summary.latest_hold_count],
-                  ['BUY recentes', botMonitoring.summary.latest_buy_count],
                   ['Alertas de dados', botMonitoring.summary.data_warning_assets + botMonitoring.summary.risk_blocked_assets],
                 ].map(([label, value]) => (
                   <Card key={label}>
@@ -2725,8 +2726,8 @@ export default function PlatformAdminPage() {
                 <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <CardTitle>Monitoramento operacional dos bots</CardTitle>
-                    <p className="mt-1 text-caption text-text-muted">
-                      Estado atual dos ativos aprovados/candidatos, ultimo ciclo paper, sinais, gates e fonte dos candles.
+                      <p className="mt-1 text-caption text-text-muted">
+                      Ativos historicos mostram tudo que ja passou pelo bot. Monitoramento real considera apenas aprovados para execucao.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">

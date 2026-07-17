@@ -3232,6 +3232,11 @@ async def list_admin_bot_monitoring(
     items = [_monitoring_item_response(dict(row)) for row in rows]
     summary = AdminBotMonitoringSummaryResponse(
         total_assets=len(summary_items),
+        live_monitoring_assets=sum(
+            1
+            for item in summary_items
+            if item.asset_status == "approved" and item.approved_for_live
+        ),
         approved_assets=sum(1 for item in summary_items if item.asset_status == "approved"),
         candidate_assets=sum(1 for item in summary_items if item.asset_status == "candidate"),
         ignored_assets=sum(1 for item in summary_items if item.asset_status == "ignored"),
