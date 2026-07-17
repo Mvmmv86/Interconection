@@ -2392,6 +2392,10 @@ async def queue_bot_instance_backtest(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Backtest window cannot exceed 12 months",
         )
+    exchange_key = normalize_exchange_key(
+        str(instance.exchange.exchange if instance.exchange else (strategy.market_config or {}).get("default_exchange") or "bingx")
+    )
+    market_type = normalize_market_type(resolve_strategy_market_type(strategy, instance))
     engine = BotEngineService(db)
     risk_snapshot = engine._merged_risk_config(strategy, instance=instance, overrides=data.risk_overrides)
     cost_snapshot = {
