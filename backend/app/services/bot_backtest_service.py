@@ -145,10 +145,13 @@ class BotBacktestService:
         coverage_quality = self._coverage_quality(candles, run.timeframe, run.period_start, run.period_end)
         available_history = await self._available_history(run)
         data_warnings = self.engine._data_quality_warnings(data_quality) + coverage_quality["warnings"]
+        history_is_partial = bool(coverage_quality["warnings"])
         data_quality = {
             **data_quality,
             **coverage_quality,
             "stage": "loaded_candles",
+            "history_status": "partial" if history_is_partial else "complete",
+            "history_status_label": "Partial exchange history" if history_is_partial else "Full requested window",
             "preload": preload_snapshot,
             "available_history": available_history,
             "requested_limit": limit,

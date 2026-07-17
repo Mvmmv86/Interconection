@@ -272,7 +272,7 @@ function statusTone(status: string | undefined | null): 'success' | 'error' | 'y
 
 function clampBacktestMonths(value: string) {
   const parsed = Math.floor(asNumber(value, 6));
-  return Math.min(18, Math.max(1, Number.isFinite(parsed) ? parsed : 6));
+  return Math.min(12, Math.max(1, Number.isFinite(parsed) ? parsed : 6));
 }
 
 function backtestStageLabel(run: BotBacktestRun | null) {
@@ -304,6 +304,24 @@ function backtestAvailableHistoryLabel(run: BotBacktestRun | null) {
   if (first && last) return `${first} ate ${last} (${rows.toLocaleString('pt-BR')} candles)`;
   if (rows > 0) return `${rows.toLocaleString('pt-BR')} candles armazenados`;
   return 'Aguardando ingestao sob demanda';
+}
+
+function backtestRequestedWindowLabel(run: BotBacktestRun | null) {
+  const dataQuality = isRecord(run?.data_quality) ? run!.data_quality : {};
+  const start = formatHistoryDate(dataQuality.requested_period_start);
+  const end = formatHistoryDate(dataQuality.requested_period_end);
+  if (start && end) return `${start} ate ${end}`;
+  if (run?.period_start && run?.period_end) return `${formatHistoryDate(run.period_start)} ate ${formatHistoryDate(run.period_end)}`;
+  return 'Aguardando solicitacao';
+}
+
+function backtestIsPartialHistory(run: BotBacktestRun | null) {
+  if (!run) return false;
+  const dataQuality = isRecord(run.data_quality) ? run.data_quality : {};
+  const warnings = asStringArray(dataQuality.warnings);
+  const coverage = Number(dataQuality.period_coverage_percent || 0);
+  const historyStatus = String(dataQuality.history_status || '').toLowerCase();
+  return historyStatus === 'partial' || coverage < 90 || warnings.some((warning) => warning.includes('available_history') || warning.includes('coverage'));
 }
 
 function backtestPreloadLabel(run: BotBacktestRun | null) {
@@ -1690,7 +1708,7 @@ export default function BotsPage() {
       updateBacktestForm({ months: String(months) });
     }
     periodStart.setMonth(periodStart.getMonth() - months);
-    const result = await api.createBotInstanceBacktest(backtestSelection.instance.id, {
+    const backtestPayload = {
       symbol: backtestSelection.symbol,
       timeframe: backtestForm.timeframe,
       initial_capital_usd: asNumber(backtestForm.initialCapitalUsd, 10000),
@@ -1708,7 +1726,32 @@ export default function BotsPage() {
         breakeven_activation_percent: Math.max(0, asNumber(backtestForm.breakevenPercent, 4)),
         trailing_stop_percent: Math.max(0, asNumber(backtestForm.trailingStopPercent, 2)),
       },
-    });
+    };
+    const preflight = await api.preflightBotInstanceBacktest(backtestSelection.instance.id, backtestPayload);
+    if (!preflight.success || !preflight.data) {
+      setIsBacktestSubmitting(false);
+      setBacktestError(preflight.error || 'Nao foi possivel validar o historico antes do backtest');
+      return;
+    }
+    if (preflight.data.will_run_partial) {
+      const availableStart = formatHistoryDate(preflight.data.period_first_candle_at || preflight.data.first_candle_at) || 'sem inicio disponivel';
+      const availableEnd = formatHistoryDate(preflight.data.period_last_candle_at || preflight.data.last_candle_at) || 'sem fim disponivel';
+      const requestedStart = formatHistoryDate(preflight.data.requested_period_start);
+      const requestedEnd = formatHistoryDate(preflight.data.requested_period_end);
+      const confirmed = window.confirm(
+        `${preflight.data.message}\n\n` +
+        `Janela solicitada: ${requestedStart} ate ${requestedEnd}\n` +
+        `Historico local: ${availableStart} ate ${availableEnd}\n` +
+        `Cobertura atual: ${Number(preflight.data.coverage_percent || 0).toFixed(2)}%\n\n` +
+        `Deseja enfileirar mesmo assim para o worker tentar completar pela exchange?`
+      );
+      if (!confirmed) {
+        setIsBacktestSubmitting(false);
+        setBacktestError('Backtest cancelado antes do envio: historico parcial detectado.');
+        return;
+      }
+    }
+    const result = await api.createBotInstanceBacktest(backtestSelection.instance.id, backtestPayload);
     setIsBacktestSubmitting(false);
     if (!result.success || !result.data) {
       setBacktestError(result.error || 'Nao foi possivel enfileirar o backtest deste ativo');
@@ -3020,7 +3063,7 @@ export default function BotsPage() {
                           <input
                             type="number"
                             min={1}
-                            max={18}
+                            max={12}
                             value={backtestForm.months}
                             onChange={(event) => updateBacktestForm({ months: event.target.value })}
                             className="h-10 w-full rounded-lg border border-border-subtle bg-background-secondary px-3 pr-16 text-body-sm text-text-primary outline-none focus:border-accent-blue"
@@ -3028,7 +3071,7 @@ export default function BotsPage() {
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] uppercase tracking-[0.14em] text-text-tertiary">meses</span>
                         </div>
                         <p className="text-[10px] text-text-tertiary">
-                          Maximo 18 meses. Se o ativo for novo, usamos o historico real disponivel na exchange e avisamos o periodo.
+                          Maximo 12 meses. Se o ativo for novo, usamos o historico real disponivel na exchange e avisamos o periodo.
                         </p>
                       </label>
                       <label className="space-y-1 text-caption text-text-secondary">
@@ -3159,7 +3202,12 @@ export default function BotsPage() {
                 <Card variant="glass" className="p-4">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-body-sm font-semibold text-text-primary">Pipeline e qualidade</p>
-                    <span className="text-caption text-text-tertiary">{Math.round(Number(backtestRun?.progress || 0))}%</span>
+                    <div className="flex items-center gap-2">
+                      {backtestIsPartialHistory(backtestRun) && (
+                        <Badge variant="yellow" size="sm">Parcial</Badge>
+                      )}
+                      <span className="text-caption text-text-tertiary">{Math.round(Number(backtestRun?.progress || 0))}%</span>
+                    </div>
                   </div>
                   <div className="mt-3 h-2 overflow-hidden rounded-full bg-background-secondary">
                     <div
@@ -3176,8 +3224,14 @@ export default function BotsPage() {
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span>Cobertura historica</span>
-                      <span className="font-semibold text-text-primary">
+                      <span className={`font-semibold ${backtestIsPartialHistory(backtestRun) ? 'text-status-warning' : 'text-text-primary'}`}>
                         {backtestRun ? `${Number(backtestRun.data_quality?.period_coverage_percent || 0).toFixed(2)}%` : '-'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Janela solicitada</span>
+                      <span className="max-w-[62%] text-right font-semibold text-text-primary">
+                        {backtestRequestedWindowLabel(backtestRun)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-3">
@@ -3219,6 +3273,11 @@ export default function BotsPage() {
                   {asStringArray(backtestRun?.data_quality?.warnings).length > 0 && (
                     <div className="mt-3 rounded-lg border border-status-warning/30 bg-status-warning/10 p-2 text-caption text-status-warning">
                       {asStringArray(backtestRun?.data_quality?.warnings).join(', ')}
+                    </div>
+                  )}
+                  {backtestIsPartialHistory(backtestRun) && (
+                    <div className="mt-3 rounded-lg border border-status-warning/30 bg-status-warning/10 p-2 text-caption text-status-warning">
+                      Resultado parcial: a exchange nao entregou a janela completa solicitada. As metricas usam somente os candles reais disponiveis no periodo exibido acima.
                     </div>
                   )}
                   {backtestRun?.error_message && (

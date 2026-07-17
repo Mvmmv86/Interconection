@@ -2170,6 +2170,153 @@ async def refresh_bot_instance_basket(
     )
 
 
+@router.post("/instances/{instance_id}/backtests/preflight", response_model=dict[str, object])
+async def preflight_bot_instance_backtest(
+    instance_id: UUID,
+    data: BotInstanceBacktestCreate,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:backtest", route_key="bots", force=True)),
+    ],
+    db: DBSession,
+) -> dict[str, object]:
+    """Preview whether the requested backtest window has enough local candles."""
+    instance = await db.scalar(
+        select(BotInstance)
+        .options(
+            selectinload(BotInstance.template).selectinload(BotTemplate.parameters),
+            selectinload(BotInstance.strategy),
+            selectinload(BotInstance.exchange),
+            selectinload(BotInstance.assets),
+        )
+        .where(
+            BotInstance.id == instance_id,
+            BotInstance.organization_id == permission_ctx.organization_id,
+        )
+    )
+    if instance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bot instance not found")
+    if (
+        is_scope_specific_enforcement_enabled("bots")
+        and not permission_ctx.can_access_client(instance.client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+    if instance.strategy is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bot instance has no strategy configured")
+
+    strategy = instance.strategy
+    symbol = normalize_strategy_symbol(data.symbol)
+    if not symbol:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid symbol")
+    ranking_service = MarketRankingService(db)
+    fallback_symbols = resolve_strategy_symbols(strategy, instance)
+    symbols, basket_metadata = await ranking_service.resolve_instance_basket_symbols(
+        instance=instance,
+        fallback_symbols=fallback_symbols,
+        refresh_snapshot=False,
+    )
+    persisted_asset_symbols = {
+        normalize_strategy_symbol(asset.symbol)
+        for asset in instance.assets
+        if asset.status != BotInstanceAssetStatus.DISABLED and normalize_strategy_symbol(asset.symbol)
+    }
+    if not symbols and symbol not in persisted_asset_symbols:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "Bot instance has no symbols to backtest", "basket": basket_metadata},
+        )
+    if symbol not in symbols and symbol not in persisted_asset_symbols:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requested symbol is outside the bot basket",
+        )
+
+    period_end = data.period_end or datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    period_start = data.period_start or (period_end - timedelta(days=365))
+    if period_start >= period_end:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="period_start must be before period_end")
+    max_backtest_window = timedelta(days=366)
+    if period_end - period_start > max_backtest_window:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Backtest window cannot exceed 12 months",
+        )
+
+    exchange_key = normalize_exchange_key(
+        str(instance.exchange.exchange if instance.exchange else (strategy.market_config or {}).get("default_exchange") or "bingx")
+    )
+    market_type = normalize_market_type(resolve_strategy_market_type(strategy, instance))
+    timeframe = str(data.timeframe or resolve_strategy_timeframe(strategy, instance)).lower()
+    allowed_backtest_timeframes = {"1h", "4h", "1d"}
+    if timeframe not in allowed_backtest_timeframes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Backtest timeframe must be one of: 1h, 4h, 1d",
+        )
+
+    candle_filters = (
+        MarketCandle.exchange == exchange_key,
+        MarketCandle.symbol == symbol,
+        MarketCandle.market_type == market_type,
+        MarketCandle.timeframe == timeframe,
+    )
+    total_result = await db.execute(
+        select(
+            func.count(MarketCandle.id),
+            func.min(MarketCandle.open_time),
+            func.max(MarketCandle.open_time),
+        ).where(*candle_filters)
+    )
+    total_rows, first_candle_at, last_candle_at = total_result.one()
+    period_result = await db.execute(
+        select(
+            func.count(MarketCandle.id),
+            func.min(MarketCandle.open_time),
+            func.max(MarketCandle.open_time),
+        ).where(
+            *candle_filters,
+            MarketCandle.open_time >= period_start,
+            MarketCandle.open_time <= period_end,
+        )
+    )
+    period_rows, period_first_at, period_last_at = period_result.one()
+    expected_rows = _chart_expected_rows(timeframe, period_start, period_end)
+    coverage_percent = min(100.0, (float(period_rows or 0) / float(expected_rows) * 100.0) if expected_rows else 100.0)
+    timeframe_seconds = _chart_timeframe_seconds(timeframe)
+    tolerance = timedelta(seconds=timeframe_seconds)
+    covers_start = period_first_at is not None and period_first_at <= period_start + tolerance
+    covers_end = period_last_at is not None and period_last_at >= period_end - tolerance
+    will_run_partial = coverage_percent < 90 or not covers_start or not covers_end
+    if int(period_rows or 0) <= 1:
+        message = "Sem candles suficientes para esta janela. O worker tentara buscar historico sob demanda na exchange."
+    elif will_run_partial:
+        message = "Historico parcial: o worker tentara completar pela exchange, mas o resultado pode usar apenas o periodo disponivel."
+    else:
+        message = "Historico local suficiente para a janela solicitada."
+
+    return {
+        "symbol": symbol,
+        "exchange": exchange_key,
+        "market_type": market_type,
+        "timeframe": timeframe,
+        "requested_period_start": period_start,
+        "requested_period_end": period_end,
+        "stored_rows": int(total_rows or 0),
+        "first_candle_at": first_candle_at,
+        "last_candle_at": last_candle_at,
+        "period_rows": int(period_rows or 0),
+        "period_first_candle_at": period_first_at,
+        "period_last_candle_at": period_last_at,
+        "expected_rows": expected_rows,
+        "coverage_percent": coverage_percent,
+        "will_run_partial": will_run_partial,
+        "message": message,
+    }
+
+
 @router.post("/instances/{instance_id}/backtests", response_model=BotBacktestRunResponse, status_code=status.HTTP_202_ACCEPTED)
 async def queue_bot_instance_backtest(
     instance_id: UUID,
@@ -2239,23 +2386,11 @@ async def queue_bot_instance_backtest(
     period_start = data.period_start or (period_end - timedelta(days=365))
     if period_start >= period_end:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="period_start must be before period_end")
-    max_backtest_window = timedelta(days=550)
+    max_backtest_window = timedelta(days=366)
     if period_end - period_start > max_backtest_window:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Backtest window cannot exceed 18 months",
-        )
-
-    exchange_key = normalize_exchange_key(
-        str(instance.exchange.exchange if instance.exchange else (strategy.market_config or {}).get("default_exchange") or "bingx")
-    )
-    market_type = normalize_market_type(resolve_strategy_market_type(strategy, instance))
-    timeframe = str(data.timeframe or resolve_strategy_timeframe(strategy, instance)).lower()
-    allowed_backtest_timeframes = {"1h", "4h", "1d"}
-    if timeframe not in allowed_backtest_timeframes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Backtest timeframe must be one of: 1h, 4h, 1d",
+            detail="Backtest window cannot exceed 12 months",
         )
     engine = BotEngineService(db)
     risk_snapshot = engine._merged_risk_config(strategy, instance=instance, overrides=data.risk_overrides)

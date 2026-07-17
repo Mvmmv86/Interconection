@@ -817,6 +817,25 @@ interface BotBacktestChart {
   indicators?: Record<string, BotBacktestIndicatorPayload>;
 }
 
+interface BotBacktestPreflight {
+  symbol: string;
+  exchange: string;
+  market_type: string;
+  timeframe: string;
+  requested_period_start: string;
+  requested_period_end: string;
+  stored_rows: number;
+  first_candle_at: string | null;
+  last_candle_at: string | null;
+  period_rows: number;
+  period_first_candle_at: string | null;
+  period_last_candle_at: string | null;
+  expected_rows: number;
+  coverage_percent: number;
+  will_run_partial: boolean;
+  message: string;
+}
+
 interface BotMarketRankingItem {
   id: string;
   rank: number;
@@ -1921,6 +1940,25 @@ class ApiClient {
     return this.request<BotSignal[]>(`/api/v1/bots/instances/${instanceId}/signals${qs}`);
   }
 
+  async preflightBotInstanceBacktest(
+    instanceId: string,
+    data: {
+      symbol: string;
+      timeframe?: string;
+      initial_capital_usd?: number;
+      period_start?: string | null;
+      period_end?: string | null;
+      fee_percent?: number;
+      slippage_percent?: number;
+      risk_overrides?: Record<string, unknown>;
+    }
+  ): Promise<ApiResponse<BotBacktestPreflight>> {
+    return this.request<BotBacktestPreflight>(`/api/v1/bots/instances/${instanceId}/backtests/preflight`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async createBotInstanceBacktest(
     instanceId: string,
     data: {
@@ -2216,6 +2254,7 @@ export type {
   BotBacktestTrade,
   BotBacktestCandle,
   BotBacktestChart,
+  BotBacktestPreflight,
   BotMarketRanking,
   BotMarketRankingItem,
   BotMarketScannerBootstrap,
