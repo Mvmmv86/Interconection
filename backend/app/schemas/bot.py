@@ -367,6 +367,104 @@ class BotSignalResponse(BaseSchema):
     updated_at: datetime
 
 
+class AdminBotMonitoringItemResponse(BaseSchema):
+    """Platform admin view over one monitored bot asset and its latest cycle."""
+
+    organization_id: UUID
+    organization_name: Optional[str] = None
+    client_id: UUID
+    client_name: Optional[str] = None
+    instance_id: UUID
+    instance_name: str
+    instance_status: str
+    instance_mode: str
+    template_name: Optional[str] = None
+    strategy_name: Optional[str] = None
+    exchange_id: Optional[UUID] = None
+    exchange_label: Optional[str] = None
+    exchange_type: Optional[str] = None
+    symbol: str
+    asset_status: str
+    approved_for_live: bool
+    bucket: str
+    playbook: str
+    origin_direction: Optional[str] = None
+    origin_timeframe: Optional[str] = None
+    performance_percent: Optional[float] = None
+    approved_at: Optional[datetime] = None
+    last_run_id: Optional[UUID] = None
+    last_run_status: Optional[str] = None
+    last_run_cycle_key: Optional[str] = None
+    last_run_started_at: Optional[datetime] = None
+    last_run_completed_at: Optional[datetime] = None
+    last_run_error: Optional[str] = None
+    last_signal_id: Optional[UUID] = None
+    last_signal_action: Optional[str] = None
+    last_signal_status: Optional[str] = None
+    last_signal_confidence: Optional[float] = None
+    last_signal_price_usd: Optional[float] = None
+    last_signal_notional_usd: Optional[float] = None
+    last_signal_reason: Optional[str] = None
+    last_signal_generated_at: Optional[datetime] = None
+    candle_source: Optional[str] = None
+    entry_passed: Optional[bool] = None
+    exit_passed: Optional[bool] = None
+    risk_blocks: list[str] = Field(default_factory=list)
+    data_warnings: list[str] = Field(default_factory=list)
+    active_stop_price: Optional[float] = None
+    atr_stop: Optional[float] = None
+    take_profit_price: Optional[float] = None
+    trailing_stop_price: Optional[float] = None
+    breakeven_price: Optional[float] = None
+
+
+class AdminBotMonitoringSummaryResponse(BaseSchema):
+    """Aggregate counters for the admin bot monitoring screen."""
+
+    total_assets: int = 0
+    approved_assets: int = 0
+    candidate_assets: int = 0
+    ignored_assets: int = 0
+    disabled_assets: int = 0
+    latest_buy_count: int = 0
+    latest_sell_count: int = 0
+    latest_hold_count: int = 0
+    latest_failed_runs: int = 0
+    data_warning_assets: int = 0
+    risk_blocked_assets: int = 0
+
+
+class AdminBotMonitoringResponse(BaseSchema):
+    """Admin bot monitoring payload."""
+
+    summary: AdminBotMonitoringSummaryResponse
+    items: list[AdminBotMonitoringItemResponse]
+
+
+class AdminBotMonitoringHistoryItemResponse(BaseSchema):
+    """One historical paper/live cycle for a monitored bot asset."""
+
+    run_id: Optional[UUID] = None
+    run_status: Optional[str] = None
+    cycle_key: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    run_error: Optional[str] = None
+    signal_id: Optional[UUID] = None
+    signal_action: Optional[str] = None
+    signal_status: Optional[str] = None
+    confidence: Optional[float] = None
+    price_usd: Optional[float] = None
+    notional_usd: Optional[float] = None
+    reason: Optional[str] = None
+    generated_at: Optional[datetime] = None
+    candle_source: Optional[str] = None
+    entry_passed: Optional[bool] = None
+    exit_passed: Optional[bool] = None
+    risk_blocks: list[str] = Field(default_factory=list)
+    data_warnings: list[str] = Field(default_factory=list)
+
+
 class BotBacktestCreate(BaseSchema):
     """Run a backtest over available price history."""
 

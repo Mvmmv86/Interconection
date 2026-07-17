@@ -41,6 +41,7 @@ from app.models.bot import (
     BotInstanceStatus,
     BotRun,
     BotSignal,
+    BotSignalAction,
     BotStrategy,
     BotStrategyStatus,
     BotTemplate,
@@ -55,6 +56,10 @@ from app.models.organization import Organization, PlanType
 from app.schemas.exchange import SUPPORTED_EXCHANGES as ENABLED_EXCHANGE_CONNECTORS
 from app.schemas.bot import (
     AdminBotInstanceUpdate,
+    AdminBotMonitoringHistoryItemResponse,
+    AdminBotMonitoringItemResponse,
+    AdminBotMonitoringResponse,
+    AdminBotMonitoringSummaryResponse,
     AdminBotTemplateCreate,
     AdminBotTemplateUpdate,
     BotBacktestCreate,
@@ -466,6 +471,113 @@ def _signal_response(signal: BotSignal) -> BotSignalResponse:
         generated_at=signal.generated_at,
         created_at=signal.created_at,
         updated_at=signal.updated_at,
+    )
+
+
+def _maybe_float(value: object) -> Optional[float]:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _enum_text(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    return _enum_value(value).lower()
+
+
+def _risk_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None]
+
+
+def _monitoring_item_response(row: dict) -> AdminBotMonitoringItemResponse:
+    risk_snapshot = dict(row.get("risk_snapshot") or {})
+    data_quality = dict(risk_snapshot.get("data_quality") or {})
+    candle_source = (
+        risk_snapshot.get("candle_source")
+        or risk_snapshot.get("data_source")
+        or data_quality.get("ohlcv_source")
+    )
+    return AdminBotMonitoringItemResponse(
+        organization_id=row["organization_id"],
+        organization_name=row.get("organization_name"),
+        client_id=row["client_id"],
+        client_name=row.get("client_name"),
+        instance_id=row["instance_id"],
+        instance_name=row["instance_name"],
+        instance_status=_enum_text(row.get("instance_status")) or "",
+        instance_mode=_enum_text(row.get("instance_mode")) or "",
+        template_name=row.get("template_name"),
+        strategy_name=row.get("strategy_name"),
+        exchange_id=row.get("exchange_id"),
+        exchange_label=row.get("exchange_label"),
+        exchange_type=row.get("exchange_type"),
+        symbol=row["symbol"],
+        asset_status=_enum_text(row.get("asset_status")) or "",
+        approved_for_live=bool(row.get("approved_for_live")),
+        bucket=_enum_text(row.get("bucket")) or "",
+        playbook=_enum_text(row.get("playbook")) or "",
+        origin_direction=row.get("origin_direction"),
+        origin_timeframe=row.get("origin_timeframe"),
+        performance_percent=_maybe_float(row.get("performance_percent")),
+        approved_at=row.get("approved_at"),
+        last_run_id=row.get("run_id"),
+        last_run_status=_enum_text(row.get("run_status")),
+        last_run_cycle_key=row.get("cycle_key"),
+        last_run_started_at=row.get("started_at"),
+        last_run_completed_at=row.get("completed_at"),
+        last_run_error=row.get("run_error"),
+        last_signal_id=row.get("signal_id"),
+        last_signal_action=_enum_text(row.get("signal_action")),
+        last_signal_status=_enum_text(row.get("signal_status")),
+        last_signal_confidence=_maybe_float(row.get("confidence")),
+        last_signal_price_usd=_maybe_float(row.get("price_usd")),
+        last_signal_notional_usd=_maybe_float(row.get("notional_usd")),
+        last_signal_reason=row.get("reason"),
+        last_signal_generated_at=row.get("generated_at"),
+        candle_source=str(candle_source) if candle_source else None,
+        entry_passed=risk_snapshot.get("entry_passed"),
+        exit_passed=risk_snapshot.get("exit_passed"),
+        risk_blocks=_risk_list(risk_snapshot.get("blocks")),
+        data_warnings=_risk_list(risk_snapshot.get("data_warnings")),
+        active_stop_price=_maybe_float(risk_snapshot.get("active_stop_price")),
+        atr_stop=_maybe_float(risk_snapshot.get("atr_stop")),
+        take_profit_price=_maybe_float(risk_snapshot.get("take_profit_price")),
+        trailing_stop_price=_maybe_float(risk_snapshot.get("trailing_stop_price")),
+        breakeven_price=_maybe_float(risk_snapshot.get("breakeven_price")),
+    )
+
+
+def _monitoring_history_response(signal: BotSignal, run: BotRun | None) -> AdminBotMonitoringHistoryItemResponse:
+    risk_snapshot = dict(signal.risk_snapshot or {})
+    data_quality = dict(risk_snapshot.get("data_quality") or {})
+    candle_source = (
+        risk_snapshot.get("candle_source")
+        or risk_snapshot.get("data_source")
+        or data_quality.get("ohlcv_source")
+    )
+    return AdminBotMonitoringHistoryItemResponse(
+        run_id=run.id if run else signal.run_id,
+        run_status=_enum_text(run.status) if run else None,
+        cycle_key=run.cycle_key if run else None,
+        started_at=run.started_at if run else None,
+        completed_at=run.completed_at if run else None,
+        run_error=run.error if run else None,
+        signal_id=signal.id,
+        signal_action=_enum_text(signal.action),
+        signal_status=_enum_text(signal.status),
+        confidence=_maybe_float(signal.confidence),
+        price_usd=_maybe_float(signal.price_usd),
+        notional_usd=_maybe_float(signal.notional_usd),
+        reason=signal.reason,
+        generated_at=signal.generated_at,
+        candle_source=str(candle_source) if candle_source else None,
+        entry_passed=risk_snapshot.get("entry_passed"),
+        exit_passed=risk_snapshot.get("exit_passed"),
+        risk_blocks=_risk_list(risk_snapshot.get("blocks")),
+        data_warnings=_risk_list(risk_snapshot.get("data_warnings")),
     )
 
 
@@ -2958,6 +3070,214 @@ async def run_admin_bot_scheduler(
         request=request,
     )
     return BotSchedulerRunResponse(**result)
+
+
+@admin_router.get("/monitoring", response_model=AdminBotMonitoringResponse)
+async def list_admin_bot_monitoring(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    client_id: Optional[UUID] = None,
+    instance_id: Optional[UUID] = None,
+    symbol: Optional[str] = Query(default=None, max_length=40),
+    asset_status: Optional[str] = Query(default=None, max_length=40),
+    bucket: Optional[str] = Query(default=None, max_length=40),
+    playbook: Optional[str] = Query(default=None, max_length=40),
+    signal_action: Optional[str] = Query(default=None, max_length=40),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
+) -> AdminBotMonitoringResponse:
+    """Operational monitoring view for bot assets, cycles and latest signals."""
+    normalized_symbol = normalize_strategy_symbol(symbol) if symbol else None
+    asset_status_filter = None
+    if asset_status:
+        try:
+            asset_status_filter = BotInstanceAssetStatus(asset_status.lower())
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid asset status") from exc
+
+    bucket_filter = None
+    if bucket:
+        try:
+            bucket_filter = BotInstanceAssetBucket(bucket.lower())
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid bucket") from exc
+
+    playbook_filter = None
+    if playbook:
+        try:
+            playbook_filter = BotInstanceAssetPlaybook(playbook.lower())
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid playbook") from exc
+
+    signal_action_filter = None
+    if signal_action:
+        try:
+            signal_action_filter = BotSignalAction(signal_action.lower())
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid signal action") from exc
+
+    signal_query = select(
+        BotSignal.id.label("signal_id"),
+        BotSignal.instance_id.label("signal_instance_id"),
+        BotSignal.symbol.label("signal_symbol"),
+        BotSignal.run_id.label("signal_run_id"),
+        BotSignal.action.label("signal_action"),
+        BotSignal.status.label("signal_status"),
+        BotSignal.confidence.label("confidence"),
+        BotSignal.price_usd.label("price_usd"),
+        BotSignal.notional_usd.label("notional_usd"),
+        BotSignal.reason.label("reason"),
+        BotSignal.risk_snapshot.label("risk_snapshot"),
+        BotSignal.generated_at.label("generated_at"),
+        func.row_number()
+        .over(
+            partition_by=(BotSignal.instance_id, BotSignal.symbol),
+            order_by=BotSignal.generated_at.desc(),
+        )
+        .label("rn"),
+    )
+    if organization_id is not None:
+        signal_query = signal_query.where(BotSignal.organization_id == organization_id)
+    if client_id is not None:
+        signal_query = signal_query.where(BotSignal.client_id == client_id)
+    if instance_id is not None:
+        signal_query = signal_query.where(BotSignal.instance_id == instance_id)
+    if normalized_symbol:
+        signal_query = signal_query.where(BotSignal.symbol == normalized_symbol)
+
+    signal_ranked = signal_query.subquery()
+    latest_signal = (
+        select(*[signal_ranked.c[name] for name in signal_ranked.c.keys()])
+        .where(signal_ranked.c.rn == 1)
+        .subquery()
+    )
+
+    query = (
+        select(
+            Organization.id.label("organization_id"),
+            Organization.name.label("organization_name"),
+            Client.id.label("client_id"),
+            Client.name.label("client_name"),
+            BotInstance.id.label("instance_id"),
+            BotInstance.name.label("instance_name"),
+            BotInstance.status.label("instance_status"),
+            BotInstance.mode.label("instance_mode"),
+            BotTemplate.name.label("template_name"),
+            BotStrategy.name.label("strategy_name"),
+            Exchange.id.label("exchange_id"),
+            Exchange.label.label("exchange_label"),
+            Exchange.exchange.label("exchange_type"),
+            BotInstanceAsset.symbol.label("symbol"),
+            BotInstanceAsset.status.label("asset_status"),
+            BotInstanceAsset.approved_for_live.label("approved_for_live"),
+            BotInstanceAsset.bucket.label("bucket"),
+            BotInstanceAsset.playbook.label("playbook"),
+            BotInstanceAsset.origin_direction.label("origin_direction"),
+            BotInstanceAsset.origin_timeframe.label("origin_timeframe"),
+            BotInstanceAsset.performance_percent.label("performance_percent"),
+            BotInstanceAsset.approved_at.label("approved_at"),
+            latest_signal.c.signal_id,
+            latest_signal.c.signal_action,
+            latest_signal.c.signal_status,
+            latest_signal.c.confidence,
+            latest_signal.c.price_usd,
+            latest_signal.c.notional_usd,
+            latest_signal.c.reason,
+            latest_signal.c.risk_snapshot,
+            latest_signal.c.generated_at,
+            BotRun.id.label("run_id"),
+            BotRun.status.label("run_status"),
+            BotRun.cycle_key.label("cycle_key"),
+            BotRun.started_at.label("started_at"),
+            BotRun.completed_at.label("completed_at"),
+            BotRun.error.label("run_error"),
+        )
+        .select_from(BotInstanceAsset)
+        .join(BotInstance, BotInstance.id == BotInstanceAsset.instance_id)
+        .join(Organization, Organization.id == BotInstanceAsset.organization_id)
+        .join(Client, Client.id == BotInstance.client_id)
+        .outerjoin(Exchange, Exchange.id == BotInstance.exchange_id)
+        .outerjoin(BotTemplate, BotTemplate.id == BotInstance.template_id)
+        .outerjoin(BotStrategy, BotStrategy.id == BotInstance.strategy_id)
+        .outerjoin(
+            latest_signal,
+            (latest_signal.c.signal_instance_id == BotInstanceAsset.instance_id)
+            & (latest_signal.c.signal_symbol == BotInstanceAsset.symbol),
+        )
+        .outerjoin(BotRun, BotRun.id == latest_signal.c.signal_run_id)
+        .order_by(latest_signal.c.generated_at.desc().nullslast(), BotInstanceAsset.updated_at.desc())
+    )
+
+    if organization_id is not None:
+        query = query.where(BotInstanceAsset.organization_id == organization_id)
+    if client_id is not None:
+        query = query.where(BotInstance.client_id == client_id)
+    if instance_id is not None:
+        query = query.where(BotInstanceAsset.instance_id == instance_id)
+    if normalized_symbol:
+        query = query.where(BotInstanceAsset.symbol == normalized_symbol)
+    if asset_status_filter is not None:
+        query = query.where(BotInstanceAsset.status == asset_status_filter)
+    if bucket_filter is not None:
+        query = query.where(BotInstanceAsset.bucket == bucket_filter)
+    if playbook_filter is not None:
+        query = query.where(BotInstanceAsset.playbook == playbook_filter)
+    if signal_action_filter is not None:
+        query = query.where(latest_signal.c.signal_action == signal_action_filter)
+
+    summary_rows = (await db.execute(query)).mappings().all()
+    summary_items = [_monitoring_item_response(dict(row)) for row in summary_rows]
+    rows = (await db.execute(query.offset(offset).limit(limit))).mappings().all()
+    items = [_monitoring_item_response(dict(row)) for row in rows]
+    summary = AdminBotMonitoringSummaryResponse(
+        total_assets=len(summary_items),
+        approved_assets=sum(1 for item in summary_items if item.asset_status == "approved"),
+        candidate_assets=sum(1 for item in summary_items if item.asset_status == "candidate"),
+        ignored_assets=sum(1 for item in summary_items if item.asset_status == "ignored"),
+        disabled_assets=sum(1 for item in summary_items if item.asset_status == "disabled"),
+        latest_buy_count=sum(1 for item in summary_items if item.last_signal_action == "buy"),
+        latest_sell_count=sum(1 for item in summary_items if item.last_signal_action == "sell"),
+        latest_hold_count=sum(1 for item in summary_items if item.last_signal_action == "hold"),
+        latest_failed_runs=sum(1 for item in summary_items if item.last_run_status == "failed"),
+        data_warning_assets=sum(1 for item in summary_items if item.data_warnings),
+        risk_blocked_assets=sum(1 for item in summary_items if item.risk_blocks),
+    )
+    return AdminBotMonitoringResponse(summary=summary, items=items)
+
+
+@admin_router.get("/monitoring/{instance_id}/{symbol}/history", response_model=list[AdminBotMonitoringHistoryItemResponse])
+async def list_admin_bot_monitoring_history(
+    _superuser: SuperUser,
+    db: DBSession,
+    instance_id: UUID,
+    symbol: str,
+    limit: int = Query(30, ge=1, le=100),
+) -> list[AdminBotMonitoringHistoryItemResponse]:
+    """List recent cycles/signals for one monitored bot asset."""
+    normalized_symbol = normalize_strategy_symbol(symbol)
+    asset = await db.scalar(
+        select(BotInstanceAsset.id).where(
+            BotInstanceAsset.instance_id == instance_id,
+            BotInstanceAsset.symbol == normalized_symbol,
+        )
+    )
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Monitored asset not found")
+
+    rows = (
+        await db.execute(
+            select(BotSignal, BotRun)
+            .outerjoin(BotRun, BotRun.id == BotSignal.run_id)
+            .where(
+                BotSignal.instance_id == instance_id,
+                BotSignal.symbol == normalized_symbol,
+            )
+            .order_by(BotSignal.generated_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [_monitoring_history_response(signal, run) for signal, run in rows]
 
 
 @admin_router.get("/templates", response_model=list[BotTemplateResponse])

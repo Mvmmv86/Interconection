@@ -26,6 +26,9 @@ import {
   type AdminBillingInvoice,
   type AdminBillingPayment,
   type AdminBillingSubscription,
+  type AdminBotMonitoring,
+  type AdminBotMonitoringHistoryItem,
+  type AdminBotMonitoringItem,
   type AdminClient,
   type AdminFinanceSummary,
   type AdminOrganization,
@@ -55,6 +58,7 @@ type AdminTab =
   | 'clients'
   | 'strategies'
   | 'bots'
+  | 'bot-monitoring'
   | 'finance'
   | 'plans'
   | 'audit'
@@ -67,6 +71,7 @@ const tabs: Array<{ id: AdminTab; label: string; icon: React.ElementType }> = [
   { id: 'clients', label: 'Carteiras', icon: Layers3 },
   { id: 'strategies', label: 'Estrategias', icon: LineChart },
   { id: 'bots', label: 'Bots', icon: Bot },
+  { id: 'bot-monitoring', label: 'Monitoramento', icon: Activity },
   { id: 'finance', label: 'Financeiro', icon: CreditCard },
   { id: 'plans', label: 'Planos', icon: Sparkles },
   { id: 'audit', label: 'Auditoria', icon: FileText },
@@ -219,6 +224,61 @@ function formatMoney(cents: number | null | undefined, currency = 'BRL') {
   }).format((cents || 0) / 100);
 }
 
+const emptyBotMonitoring: AdminBotMonitoring = {
+  summary: {
+    total_assets: 0,
+    approved_assets: 0,
+    candidate_assets: 0,
+    ignored_assets: 0,
+    disabled_assets: 0,
+    latest_buy_count: 0,
+    latest_sell_count: 0,
+    latest_hold_count: 0,
+    latest_failed_runs: 0,
+    data_warning_assets: 0,
+    risk_blocked_assets: 0,
+  },
+  items: [],
+};
+
+function formatAdminDate(value?: string | null) {
+  if (!value) return 'Sem ciclo';
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function formatAdminUsd(value?: number | null, digits = 4) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
+function formatAdminPercent(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
+function signalBadgeClass(action?: string | null) {
+  if (action === 'buy') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500';
+  if (action === 'sell') return 'border-red-500/30 bg-red-500/10 text-red-500';
+  if (action === 'hold') return 'border-blue-500/30 bg-blue-500/10 text-blue-500';
+  return 'border-border-subtle bg-background-tertiary text-text-tertiary';
+}
+
+function gateLabel(value?: boolean | null) {
+  if (value === true) return 'check';
+  if (value === false) return 'wait';
+  return 'idle';
+}
+
 export default function PlatformAdminPage() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: isAuthLoading, logout } = useAuth();
@@ -241,6 +301,14 @@ export default function PlatformAdminPage() {
   const [botBacktests, setBotBacktests] = useState<BotBacktest[]>([]);
   const [botTemplates, setBotTemplates] = useState<BotTemplate[]>([]);
   const [botInstances, setBotInstances] = useState<BotInstance[]>([]);
+  const [botMonitoring, setBotMonitoring] = useState<AdminBotMonitoring>(emptyBotMonitoring);
+  const [botMonitoringSignalFilter, setBotMonitoringSignalFilter] = useState('all');
+  const [botMonitoringAssetStatusFilter, setBotMonitoringAssetStatusFilter] = useState('all');
+  const [botMonitoringPlaybookFilter, setBotMonitoringPlaybookFilter] = useState('all');
+  const [selectedBotMonitoringItem, setSelectedBotMonitoringItem] = useState<AdminBotMonitoringItem | null>(null);
+  const [selectedBotMonitoringHistory, setSelectedBotMonitoringHistory] = useState<AdminBotMonitoringHistoryItem[]>([]);
+  const [isBotMonitoringLoading, setIsBotMonitoringLoading] = useState(false);
+  const [isBotMonitoringHistoryLoading, setIsBotMonitoringHistoryLoading] = useState(false);
   const [marketScannerResult, setMarketScannerResult] = useState<BotMarketScannerBootstrap | null>(null);
   const [isBootstrappingScanner, setIsBootstrappingScanner] = useState(false);
   const [invoiceForm, setInvoiceForm] = useState({ organizationId: '', amount: '', dueDate: '', notes: '' });
@@ -556,6 +624,42 @@ export default function PlatformAdminPage() {
   const reloadCurrentAdminData = async () => {
     await loadAdminData(selectedOrganizationId || undefined);
   };
+
+  const loadBotMonitoring = useCallback(async () => {
+    if (!user?.is_superuser) return;
+    setIsBotMonitoringLoading(true);
+    const result = await api.getAdminBotMonitoring({
+      organization_id: selectedOrganizationId || undefined,
+      signal_action: botMonitoringSignalFilter === 'all' ? undefined : botMonitoringSignalFilter,
+      asset_status: botMonitoringAssetStatusFilter === 'all' ? undefined : botMonitoringAssetStatusFilter,
+      playbook: botMonitoringPlaybookFilter === 'all' ? undefined : botMonitoringPlaybookFilter,
+      limit: 300,
+    });
+    if (!result.success || !result.data) {
+      setError(result.error || 'Nao foi possivel carregar o monitoramento dos bots');
+      setIsBotMonitoringLoading(false);
+      return;
+    }
+    setBotMonitoring(result.data);
+    setIsBotMonitoringLoading(false);
+  }, [botMonitoringAssetStatusFilter, botMonitoringPlaybookFilter, botMonitoringSignalFilter, selectedOrganizationId, user?.is_superuser]);
+
+  const openBotMonitoringItem = async (item: AdminBotMonitoringItem) => {
+    setSelectedBotMonitoringItem(item);
+    setSelectedBotMonitoringHistory([]);
+    setIsBotMonitoringHistoryLoading(true);
+    const result = await api.getAdminBotMonitoringHistory(item.instance_id, item.symbol, 30);
+    if (result.success && result.data) {
+      setSelectedBotMonitoringHistory(result.data);
+    }
+    setIsBotMonitoringHistoryLoading(false);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'bot-monitoring') {
+      loadBotMonitoring();
+    }
+  }, [activeTab, loadBotMonitoring]);
 
   const amountToCents = (value: string) => {
     const normalized = value.replace(/\./g, '').replace(',', '.');
@@ -2598,6 +2702,299 @@ export default function PlatformAdminPage() {
               </div>
             </div>
           )}
+          {activeTab === 'bot-monitoring' && (
+            <div className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                {[
+                  ['Ativos monitorados', botMonitoring.summary.total_assets],
+                  ['Aprovados', botMonitoring.summary.approved_assets],
+                  ['HOLD recentes', botMonitoring.summary.latest_hold_count],
+                  ['BUY recentes', botMonitoring.summary.latest_buy_count],
+                  ['Alertas de dados', botMonitoring.summary.data_warning_assets + botMonitoring.summary.risk_blocked_assets],
+                ].map(([label, value]) => (
+                  <Card key={label}>
+                    <CardContent className="p-5">
+                      <p className="text-caption text-text-muted">{label}</p>
+                      <p className="mt-3 text-heading-lg text-text-primary">{value}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              <Card>
+                <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <CardTitle>Monitoramento operacional dos bots</CardTitle>
+                    <p className="mt-1 text-caption text-text-muted">
+                      Estado atual dos ativos aprovados/candidatos, ultimo ciclo paper, sinais, gates e fonte dos candles.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select
+                      value={botMonitoringAssetStatusFilter}
+                      options={[
+                        { value: 'all', label: 'Todos os status' },
+                        { value: 'approved', label: 'Aprovados' },
+                        { value: 'candidate', label: 'Candidatos' },
+                        { value: 'ignored', label: 'Ignorados' },
+                        { value: 'disabled', label: 'Desativados' },
+                      ]}
+                      onChange={(event) => setBotMonitoringAssetStatusFilter(event.target.value)}
+                      className="h-10 min-w-[160px] py-0 text-caption"
+                    />
+                    <Select
+                      value={botMonitoringPlaybookFilter}
+                      options={[
+                        { value: 'all', label: 'Todos os playbooks' },
+                        { value: 'reversal', label: 'Reversao' },
+                        { value: 'pullback', label: 'Pullback' },
+                        { value: 'continuation', label: 'Continuacao' },
+                        { value: 'neutral', label: 'Manual/neutro' },
+                      ]}
+                      onChange={(event) => setBotMonitoringPlaybookFilter(event.target.value)}
+                      className="h-10 min-w-[170px] py-0 text-caption"
+                    />
+                    <Select
+                      value={botMonitoringSignalFilter}
+                      options={[
+                        { value: 'all', label: 'Todos os sinais' },
+                        { value: 'hold', label: 'HOLD' },
+                        { value: 'buy', label: 'BUY' },
+                        { value: 'sell', label: 'SELL' },
+                      ]}
+                      onChange={(event) => setBotMonitoringSignalFilter(event.target.value)}
+                      className="h-10 min-w-[160px] py-0 text-caption"
+                    />
+                    <Button type="button" variant="secondary" onClick={loadBotMonitoring} disabled={isBotMonitoringLoading}>
+                      <RefreshCw className={cn('h-4 w-4', isBotMonitoringLoading && 'animate-spin')} />
+                      Atualizar
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto rounded-xl border border-border-subtle">
+                    <table className="min-w-[1180px] w-full text-left text-caption">
+                      <thead className="bg-background-secondary text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                        <tr>
+                          <th className="px-4 py-3">Ativo</th>
+                          <th className="px-4 py-3">Conta / carteira</th>
+                          <th className="px-4 py-3">Bot</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3">Ultimo ciclo</th>
+                          <th className="px-4 py-3">Sinal</th>
+                          <th className="px-4 py-3">Preco / notional</th>
+                          <th className="px-4 py-3">Gates</th>
+                          <th className="px-4 py-3">Motivo</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border-subtle">
+                        {botMonitoring.items.map((item) => (
+                          <tr
+                            key={`${item.instance_id}-${item.symbol}`}
+                            className="cursor-pointer transition-colors hover:bg-background-secondary/70"
+                            onClick={() => openBotMonitoringItem(item)}
+                          >
+                            <td className="px-4 py-3">
+                              <div className="font-semibold text-text-primary">{item.symbol}</div>
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                <Badge variant={item.approved_for_live ? 'success' : item.asset_status === 'ignored' ? 'error' : 'yellow'} size="sm">
+                                  {item.asset_status}
+                                </Badge>
+                                <Badge variant="purple" size="sm">{item.playbook || 'neutral'}</Badge>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-text-secondary">
+                              <div>{item.organization_name || 'Conta'}</div>
+                              <div className="text-text-muted">{item.client_name || 'Carteira'}</div>
+                            </td>
+                            <td className="px-4 py-3 text-text-secondary">
+                              <div>{item.instance_name}</div>
+                              <div className="text-text-muted">
+                                {item.exchange_label || item.exchange_type || 'sem exchange'} - {item.strategy_name || 'sem estrategia'}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <Badge variant={item.instance_status === 'active' ? 'success' : item.instance_status === 'error' ? 'error' : 'yellow'} size="sm">
+                                {item.instance_status}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3 text-text-secondary">
+                              {formatAdminDate(item.last_signal_generated_at || item.last_run_completed_at)}
+                              <div className="text-text-muted">{item.last_run_status || 'sem run'}</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={cn('inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase', signalBadgeClass(item.last_signal_action))}>
+                                {item.last_signal_action || 'sem sinal'}
+                              </span>
+                              <div className="mt-1 text-text-muted">
+                                conf. {item.last_signal_confidence !== null && item.last_signal_confidence !== undefined ? formatAdminPercent(item.last_signal_confidence * 100) : 'N/A'}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-text-secondary">
+                              <div>{formatAdminUsd(item.last_signal_price_usd)}</div>
+                              <div className="text-text-muted">{formatAdminUsd(item.last_signal_notional_usd, 2)}</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-1">
+                                <Badge variant={item.entry_passed ? 'success' : 'yellow'} size="sm">E {gateLabel(item.entry_passed)}</Badge>
+                                <Badge variant={item.exit_passed ? 'success' : 'default'} size="sm">S {gateLabel(item.exit_passed)}</Badge>
+                                <Badge variant={item.risk_blocks.length ? 'error' : 'success'} size="sm">R {item.risk_blocks.length ? 'block' : 'check'}</Badge>
+                                <Badge variant={item.data_warnings.length ? 'yellow' : 'success'} size="sm">D {item.candle_source || 'wait'}</Badge>
+                              </div>
+                            </td>
+                            <td className="max-w-[260px] px-4 py-3 text-text-secondary">
+                              <span className="line-clamp-2">{item.last_signal_reason || item.last_run_error || 'Sem motivo registrado'}</span>
+                            </td>
+                          </tr>
+                        ))}
+                        {!botMonitoring.items.length && (
+                          <tr>
+                            <td colSpan={9} className="px-4 py-10 text-center text-text-muted">
+                              Nenhum ativo monitorado encontrado para os filtros atuais.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {selectedBotMonitoringItem && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+                  <div className={cn(
+                    'w-full max-w-4xl overflow-hidden rounded-2xl border shadow-2xl',
+                    isDark ? 'border-white/[0.08] bg-[#101018]' : 'border-border-subtle bg-background-primary'
+                  )}>
+                    <div className="flex items-start justify-between gap-4 border-b border-border-subtle p-5">
+                      <div>
+                        <p className="text-overline uppercase tracking-[0.22em] text-accent-blue">Monitoramento</p>
+                        <h3 className="mt-1 text-heading-md text-text-primary">{selectedBotMonitoringItem.symbol}</h3>
+                        <p className="mt-1 text-caption text-text-muted">
+                          {selectedBotMonitoringItem.instance_name} - {selectedBotMonitoringItem.client_name || 'Carteira'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBotMonitoringItem(null)}
+                        className="rounded-full border border-border-subtle px-3 py-1 text-caption text-text-secondary hover:text-text-primary"
+                      >
+                        Fechar
+                      </button>
+                    </div>
+                    <div className="grid max-h-[75vh] gap-4 overflow-y-auto p-5 lg:grid-cols-3">
+                      <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                        <p className="text-caption font-semibold uppercase tracking-[0.16em] text-text-muted">Ultimo ciclo</p>
+                        <div className="mt-3 space-y-2 text-body-sm">
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Status</span><span>{selectedBotMonitoringItem.last_run_status || 'N/A'}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Data</span><span className="text-right">{formatAdminDate(selectedBotMonitoringItem.last_run_completed_at)}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Candles</span><span>{selectedBotMonitoringItem.candle_source || 'N/A'}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Sinal</span><span>{selectedBotMonitoringItem.last_signal_action || 'N/A'}</span></div>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                        <p className="text-caption font-semibold uppercase tracking-[0.16em] text-text-muted">Execucao paper</p>
+                        <div className="mt-3 space-y-2 text-body-sm">
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Preco</span><span>{formatAdminUsd(selectedBotMonitoringItem.last_signal_price_usd)}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Notional</span><span>{formatAdminUsd(selectedBotMonitoringItem.last_signal_notional_usd, 2)}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Confianca</span><span>{selectedBotMonitoringItem.last_signal_confidence !== null && selectedBotMonitoringItem.last_signal_confidence !== undefined ? formatAdminPercent(selectedBotMonitoringItem.last_signal_confidence * 100) : 'N/A'}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Aprovado</span><span>{selectedBotMonitoringItem.approved_for_live ? 'sim' : 'nao'}</span></div>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4">
+                        <p className="text-caption font-semibold uppercase tracking-[0.16em] text-text-muted">Stops e risco</p>
+                        <div className="mt-3 space-y-2 text-body-sm">
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Stop ativo</span><span>{formatAdminUsd(selectedBotMonitoringItem.active_stop_price)}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">ATR stop</span><span>{formatAdminUsd(selectedBotMonitoringItem.atr_stop)}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Take profit</span><span>{formatAdminUsd(selectedBotMonitoringItem.take_profit_price)}</span></div>
+                          <div className="flex justify-between gap-3"><span className="text-text-muted">Trailing</span><span>{formatAdminUsd(selectedBotMonitoringItem.trailing_stop_price)}</span></div>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4 lg:col-span-3">
+                        <p className="text-caption font-semibold uppercase tracking-[0.16em] text-text-muted">Motivo e diagnostico</p>
+                        <p className="mt-3 text-body-sm text-text-primary">
+                          {selectedBotMonitoringItem.last_signal_reason || selectedBotMonitoringItem.last_run_error || 'Sem motivo registrado.'}
+                        </p>
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          <div className="rounded-lg bg-background-primary p-3">
+                            <p className="text-caption text-text-muted">Bloqueios de risco</p>
+                            <p className="mt-1 text-body-sm text-text-primary">
+                              {selectedBotMonitoringItem.risk_blocks.length ? selectedBotMonitoringItem.risk_blocks.join(', ') : 'Sem bloqueios'}
+                            </p>
+                          </div>
+                          <div className="rounded-lg bg-background-primary p-3">
+                            <p className="text-caption text-text-muted">Avisos de dados</p>
+                            <p className="mt-1 text-body-sm text-text-primary">
+                              {selectedBotMonitoringItem.data_warnings.length ? selectedBotMonitoringItem.data_warnings.join(', ') : 'Sem avisos'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-border-subtle bg-background-secondary/60 p-4 lg:col-span-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-caption font-semibold uppercase tracking-[0.16em] text-text-muted">Historico recente</p>
+                          {isBotMonitoringHistoryLoading && (
+                            <span className="text-caption text-text-muted">Carregando...</span>
+                          )}
+                        </div>
+                        <div className="mt-3 overflow-x-auto rounded-lg border border-border-subtle bg-background-primary">
+                          <table className="min-w-[760px] w-full text-left text-caption">
+                            <thead className="bg-background-secondary text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                              <tr>
+                                <th className="px-3 py-2">Data</th>
+                                <th className="px-3 py-2">Run</th>
+                                <th className="px-3 py-2">Sinal</th>
+                                <th className="px-3 py-2">Preco / notional</th>
+                                <th className="px-3 py-2">Gates</th>
+                                <th className="px-3 py-2">Motivo</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border-subtle">
+                              {selectedBotMonitoringHistory.map((event, index) => (
+                                <tr key={`${event.signal_id || event.run_id || index}`}>
+                                  <td className="px-3 py-2 text-text-secondary">{formatAdminDate(event.generated_at || event.completed_at)}</td>
+                                  <td className="px-3 py-2 text-text-secondary">
+                                    <div>{event.run_status || 'sem run'}</div>
+                                    <div className="text-text-muted">{event.candle_source || 'sem candles'}</div>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <span className={cn('inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase', signalBadgeClass(event.signal_action))}>
+                                      {event.signal_action || 'sem sinal'}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-text-secondary">
+                                    <div>{formatAdminUsd(event.price_usd)}</div>
+                                    <div className="text-text-muted">{formatAdminUsd(event.notional_usd, 2)}</div>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <div className="flex flex-wrap gap-1">
+                                      <Badge variant={event.entry_passed ? 'success' : 'yellow'} size="sm">E {gateLabel(event.entry_passed)}</Badge>
+                                      <Badge variant={event.exit_passed ? 'success' : 'default'} size="sm">S {gateLabel(event.exit_passed)}</Badge>
+                                      <Badge variant={event.risk_blocks.length ? 'error' : 'success'} size="sm">R {event.risk_blocks.length ? 'block' : 'check'}</Badge>
+                                      <Badge variant={event.data_warnings.length ? 'yellow' : 'success'} size="sm">D {event.data_warnings.length ? 'warn' : 'check'}</Badge>
+                                    </div>
+                                  </td>
+                                  <td className="max-w-[260px] px-3 py-2 text-text-secondary">{event.reason || event.run_error || 'Sem motivo'}</td>
+                                </tr>
+                              ))}
+                              {!selectedBotMonitoringHistory.length && !isBotMonitoringHistoryLoading && (
+                                <tr>
+                                  <td colSpan={6} className="px-3 py-8 text-center text-text-muted">
+                                    Nenhum ciclo historico encontrado para este ativo.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === 'finance' && (
             <div className="space-y-6">
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

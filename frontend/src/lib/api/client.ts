@@ -919,6 +919,96 @@ interface AdminAuditLog {
   timestamp: string;
 }
 
+interface AdminBotMonitoringItem {
+  organization_id: string;
+  organization_name: string | null;
+  client_id: string;
+  client_name: string | null;
+  instance_id: string;
+  instance_name: string;
+  instance_status: string;
+  instance_mode: string;
+  template_name: string | null;
+  strategy_name: string | null;
+  exchange_id: string | null;
+  exchange_label: string | null;
+  exchange_type: string | null;
+  symbol: string;
+  asset_status: string;
+  approved_for_live: boolean;
+  bucket: string;
+  playbook: string;
+  origin_direction: string | null;
+  origin_timeframe: string | null;
+  performance_percent: number | null;
+  approved_at: string | null;
+  last_run_id: string | null;
+  last_run_status: string | null;
+  last_run_cycle_key: string | null;
+  last_run_started_at: string | null;
+  last_run_completed_at: string | null;
+  last_run_error: string | null;
+  last_signal_id: string | null;
+  last_signal_action: string | null;
+  last_signal_status: string | null;
+  last_signal_confidence: number | null;
+  last_signal_price_usd: number | null;
+  last_signal_notional_usd: number | null;
+  last_signal_reason: string | null;
+  last_signal_generated_at: string | null;
+  candle_source: string | null;
+  entry_passed: boolean | null;
+  exit_passed: boolean | null;
+  risk_blocks: string[];
+  data_warnings: string[];
+  active_stop_price: number | null;
+  atr_stop: number | null;
+  take_profit_price: number | null;
+  trailing_stop_price: number | null;
+  breakeven_price: number | null;
+}
+
+interface AdminBotMonitoringSummary {
+  total_assets: number;
+  approved_assets: number;
+  candidate_assets: number;
+  ignored_assets: number;
+  disabled_assets: number;
+  latest_buy_count: number;
+  latest_sell_count: number;
+  latest_hold_count: number;
+  latest_failed_runs: number;
+  data_warning_assets: number;
+  risk_blocked_assets: number;
+}
+
+interface AdminBotMonitoring {
+  summary: AdminBotMonitoringSummary;
+  items: AdminBotMonitoringItem[];
+}
+
+interface AdminBotMonitoringHistoryItem {
+  run_id: string | null;
+  run_status: string | null;
+  cycle_key: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  run_error: string | null;
+  signal_id: string | null;
+  signal_action: string | null;
+  signal_status: string | null;
+  confidence: number | null;
+  price_usd: number | null;
+  notional_usd: number | null;
+  reason: string | null;
+  generated_at: string | null;
+  candle_source: string | null;
+  entry_passed: boolean | null;
+  exit_passed: boolean | null;
+  risk_blocks: string[];
+  data_warnings: string[];
+}
+
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
@@ -1554,6 +1644,40 @@ class ApiClient {
     return this.request<BotInstance[]>(`/api/v1/admin/bots/instances${qs}`);
   }
 
+  async getAdminBotMonitoring(params?: {
+    organization_id?: string;
+    client_id?: string;
+    instance_id?: string;
+    symbol?: string;
+    asset_status?: string;
+    bucket?: string;
+    playbook?: string;
+    signal_action?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ApiResponse<AdminBotMonitoring>> {
+    const search = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          search.set(key, String(value));
+        }
+      });
+    }
+    const qs = search.toString() ? `?${search.toString()}` : '';
+    return this.request<AdminBotMonitoring>(`/api/v1/admin/bots/monitoring${qs}`);
+  }
+
+  async getAdminBotMonitoringHistory(
+    instanceId: string,
+    symbol: string,
+    limit = 30
+  ): Promise<ApiResponse<AdminBotMonitoringHistoryItem[]>> {
+    return this.request<AdminBotMonitoringHistoryItem[]>(
+      `/api/v1/admin/bots/monitoring/${instanceId}/${encodeURIComponent(symbol)}/history?limit=${limit}`
+    );
+  }
+
   async generateAdminBotMarketRanking(data: {
     exchange: string;
     market_type?: string;
@@ -2073,6 +2197,10 @@ export type {
   AdminBillingSubscription,
   AdminBillingInvoice,
   AdminBillingPayment,
+  AdminBotMonitoring,
+  AdminBotMonitoringHistoryItem,
+  AdminBotMonitoringItem,
+  AdminBotMonitoringSummary,
   BotTemplate,
   BotInstance,
   BotInstanceAsset,
