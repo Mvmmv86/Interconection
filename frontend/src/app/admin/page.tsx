@@ -629,6 +629,9 @@ export default function PlatformAdminPage() {
   const loadBotMonitoring = useCallback(async () => {
     if (!user?.is_superuser) return;
     setIsBotMonitoringLoading(true);
+    setError(null);
+    setSelectedBotMonitoringItem(null);
+    setSelectedBotMonitoringHistory([]);
     const result = await api.getAdminBotMonitoring({
       organization_id: selectedOrganizationId || undefined,
       signal_action: botMonitoringSignalFilter === 'all' ? undefined : botMonitoringSignalFilter,
@@ -642,6 +645,7 @@ export default function PlatformAdminPage() {
       return;
     }
     setBotMonitoring(result.data);
+    setError(null);
     setIsBotMonitoringLoading(false);
   }, [botMonitoringAssetStatusFilter, botMonitoringPlaybookFilter, botMonitoringSignalFilter, selectedOrganizationId, user?.is_superuser]);
 
