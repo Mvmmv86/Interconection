@@ -2731,10 +2731,10 @@ export default function BotsPage() {
                             {ignoredAssets.length > 0 && <Badge variant="default" size="sm">{ignoredAssets.length} ignorados</Badge>}
                           </div>
                         </div>
-                        <div className="grid gap-3 xl:grid-cols-3">
-                          <div className="rounded-lg border border-status-warning/20 bg-background-primary/70 p-3">
+                        <div className="space-y-3">
+                          <div className="rounded-xl border border-status-warning/20 bg-background-primary/70 p-3 sm:p-4">
                             <p className="text-caption font-semibold uppercase tracking-[0.14em] text-status-warning">Candidatos para validar</p>
-                            <div className="mt-2 flex max-h-52 flex-col gap-2 overflow-y-auto pr-1">
+                            <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                               {candidateAssets.length ? candidateAssets.map((asset) => {
                                 const symbol = normalizeBotSymbol(String(asset.symbol || ''));
                                 return (
@@ -2775,9 +2775,9 @@ export default function BotsPage() {
                               )}
                             </div>
                           </div>
-                          <div className="rounded-lg border border-status-success/20 bg-background-primary/70 p-3">
+                          <div className="rounded-xl border border-status-success/20 bg-background-primary/70 p-3 sm:p-4">
                             <p className="text-caption font-semibold uppercase tracking-[0.14em] text-status-success">Aprovados para paper/live</p>
-                            <div className="mt-2 flex max-h-52 flex-col gap-2 overflow-y-auto pr-1">
+                            <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                               {approvedAssets.length ? approvedAssets.map((asset) => {
                                 const symbol = normalizeBotSymbol(String(asset.symbol || ''));
                                 return (
@@ -2810,9 +2810,9 @@ export default function BotsPage() {
                               )}
                             </div>
                           </div>
-                          <div className="rounded-lg border border-border-subtle bg-background-primary/70 p-3">
+                          <div className="rounded-xl border border-border-subtle bg-background-primary/70 p-3 sm:p-4">
                             <p className="text-caption font-semibold uppercase tracking-[0.14em] text-text-tertiary">Ignorados</p>
-                            <div className="mt-2 flex max-h-52 flex-col gap-2 overflow-y-auto pr-1">
+                            <div className="mt-3 grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                               {ignoredAssets.length ? ignoredAssets.map((asset) => {
                                 const symbol = normalizeBotSymbol(String(asset.symbol || ''));
                                 return (
