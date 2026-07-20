@@ -695,8 +695,9 @@ export default function PlatformAdminPage() {
         setIsBotLedgerLoading(false);
         return;
       }
-      setAdminBotBacktestTrades((previous) => (append ? [...previous, ...result.data] : result.data));
-      setBotLedgerHasMore(result.data.length === BOT_LEDGER_PAGE_SIZE);
+      const rows = result.data;
+      setAdminBotBacktestTrades((previous) => (append ? [...previous, ...rows] : rows));
+      setBotLedgerHasMore(rows.length === BOT_LEDGER_PAGE_SIZE);
     }
     if (botMonitoringView === 'paper') {
       const result = await api.getAdminBotPaperSignals(params);
@@ -705,8 +706,9 @@ export default function PlatformAdminPage() {
         setIsBotLedgerLoading(false);
         return;
       }
-      setAdminBotPaperSignals((previous) => (append ? [...previous, ...result.data] : result.data));
-      setBotLedgerHasMore(result.data.length === BOT_LEDGER_PAGE_SIZE);
+      const rows = result.data;
+      setAdminBotPaperSignals((previous) => (append ? [...previous, ...rows] : rows));
+      setBotLedgerHasMore(rows.length === BOT_LEDGER_PAGE_SIZE);
     }
     if (botMonitoringView === 'live-open') {
       const result = await api.getAdminBotLiveOrders('open', params);
@@ -715,8 +717,9 @@ export default function PlatformAdminPage() {
         setIsBotLedgerLoading(false);
         return;
       }
-      setAdminBotLiveOpenOrders((previous) => (append ? [...previous, ...result.data] : result.data));
-      setBotLedgerHasMore(result.data.length === BOT_LEDGER_PAGE_SIZE);
+      const rows = result.data;
+      setAdminBotLiveOpenOrders((previous) => (append ? [...previous, ...rows] : rows));
+      setBotLedgerHasMore(rows.length === BOT_LEDGER_PAGE_SIZE);
     }
     if (botMonitoringView === 'live-closed') {
       const result = await api.getAdminBotLiveOrders('closed', params);
@@ -725,8 +728,9 @@ export default function PlatformAdminPage() {
         setIsBotLedgerLoading(false);
         return;
       }
-      setAdminBotLiveClosedOrders((previous) => (append ? [...previous, ...result.data] : result.data));
-      setBotLedgerHasMore(result.data.length === BOT_LEDGER_PAGE_SIZE);
+      const rows = result.data;
+      setAdminBotLiveClosedOrders((previous) => (append ? [...previous, ...rows] : rows));
+      setBotLedgerHasMore(rows.length === BOT_LEDGER_PAGE_SIZE);
     }
     setError(null);
     setIsBotLedgerLoading(false);
@@ -3096,7 +3100,7 @@ export default function PlatformAdminPage() {
                                 <Badge variant="purple" size="sm">{trade.side}</Badge>
                               </td>
                               <td className="px-4 py-3 text-text-secondary">
-                                <div>{formatAdminUsd(trade.entry_price)} -> {formatAdminUsd(trade.exit_price)}</div>
+                                <div>{formatAdminUsd(trade.entry_price)} {'->'} {formatAdminUsd(trade.exit_price)}</div>
                                 <div className="text-text-muted">{formatAdminDate(trade.exit_time)}</div>
                               </td>
                               <td className="px-4 py-3">
@@ -3274,7 +3278,7 @@ export default function PlatformAdminPage() {
                                 <div className="mt-1 text-text-muted">{order.execution_mode}</div>
                               </td>
                               <td className="px-4 py-3 text-text-secondary">
-                                <div>{formatAdminUsd(order.entry_price)} -> {formatAdminUsd(order.exit_price)}</div>
+                                <div>{formatAdminUsd(order.entry_price)} {'->'} {formatAdminUsd(order.exit_price)}</div>
                                 <div className="text-text-muted">qty {order.quantity ?? 'N/A'}</div>
                               </td>
                               <td className="px-4 py-3 text-text-secondary">
