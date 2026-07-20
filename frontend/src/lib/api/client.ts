@@ -611,6 +611,16 @@ interface BotStrategy {
   updated_at: string;
 }
 
+interface BotSchedulerStatus {
+  enabled: boolean;
+  interval_seconds: number;
+  batch_limit: number;
+  candle_limit: number;
+  server_time: string;
+  mode: string;
+  message: string;
+}
+
 interface BotIndicator {
   id: string;
   key: string;
@@ -1940,6 +1950,10 @@ class ApiClient {
     return this.request<BotSignal[]>(`/api/v1/bots/instances/${instanceId}/signals${qs}`);
   }
 
+  async getBotSchedulerStatus(): Promise<ApiResponse<BotSchedulerStatus>> {
+    return this.request<BotSchedulerStatus>('/api/v1/bots/scheduler/status');
+  }
+
   async preflightBotInstanceBacktest(
     instanceId: string,
     data: {
@@ -2243,6 +2257,7 @@ export type {
   BotTemplate,
   BotInstance,
   BotInstanceAsset,
+  BotSchedulerStatus,
   BotStrategy,
   BotIndicator,
   BotRun,

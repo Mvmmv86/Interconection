@@ -623,6 +623,18 @@ class BotLiveEnableRequest(BaseSchema):
     reason: Optional[str] = None
 
 
+class BotSchedulerStatusResponse(BaseSchema):
+    """Customer-visible paper scheduler status."""
+
+    enabled: bool
+    interval_seconds: int
+    batch_limit: int
+    candle_limit: int
+    server_time: datetime
+    mode: str = "paper"
+    message: str
+
+
 class BotMarketCandleSyncRequest(BaseSchema):
     """Admin request to ingest exchange OHLCV candles."""
 

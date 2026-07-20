@@ -7,6 +7,7 @@ import {
   api,
   type BotInstance,
   type BotInstanceAsset,
+  type BotSchedulerStatus,
   type BotBacktestChart,
   type BotBacktestRun,
   type BotBacktestTrade,
@@ -177,6 +178,28 @@ function planAllows(currentPlan: string | null | undefined, requiredPlan: string
 function formatDateTime(value: string | null | undefined) {
   if (!value) return 'Nunca';
   return new Date(value).toLocaleString('pt-BR');
+}
+
+function formatSeconds(value: number | null | undefined) {
+  const seconds = Number(value || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'indefinido';
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}min`;
+  const hours = Math.round(minutes / 60);
+  return `${hours}h`;
+}
+
+function nextSchedulerLabel(instance: BotInstance, scheduler: BotSchedulerStatus | null) {
+  if (!scheduler?.enabled) return 'Scheduler desligado';
+  if (String(instance.status || '').toLowerCase() !== 'active') return 'Pausado nesta instancia';
+  if (!instance.last_run_at) return 'Na fila do proximo ciclo';
+  const lastRunMs = new Date(instance.last_run_at).getTime();
+  const intervalMs = Math.max(15, Number(scheduler.interval_seconds || 60)) * 1000;
+  if (!Number.isFinite(lastRunMs)) return 'Na fila do proximo ciclo';
+  const nextMs = lastRunMs + intervalMs;
+  if (nextMs <= Date.now()) return 'Na fila do proximo ciclo';
+  return formatDateTime(new Date(nextMs).toISOString());
 }
 
 function formatHistoryDate(value: unknown) {
@@ -1131,6 +1154,7 @@ export default function BotsPage() {
   const [templates, setTemplates] = useState<BotTemplate[]>([]);
   const [strategies, setStrategies] = useState<BotStrategy[]>([]);
   const [instances, setInstances] = useState<BotInstance[]>([]);
+  const [schedulerStatus, setSchedulerStatus] = useState<BotSchedulerStatus | null>(null);
   const [clients, setClients] = useState<ClientListItem[]>([]);
   const [configByTemplate, setConfigByTemplate] = useState<Record<string, TemplateConfig>>({});
   const [exchangesByClient, setExchangesByClient] = useState<Record<string, ClientPortfolioData['exchanges']>>({});
@@ -1224,11 +1248,12 @@ export default function BotsPage() {
   const loadBots = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-    const [templatesResult, strategiesResult, instancesResult, clientsResult] = await Promise.all([
+    const [templatesResult, strategiesResult, instancesResult, clientsResult, schedulerResult] = await Promise.all([
       api.getBotTemplates(),
       api.getBotStrategies(),
       api.getBotInstances(),
       api.getClients(),
+      api.getBotSchedulerStatus(),
     ]);
     if (!templatesResult.success || !strategiesResult.success || !instancesResult.success || !clientsResult.success) {
       setError(
@@ -1245,6 +1270,7 @@ export default function BotsPage() {
     setStrategies(strategiesResult.data || []);
     setInstances(instancesResult.data || []);
     setClients(clientsResult.data || []);
+    setSchedulerStatus(schedulerResult.success ? schedulerResult.data || null : null);
     setIsLoading(false);
   }, []);
 
@@ -1791,7 +1817,12 @@ export default function BotsPage() {
               O live trading permanece bloqueado ate o executor com reconciliacao ser aprovado.
             </p>
           </div>
-          <Badge variant="purple">Operational v1</Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="purple">Operational v1</Badge>
+            <Badge variant={schedulerStatus === null ? 'default' : schedulerStatus.enabled ? 'success' : 'yellow'}>
+              Scheduler {schedulerStatus === null ? '...' : schedulerStatus.enabled ? 'ON' : 'OFF'}
+            </Badge>
+          </div>
         </div>
 
         {error && (
@@ -1799,6 +1830,30 @@ export default function BotsPage() {
             {error}
           </div>
         )}
+
+        <Card variant="glass">
+          <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-caption font-semibold uppercase tracking-[0.18em] text-text-tertiary">
+                Monitoramento automatico paper
+              </p>
+              <p className="mt-1 text-body-sm text-text-primary">
+                {schedulerStatus?.message || 'Status do scheduler indisponivel no momento.'}
+              </p>
+            </div>
+            <div className="grid gap-2 text-caption text-text-secondary sm:grid-cols-3">
+              <span className="rounded-lg border border-border-subtle bg-background-secondary/70 px-3 py-2">
+                Intervalo: {formatSeconds(schedulerStatus?.interval_seconds)}
+              </span>
+              <span className="rounded-lg border border-border-subtle bg-background-secondary/70 px-3 py-2">
+                Lote: {schedulerStatus?.batch_limit || '-'} bots
+              </span>
+              <span className="rounded-lg border border-border-subtle bg-background-secondary/70 px-3 py-2">
+                Candles/ciclo: {schedulerStatus?.candle_limit || '-'}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
 
         {pendingBacktestConfirmation && (
           <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/55 px-4 backdrop-blur-sm">
@@ -2578,6 +2633,13 @@ export default function BotsPage() {
                   </p>
                   <p className="mt-1 text-caption text-text-tertiary">
                     Exchange: {instance.exchange_name || 'Nao vinculada'} - Ultimo ciclo: {formatDateTime(instance.last_run_at)}
+                  </p>
+                  <p className="mt-1 text-caption text-text-tertiary">
+                    Monitoramento automatico: {schedulerStatus === null
+                      ? 'status indisponivel'
+                      : schedulerStatus.enabled
+                        ? `ligado - proximo ciclo estimado ${nextSchedulerLabel(instance, schedulerStatus)}`
+                        : 'desligado'}
                   </p>
                   <div className="mt-3 grid gap-3 rounded-lg border border-border-subtle bg-background-primary/60 p-3 text-caption text-text-secondary">
                     <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">

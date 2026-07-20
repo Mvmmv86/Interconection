@@ -24,6 +24,7 @@ from app.api.deps import (
     require_permission,
     require_superuser,
 )
+from app.core.config import settings
 from app.models.audit_log import AuditAction
 from app.models.bot import (
     BotBacktest,
@@ -90,6 +91,7 @@ from app.schemas.bot import (
     BotRunResponse,
     BotSchedulerRunRequest,
     BotSchedulerRunResponse,
+    BotSchedulerStatusResponse,
     BotSignalResponse,
     BotStrategyCreate,
     BotStrategyResponse,
@@ -2806,6 +2808,34 @@ async def list_bot_instance_signals(
         .limit(limit)
     )
     return [_signal_response(signal) for signal in result.scalars().all()]
+
+
+@router.get("/scheduler/status", response_model=BotSchedulerStatusResponse)
+async def get_customer_bot_scheduler_status(
+    _: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("bots:view", route_key="bots", force=True)),
+    ],
+) -> BotSchedulerStatusResponse:
+    """Expose whether automatic paper monitoring is enabled.
+
+    This does not activate live trading. It only tells the client whether the
+    backend loop is currently configured to evaluate ACTIVE paper instances.
+    """
+    enabled = bool(settings.bot_scheduler_enabled)
+    interval = max(15, int(settings.bot_scheduler_interval_seconds or 60))
+    return BotSchedulerStatusResponse(
+        enabled=enabled,
+        interval_seconds=interval,
+        batch_limit=max(1, int(settings.bot_scheduler_batch_limit or 50)),
+        candle_limit=max(1, int(settings.bot_scheduler_candle_limit or 300)),
+        server_time=datetime.now(timezone.utc),
+        message=(
+            "Monitoramento automatico paper ativo para instancias ACTIVE com ativos aprovados."
+            if enabled
+            else "Monitoramento automatico paper desligado; use Rodar aprovados paper para ciclos manuais."
+        ),
+    )
 
 
 @router.post("/instances/{instance_id}/live/enable", response_model=BotInstanceResponse)
