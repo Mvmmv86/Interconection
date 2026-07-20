@@ -1039,6 +1039,119 @@ interface AdminBotMonitoringHistoryItem {
   data_warnings: string[];
 }
 
+interface AdminBotBacktestTradeItem {
+  trade_id: string;
+  run_id: string;
+  organization_id: string;
+  organization_name: string | null;
+  client_id: string;
+  client_name: string | null;
+  instance_id: string;
+  instance_name: string;
+  template_name: string | null;
+  strategy_name: string | null;
+  exchange_id: string | null;
+  exchange_label: string | null;
+  exchange_type: string | null;
+  symbol: string;
+  side: string;
+  timeframe: string;
+  backtest_status: string;
+  period_start: string;
+  period_end: string;
+  entry_time: string;
+  exit_time: string | null;
+  entry_price: number;
+  exit_price: number | null;
+  quantity: number;
+  gross_pnl: number;
+  fee_paid: number;
+  slippage_paid: number;
+  net_pnl: number;
+  return_percent: number;
+  mae_percent: number;
+  mfe_percent: number;
+  exit_reason: string | null;
+  bars_held: number;
+  created_at: string;
+}
+
+interface AdminBotPaperSignalItem {
+  signal_id: string;
+  run_id: string | null;
+  organization_id: string;
+  organization_name: string | null;
+  client_id: string;
+  client_name: string | null;
+  instance_id: string;
+  instance_name: string;
+  template_name: string | null;
+  strategy_name: string | null;
+  exchange_id: string | null;
+  exchange_label: string | null;
+  exchange_type: string | null;
+  symbol: string | null;
+  action: string;
+  status: string;
+  confidence: number | null;
+  price_usd: number | null;
+  quantity: number | null;
+  notional_usd: number | null;
+  reason: string | null;
+  candle_source: string | null;
+  entry_passed: boolean | null;
+  exit_passed: boolean | null;
+  risk_blocks: string[];
+  data_warnings: string[];
+  generated_at: string;
+}
+
+interface BotLiveOrder {
+  id: string;
+  organization_id: string;
+  organization_name: string | null;
+  client_id: string;
+  client_name: string | null;
+  instance_id: string;
+  instance_name: string;
+  strategy_id: string | null;
+  strategy_name: string | null;
+  exchange_id: string | null;
+  exchange_label: string | null;
+  exchange_type: string | null;
+  entry_signal_id: string | null;
+  exit_signal_id: string | null;
+  symbol: string;
+  side: string;
+  execution_mode: string;
+  status: string;
+  market_type: string;
+  exchange_order_id: string | null;
+  client_order_id: string | null;
+  quantity: number | null;
+  entry_price: number | null;
+  exit_price: number | null;
+  notional_usd: number | null;
+  gross_pnl_usd: number | null;
+  fee_usd: number | null;
+  slippage_usd: number | null;
+  net_pnl_usd: number | null;
+  pnl_percent: number | null;
+  stop_price: number | null;
+  take_profit_price: number | null;
+  trailing_stop_price: number | null;
+  breakeven_price: number | null;
+  opened_at: string | null;
+  closed_at: string | null;
+  last_reconciled_at: string | null;
+  close_reason: string | null;
+  error_message: string | null;
+  risk_snapshot: Record<string, unknown>;
+  order_snapshot: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
@@ -1708,6 +1821,71 @@ class ApiClient {
     );
   }
 
+  async getAdminBotBacktestTrades(params?: {
+    organization_id?: string;
+    client_id?: string;
+    instance_id?: string;
+    symbol?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ApiResponse<AdminBotBacktestTradeItem[]>> {
+    const search = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          search.set(key, String(value));
+        }
+      });
+    }
+    const qs = search.toString() ? `?${search.toString()}` : '';
+    return this.request<AdminBotBacktestTradeItem[]>(`/api/v1/admin/bots/trades/backtests${qs}`);
+  }
+
+  async getAdminBotPaperSignals(params?: {
+    organization_id?: string;
+    client_id?: string;
+    instance_id?: string;
+    symbol?: string;
+    action?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ApiResponse<AdminBotPaperSignalItem[]>> {
+    const search = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          search.set(key, String(value));
+        }
+      });
+    }
+    const qs = search.toString() ? `?${search.toString()}` : '';
+    return this.request<AdminBotPaperSignalItem[]>(`/api/v1/admin/bots/trades/paper${qs}`);
+  }
+
+  async getAdminBotLiveOrders(
+    kind: 'open' | 'closed',
+    params?: {
+      organization_id?: string;
+      client_id?: string;
+      instance_id?: string;
+      symbol?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<ApiResponse<BotLiveOrder[]>> {
+    const search = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          search.set(key, String(value));
+        }
+      });
+    }
+    const qs = search.toString() ? `?${search.toString()}` : '';
+    return this.request<BotLiveOrder[]>(`/api/v1/admin/bots/trades/live/${kind}${qs}`);
+  }
+
   async generateAdminBotMarketRanking(data: {
     exchange: string;
     market_type?: string;
@@ -2251,9 +2429,12 @@ export type {
   AdminBillingInvoice,
   AdminBillingPayment,
   AdminBotMonitoring,
+  AdminBotBacktestTradeItem,
   AdminBotMonitoringHistoryItem,
   AdminBotMonitoringItem,
   AdminBotMonitoringSummary,
+  AdminBotPaperSignalItem,
+  BotLiveOrder,
   BotTemplate,
   BotInstance,
   BotInstanceAsset,

@@ -130,6 +130,18 @@ class BotSignalStatus(str, enum.Enum):
     SKIPPED = "skipped"
 
 
+class BotLiveOrderStatus(str, enum.Enum):
+    """Lifecycle for future testnet/live bot orders."""
+
+    PENDING_OPEN = "pending_open"
+    OPEN = "open"
+    PENDING_CLOSE = "pending_close"
+    CLOSED = "closed"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
 class BotBacktestStatus(str, enum.Enum):
     """Backtest lifecycle."""
 
@@ -561,6 +573,85 @@ class BotBacktestTrade(Base, UUIDMixin, TimestampMixin):
     raw_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     run: Mapped["BotBacktestRun"] = relationship("BotBacktestRun", back_populates="trades")
+
+
+class BotLiveOrder(Base, UUIDMixin, TimestampMixin):
+    """Auditable testnet/live order ledger for future bot execution."""
+
+    __tablename__ = "bot_live_orders"
+    __table_args__ = (
+        Index("ix_bot_live_orders_org_status_opened", "organization_id", "status", "opened_at"),
+        Index("ix_bot_live_orders_instance_symbol_status", "instance_id", "symbol", "status"),
+        Index("ix_bot_live_orders_signal", "entry_signal_id"),
+        Index(
+            "uq_bot_live_orders_entry_signal",
+            "entry_signal_id",
+            unique=True,
+            postgresql_where=text("entry_signal_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_bot_live_orders_client_order",
+            "organization_id",
+            "client_order_id",
+            unique=True,
+            postgresql_where=text("client_order_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_bot_live_orders_exchange_order",
+            "exchange_id",
+            "exchange_order_id",
+            unique=True,
+            postgresql_where=text("exchange_order_id IS NOT NULL"),
+        ),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    client_id: Mapped[UUID] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[UUID] = mapped_column(ForeignKey("bot_instances.id", ondelete="CASCADE"), nullable=False)
+    strategy_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("bot_strategies.id", ondelete="SET NULL"), nullable=True)
+    exchange_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("exchanges.id", ondelete="SET NULL"), nullable=True)
+    entry_signal_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("bot_signals.id", ondelete="SET NULL"), nullable=True)
+    exit_signal_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("bot_signals.id", ondelete="SET NULL"), nullable=True)
+    entry_run_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("bot_runs.id", ondelete="SET NULL"), nullable=True)
+    exit_run_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("bot_runs.id", ondelete="SET NULL"), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(40), nullable=False)
+    side: Mapped[str] = mapped_column(String(16), default="long", nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(24), default="testnet", nullable=False)
+    status: Mapped[BotLiveOrderStatus] = mapped_column(
+        SAEnum(BotLiveOrderStatus),
+        default=BotLiveOrderStatus.PENDING_OPEN,
+        nullable=False,
+    )
+    market_type: Mapped[str] = mapped_column(String(24), default="futures", nullable=False)
+    exchange_order_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    client_order_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    quantity: Mapped[Optional[float]] = mapped_column(Numeric(32, 18), nullable=True)
+    entry_price: Mapped[Optional[float]] = mapped_column(Numeric(28, 12), nullable=True)
+    exit_price: Mapped[Optional[float]] = mapped_column(Numeric(28, 12), nullable=True)
+    notional_usd: Mapped[Optional[float]] = mapped_column(Numeric(24, 2), nullable=True)
+    gross_pnl_usd: Mapped[Optional[float]] = mapped_column(Numeric(24, 8), nullable=True)
+    fee_usd: Mapped[Optional[float]] = mapped_column(Numeric(24, 8), nullable=True)
+    slippage_usd: Mapped[Optional[float]] = mapped_column(Numeric(24, 8), nullable=True)
+    net_pnl_usd: Mapped[Optional[float]] = mapped_column(Numeric(24, 8), nullable=True)
+    pnl_percent: Mapped[Optional[float]] = mapped_column(Numeric(12, 6), nullable=True)
+    stop_price: Mapped[Optional[float]] = mapped_column(Numeric(28, 12), nullable=True)
+    take_profit_price: Mapped[Optional[float]] = mapped_column(Numeric(28, 12), nullable=True)
+    trailing_stop_price: Mapped[Optional[float]] = mapped_column(Numeric(28, 12), nullable=True)
+    breakeven_price: Mapped[Optional[float]] = mapped_column(Numeric(28, 12), nullable=True)
+    opened_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_reconciled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    close_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    risk_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    order_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    exchange_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+    instance: Mapped["BotInstance"] = relationship("BotInstance")
+    organization: Mapped["Organization"] = relationship("Organization")
+    client: Mapped["Client"] = relationship("Client")
+    exchange: Mapped[Optional["Exchange"]] = relationship("Exchange")
+    strategy: Mapped[Optional["BotStrategy"]] = relationship("BotStrategy")
 
 
 class BotBacktest(Base, UUIDMixin, TimestampMixin):

@@ -40,6 +40,8 @@ from app.models.bot import (
     BotInstanceAssetStatus,
     BotInstanceMode,
     BotInstanceStatus,
+    BotLiveOrder,
+    BotLiveOrderStatus,
     BotRun,
     BotSignal,
     BotSignalAction,
@@ -57,6 +59,9 @@ from app.models.organization import Organization, PlanType
 from app.schemas.exchange import SUPPORTED_EXCHANGES as ENABLED_EXCHANGE_CONNECTORS
 from app.schemas.bot import (
     AdminBotInstanceUpdate,
+    AdminBotBacktestTradeItemResponse,
+    AdminBotPaperSignalItemResponse,
+    BotLiveOrderResponse,
     AdminBotMonitoringHistoryItemResponse,
     AdminBotMonitoringItemResponse,
     AdminBotMonitoringResponse,
@@ -580,6 +585,132 @@ def _monitoring_history_response(signal: BotSignal, run: BotRun | None) -> Admin
         exit_passed=risk_snapshot.get("exit_passed"),
         risk_blocks=_risk_list(risk_snapshot.get("blocks")),
         data_warnings=_risk_list(risk_snapshot.get("data_warnings")),
+    )
+
+
+def _admin_backtest_trade_item_response(row: dict) -> AdminBotBacktestTradeItemResponse:
+    return AdminBotBacktestTradeItemResponse(
+        trade_id=row["trade_id"],
+        run_id=row["run_id"],
+        organization_id=row["organization_id"],
+        organization_name=row.get("organization_name"),
+        client_id=row["client_id"],
+        client_name=row.get("client_name"),
+        instance_id=row["instance_id"],
+        instance_name=row.get("instance_name") or "Bot",
+        template_name=row.get("template_name"),
+        strategy_name=row.get("strategy_name"),
+        exchange_id=row.get("exchange_id"),
+        exchange_label=row.get("exchange_label"),
+        exchange_type=row.get("exchange_type"),
+        symbol=row.get("symbol") or "",
+        side=row.get("side") or "long",
+        timeframe=row.get("timeframe") or "",
+        backtest_status=_enum_text(row.get("backtest_status")) or "",
+        period_start=row["period_start"],
+        period_end=row["period_end"],
+        entry_time=row["entry_time"],
+        exit_time=row.get("exit_time"),
+        entry_price=_maybe_float(row.get("entry_price")) or 0.0,
+        exit_price=_maybe_float(row.get("exit_price")),
+        quantity=_maybe_float(row.get("quantity")) or 0.0,
+        gross_pnl=_maybe_float(row.get("gross_pnl")) or 0.0,
+        fee_paid=_maybe_float(row.get("fee_paid")) or 0.0,
+        slippage_paid=_maybe_float(row.get("slippage_paid")) or 0.0,
+        net_pnl=_maybe_float(row.get("net_pnl")) or 0.0,
+        return_percent=_maybe_float(row.get("return_percent")) or 0.0,
+        mae_percent=_maybe_float(row.get("mae_percent")) or 0.0,
+        mfe_percent=_maybe_float(row.get("mfe_percent")) or 0.0,
+        exit_reason=row.get("exit_reason"),
+        bars_held=int(row.get("bars_held") or 0),
+        created_at=row["created_at"],
+    )
+
+
+def _admin_paper_signal_item_response(row: dict) -> AdminBotPaperSignalItemResponse:
+    risk_snapshot = dict(row.get("risk_snapshot") or {})
+    data_quality = dict(risk_snapshot.get("data_quality") or {})
+    candle_source = (
+        risk_snapshot.get("candle_source")
+        or risk_snapshot.get("data_source")
+        or data_quality.get("ohlcv_source")
+    )
+    return AdminBotPaperSignalItemResponse(
+        signal_id=row["signal_id"],
+        run_id=row.get("run_id"),
+        organization_id=row["organization_id"],
+        organization_name=row.get("organization_name"),
+        client_id=row["client_id"],
+        client_name=row.get("client_name"),
+        instance_id=row["instance_id"],
+        instance_name=row.get("instance_name") or "Bot",
+        template_name=row.get("template_name"),
+        strategy_name=row.get("strategy_name"),
+        exchange_id=row.get("exchange_id"),
+        exchange_label=row.get("exchange_label"),
+        exchange_type=row.get("exchange_type"),
+        symbol=row.get("symbol"),
+        action=_enum_text(row.get("action")) or "",
+        status=_enum_text(row.get("signal_status")) or "",
+        confidence=_maybe_float(row.get("confidence")),
+        price_usd=_maybe_float(row.get("price_usd")),
+        quantity=_maybe_float(row.get("quantity")),
+        notional_usd=_maybe_float(row.get("notional_usd")),
+        reason=row.get("reason"),
+        candle_source=str(candle_source) if candle_source else None,
+        entry_passed=risk_snapshot.get("entry_passed"),
+        exit_passed=risk_snapshot.get("exit_passed"),
+        risk_blocks=_risk_list(risk_snapshot.get("blocks")),
+        data_warnings=_risk_list(risk_snapshot.get("data_warnings")),
+        generated_at=row["generated_at"],
+    )
+
+
+def _admin_live_order_response(row: dict) -> BotLiveOrderResponse:
+    return BotLiveOrderResponse(
+        id=row["id"],
+        organization_id=row["organization_id"],
+        organization_name=row.get("organization_name"),
+        client_id=row["client_id"],
+        client_name=row.get("client_name"),
+        instance_id=row["instance_id"],
+        instance_name=row.get("instance_name") or "Bot",
+        strategy_id=row.get("strategy_id"),
+        strategy_name=row.get("strategy_name"),
+        exchange_id=row.get("exchange_id"),
+        exchange_label=row.get("exchange_label"),
+        exchange_type=row.get("exchange_type"),
+        entry_signal_id=row.get("entry_signal_id"),
+        exit_signal_id=row.get("exit_signal_id"),
+        symbol=row.get("symbol") or "",
+        side=row.get("side") or "",
+        execution_mode=row.get("execution_mode") or "",
+        status=_enum_text(row.get("status")) or "",
+        market_type=row.get("market_type") or "",
+        exchange_order_id=row.get("exchange_order_id"),
+        client_order_id=row.get("client_order_id"),
+        quantity=_maybe_float(row.get("quantity")),
+        entry_price=_maybe_float(row.get("entry_price")),
+        exit_price=_maybe_float(row.get("exit_price")),
+        notional_usd=_maybe_float(row.get("notional_usd")),
+        gross_pnl_usd=_maybe_float(row.get("gross_pnl_usd")),
+        fee_usd=_maybe_float(row.get("fee_usd")),
+        slippage_usd=_maybe_float(row.get("slippage_usd")),
+        net_pnl_usd=_maybe_float(row.get("net_pnl_usd")),
+        pnl_percent=_maybe_float(row.get("pnl_percent")),
+        stop_price=_maybe_float(row.get("stop_price")),
+        take_profit_price=_maybe_float(row.get("take_profit_price")),
+        trailing_stop_price=_maybe_float(row.get("trailing_stop_price")),
+        breakeven_price=_maybe_float(row.get("breakeven_price")),
+        opened_at=row.get("opened_at"),
+        closed_at=row.get("closed_at"),
+        last_reconciled_at=row.get("last_reconciled_at"),
+        close_reason=row.get("close_reason"),
+        error_message=row.get("error_message"),
+        risk_snapshot=dict(row.get("risk_snapshot") or {}),
+        order_snapshot=dict(row.get("order_snapshot") or {}),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 
@@ -3459,6 +3590,288 @@ async def list_admin_bot_monitoring_history(
         )
     ).all()
     return [_monitoring_history_response(signal, run) for signal, run in rows]
+
+
+@admin_router.get("/trades/backtests", response_model=list[AdminBotBacktestTradeItemResponse])
+async def list_admin_bot_backtest_trades(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    client_id: Optional[UUID] = None,
+    instance_id: Optional[UUID] = None,
+    symbol: Optional[str] = Query(default=None, max_length=40),
+    status_filter: Optional[str] = Query(default=None, alias="status", max_length=40),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[AdminBotBacktestTradeItemResponse]:
+    """List normalized backtest trades across platform bot instances."""
+    normalized_symbol = normalize_strategy_symbol(symbol) if symbol else None
+    backtest_status_filter = None
+    if status_filter:
+        try:
+            backtest_status_filter = BotBacktestStatus(status_filter.lower())
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid backtest status") from exc
+
+    query = (
+        select(
+            BotBacktestTrade.id.label("trade_id"),
+            BotBacktestTrade.run_id,
+            BotBacktestRun.organization_id,
+            Organization.name.label("organization_name"),
+            BotBacktestRun.client_id,
+            Client.name.label("client_name"),
+            BotBacktestRun.instance_id,
+            BotInstance.name.label("instance_name"),
+            BotTemplate.name.label("template_name"),
+            BotStrategy.name.label("strategy_name"),
+            Exchange.id.label("exchange_id"),
+            Exchange.label.label("exchange_label"),
+            Exchange.exchange.label("exchange_type"),
+            BotBacktestTrade.symbol,
+            BotBacktestTrade.side,
+            BotBacktestRun.timeframe,
+            BotBacktestRun.status.label("backtest_status"),
+            BotBacktestRun.period_start,
+            BotBacktestRun.period_end,
+            BotBacktestTrade.entry_time,
+            BotBacktestTrade.exit_time,
+            BotBacktestTrade.entry_price,
+            BotBacktestTrade.exit_price,
+            BotBacktestTrade.quantity,
+            BotBacktestTrade.gross_pnl,
+            BotBacktestTrade.fee_paid,
+            BotBacktestTrade.slippage_paid,
+            BotBacktestTrade.net_pnl,
+            BotBacktestTrade.return_percent,
+            BotBacktestTrade.mae_percent,
+            BotBacktestTrade.mfe_percent,
+            BotBacktestTrade.exit_reason,
+            BotBacktestTrade.bars_held,
+            BotBacktestTrade.created_at,
+        )
+        .select_from(BotBacktestTrade)
+        .join(BotBacktestRun, BotBacktestRun.id == BotBacktestTrade.run_id)
+        .join(BotInstance, BotInstance.id == BotBacktestRun.instance_id)
+        .join(Organization, Organization.id == BotBacktestRun.organization_id)
+        .join(Client, Client.id == BotBacktestRun.client_id)
+        .outerjoin(Exchange, Exchange.id == BotBacktestRun.exchange_id)
+        .outerjoin(BotTemplate, BotTemplate.id == BotInstance.template_id)
+        .outerjoin(BotStrategy, BotStrategy.id == BotBacktestRun.strategy_id)
+        .order_by(BotBacktestTrade.entry_time.desc(), BotBacktestTrade.created_at.desc())
+    )
+    if organization_id is not None:
+        query = query.where(BotBacktestRun.organization_id == organization_id)
+    if client_id is not None:
+        query = query.where(BotBacktestRun.client_id == client_id)
+    if instance_id is not None:
+        query = query.where(BotBacktestRun.instance_id == instance_id)
+    if normalized_symbol:
+        query = query.where(BotBacktestTrade.symbol == normalized_symbol)
+    if backtest_status_filter is not None:
+        query = query.where(BotBacktestRun.status == backtest_status_filter)
+
+    rows = (await db.execute(query.offset(offset).limit(limit))).mappings().all()
+    return [_admin_backtest_trade_item_response(dict(row)) for row in rows]
+
+
+@admin_router.get("/trades/paper", response_model=list[AdminBotPaperSignalItemResponse])
+async def list_admin_bot_paper_signals(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    client_id: Optional[UUID] = None,
+    instance_id: Optional[UUID] = None,
+    symbol: Optional[str] = Query(default=None, max_length=40),
+    action: Optional[str] = Query(default=None, max_length=40),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[AdminBotPaperSignalItemResponse]:
+    """List paper bot decisions/signals without mixing them with live execution."""
+    normalized_symbol = normalize_strategy_symbol(symbol) if symbol else None
+    action_filter = None
+    if action:
+        try:
+            action_filter = BotSignalAction(action.lower())
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid signal action") from exc
+
+    query = (
+        select(
+            BotSignal.id.label("signal_id"),
+            BotSignal.run_id,
+            BotSignal.organization_id,
+            Organization.name.label("organization_name"),
+            BotSignal.client_id,
+            Client.name.label("client_name"),
+            BotSignal.instance_id,
+            BotInstance.name.label("instance_name"),
+            BotTemplate.name.label("template_name"),
+            BotStrategy.name.label("strategy_name"),
+            Exchange.id.label("exchange_id"),
+            Exchange.label.label("exchange_label"),
+            Exchange.exchange.label("exchange_type"),
+            BotSignal.symbol,
+            BotSignal.action,
+            BotSignal.status.label("signal_status"),
+            BotSignal.confidence,
+            BotSignal.price_usd,
+            BotSignal.quantity,
+            BotSignal.notional_usd,
+            BotSignal.reason,
+            BotSignal.risk_snapshot,
+            BotSignal.generated_at,
+        )
+        .select_from(BotSignal)
+        .join(BotInstance, BotInstance.id == BotSignal.instance_id)
+        .join(Organization, Organization.id == BotSignal.organization_id)
+        .join(Client, Client.id == BotSignal.client_id)
+        .outerjoin(Exchange, Exchange.id == BotInstance.exchange_id)
+        .outerjoin(BotTemplate, BotTemplate.id == BotInstance.template_id)
+        .outerjoin(BotStrategy, BotStrategy.id == BotInstance.strategy_id)
+        .where(BotInstance.mode == BotInstanceMode.PAPER)
+        .order_by(BotSignal.generated_at.desc())
+    )
+    if organization_id is not None:
+        query = query.where(BotSignal.organization_id == organization_id)
+    if client_id is not None:
+        query = query.where(BotSignal.client_id == client_id)
+    if instance_id is not None:
+        query = query.where(BotSignal.instance_id == instance_id)
+    if normalized_symbol:
+        query = query.where(BotSignal.symbol == normalized_symbol)
+    if action_filter is not None:
+        query = query.where(BotSignal.action == action_filter)
+
+    rows = (await db.execute(query.offset(offset).limit(limit))).mappings().all()
+    return [_admin_paper_signal_item_response(dict(row)) for row in rows]
+
+
+async def _list_admin_live_orders(
+    db: DBSession,
+    statuses: list[BotLiveOrderStatus],
+    organization_id: Optional[UUID],
+    client_id: Optional[UUID],
+    instance_id: Optional[UUID],
+    symbol: Optional[str],
+    offset: int,
+    limit: int,
+) -> list[BotLiveOrderResponse]:
+    normalized_symbol = normalize_strategy_symbol(symbol) if symbol else None
+    query = (
+        select(
+            BotLiveOrder.id,
+            BotLiveOrder.organization_id,
+            Organization.name.label("organization_name"),
+            BotLiveOrder.client_id,
+            Client.name.label("client_name"),
+            BotLiveOrder.instance_id,
+            BotInstance.name.label("instance_name"),
+            BotLiveOrder.strategy_id,
+            BotStrategy.name.label("strategy_name"),
+            BotLiveOrder.exchange_id,
+            Exchange.label.label("exchange_label"),
+            Exchange.exchange.label("exchange_type"),
+            BotLiveOrder.entry_signal_id,
+            BotLiveOrder.exit_signal_id,
+            BotLiveOrder.symbol,
+            BotLiveOrder.side,
+            BotLiveOrder.execution_mode,
+            BotLiveOrder.status,
+            BotLiveOrder.market_type,
+            BotLiveOrder.exchange_order_id,
+            BotLiveOrder.client_order_id,
+            BotLiveOrder.quantity,
+            BotLiveOrder.entry_price,
+            BotLiveOrder.exit_price,
+            BotLiveOrder.notional_usd,
+            BotLiveOrder.gross_pnl_usd,
+            BotLiveOrder.fee_usd,
+            BotLiveOrder.slippage_usd,
+            BotLiveOrder.net_pnl_usd,
+            BotLiveOrder.pnl_percent,
+            BotLiveOrder.stop_price,
+            BotLiveOrder.take_profit_price,
+            BotLiveOrder.trailing_stop_price,
+            BotLiveOrder.breakeven_price,
+            BotLiveOrder.opened_at,
+            BotLiveOrder.closed_at,
+            BotLiveOrder.last_reconciled_at,
+            BotLiveOrder.close_reason,
+            BotLiveOrder.error_message,
+            BotLiveOrder.risk_snapshot,
+            BotLiveOrder.order_snapshot,
+            BotLiveOrder.created_at,
+            BotLiveOrder.updated_at,
+        )
+        .select_from(BotLiveOrder)
+        .join(BotInstance, BotInstance.id == BotLiveOrder.instance_id)
+        .join(Organization, Organization.id == BotLiveOrder.organization_id)
+        .join(Client, Client.id == BotLiveOrder.client_id)
+        .outerjoin(Exchange, Exchange.id == BotLiveOrder.exchange_id)
+        .outerjoin(BotStrategy, BotStrategy.id == BotLiveOrder.strategy_id)
+        .where(BotLiveOrder.status.in_(statuses))
+        .order_by(BotLiveOrder.opened_at.desc().nullslast(), BotLiveOrder.created_at.desc())
+    )
+    if organization_id is not None:
+        query = query.where(BotLiveOrder.organization_id == organization_id)
+    if client_id is not None:
+        query = query.where(BotLiveOrder.client_id == client_id)
+    if instance_id is not None:
+        query = query.where(BotLiveOrder.instance_id == instance_id)
+    if normalized_symbol:
+        query = query.where(BotLiveOrder.symbol == normalized_symbol)
+
+    rows = (await db.execute(query.offset(offset).limit(limit))).mappings().all()
+    return [_admin_live_order_response(dict(row)) for row in rows]
+
+
+@admin_router.get("/trades/live/open", response_model=list[BotLiveOrderResponse])
+async def list_admin_open_live_orders(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    client_id: Optional[UUID] = None,
+    instance_id: Optional[UUID] = None,
+    symbol: Optional[str] = Query(default=None, max_length=40),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[BotLiveOrderResponse]:
+    """List live/testnet orders that are open or waiting for open/close reconciliation."""
+    return await _list_admin_live_orders(
+        db,
+        [BotLiveOrderStatus.PENDING_OPEN, BotLiveOrderStatus.OPEN, BotLiveOrderStatus.PENDING_CLOSE],
+        organization_id,
+        client_id,
+        instance_id,
+        symbol,
+        offset,
+        limit,
+    )
+
+
+@admin_router.get("/trades/live/closed", response_model=list[BotLiveOrderResponse])
+async def list_admin_closed_live_orders(
+    _superuser: SuperUser,
+    db: DBSession,
+    organization_id: Optional[UUID] = None,
+    client_id: Optional[UUID] = None,
+    instance_id: Optional[UUID] = None,
+    symbol: Optional[str] = Query(default=None, max_length=40),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[BotLiveOrderResponse]:
+    """List finalized live/testnet orders for audit and post-trade review."""
+    return await _list_admin_live_orders(
+        db,
+        [BotLiveOrderStatus.CLOSED, BotLiveOrderStatus.CANCELLED, BotLiveOrderStatus.REJECTED, BotLiveOrderStatus.FAILED],
+        organization_id,
+        client_id,
+        instance_id,
+        symbol,
+        offset,
+        limit,
+    )
 
 
 @admin_router.get("/templates", response_model=list[BotTemplateResponse])

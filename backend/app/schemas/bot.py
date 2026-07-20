@@ -9,6 +9,7 @@ from pydantic import Field
 from app.models.bot import (
     BotInstanceMode,
     BotInstanceStatus,
+    BotLiveOrderStatus,
     BotStrategyStatus,
     BotTemplateStatus,
     BotTemplateType,
@@ -464,6 +465,125 @@ class AdminBotMonitoringHistoryItemResponse(BaseSchema):
     exit_passed: Optional[bool] = None
     risk_blocks: list[str] = Field(default_factory=list)
     data_warnings: list[str] = Field(default_factory=list)
+
+
+class AdminBotBacktestTradeItemResponse(BaseSchema):
+    """One backtest trade enriched for platform admin trade history."""
+
+    trade_id: UUID
+    run_id: UUID
+    organization_id: UUID
+    organization_name: Optional[str] = None
+    client_id: UUID
+    client_name: Optional[str] = None
+    instance_id: UUID
+    instance_name: str
+    template_name: Optional[str] = None
+    strategy_name: Optional[str] = None
+    exchange_id: Optional[UUID] = None
+    exchange_label: Optional[str] = None
+    exchange_type: Optional[str] = None
+    symbol: str
+    side: str
+    timeframe: str
+    backtest_status: str
+    period_start: datetime
+    period_end: datetime
+    entry_time: datetime
+    exit_time: Optional[datetime] = None
+    entry_price: float
+    exit_price: Optional[float] = None
+    quantity: float
+    gross_pnl: float
+    fee_paid: float
+    slippage_paid: float
+    net_pnl: float
+    return_percent: float
+    mae_percent: float
+    mfe_percent: float
+    exit_reason: Optional[str] = None
+    bars_held: int
+    created_at: datetime
+
+
+class AdminBotPaperSignalItemResponse(BaseSchema):
+    """Paper decision/signal enriched for platform admin trade monitoring."""
+
+    signal_id: UUID
+    run_id: Optional[UUID] = None
+    organization_id: UUID
+    organization_name: Optional[str] = None
+    client_id: UUID
+    client_name: Optional[str] = None
+    instance_id: UUID
+    instance_name: str
+    template_name: Optional[str] = None
+    strategy_name: Optional[str] = None
+    exchange_id: Optional[UUID] = None
+    exchange_label: Optional[str] = None
+    exchange_type: Optional[str] = None
+    symbol: Optional[str] = None
+    action: str
+    status: str
+    confidence: Optional[float] = None
+    price_usd: Optional[float] = None
+    quantity: Optional[float] = None
+    notional_usd: Optional[float] = None
+    reason: Optional[str] = None
+    candle_source: Optional[str] = None
+    entry_passed: Optional[bool] = None
+    exit_passed: Optional[bool] = None
+    risk_blocks: list[str] = Field(default_factory=list)
+    data_warnings: list[str] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class BotLiveOrderResponse(BaseSchema):
+    """Auditable live/testnet order returned to platform admins."""
+
+    id: UUID
+    organization_id: UUID
+    organization_name: Optional[str] = None
+    client_id: UUID
+    client_name: Optional[str] = None
+    instance_id: UUID
+    instance_name: str
+    strategy_id: Optional[UUID] = None
+    strategy_name: Optional[str] = None
+    exchange_id: Optional[UUID] = None
+    exchange_label: Optional[str] = None
+    exchange_type: Optional[str] = None
+    entry_signal_id: Optional[UUID] = None
+    exit_signal_id: Optional[UUID] = None
+    symbol: str
+    side: str
+    execution_mode: str
+    status: BotLiveOrderStatus | str
+    market_type: str
+    exchange_order_id: Optional[str] = None
+    client_order_id: Optional[str] = None
+    quantity: Optional[float] = None
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
+    notional_usd: Optional[float] = None
+    gross_pnl_usd: Optional[float] = None
+    fee_usd: Optional[float] = None
+    slippage_usd: Optional[float] = None
+    net_pnl_usd: Optional[float] = None
+    pnl_percent: Optional[float] = None
+    stop_price: Optional[float] = None
+    take_profit_price: Optional[float] = None
+    trailing_stop_price: Optional[float] = None
+    breakeven_price: Optional[float] = None
+    opened_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    last_reconciled_at: Optional[datetime] = None
+    close_reason: Optional[str] = None
+    error_message: Optional[str] = None
+    risk_snapshot: dict[str, Any] = Field(default_factory=dict)
+    order_snapshot: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
 
 
 class BotBacktestCreate(BaseSchema):

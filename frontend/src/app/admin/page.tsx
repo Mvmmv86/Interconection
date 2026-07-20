@@ -26,9 +26,11 @@ import {
   type AdminBillingInvoice,
   type AdminBillingPayment,
   type AdminBillingSubscription,
+  type AdminBotBacktestTradeItem,
   type AdminBotMonitoring,
   type AdminBotMonitoringHistoryItem,
   type AdminBotMonitoringItem,
+  type AdminBotPaperSignalItem,
   type AdminClient,
   type AdminFinanceSummary,
   type AdminOrganization,
@@ -39,6 +41,7 @@ import {
   type BotInstance,
   type BotBacktest,
   type BotIndicator,
+  type BotLiveOrder,
   type BotStrategy,
   type BotMarketScannerBootstrap,
   type BotTemplate,
@@ -63,6 +66,9 @@ type AdminTab =
   | 'plans'
   | 'audit'
   | 'system';
+
+type BotMonitoringView = 'monitoring' | 'backtests' | 'paper' | 'live-open' | 'live-closed';
+const BOT_LEDGER_PAGE_SIZE = 100;
 
 const tabs: Array<{ id: AdminTab; label: string; icon: React.ElementType }> = [
   { id: 'overview', label: 'Dashboard', icon: Activity },
@@ -303,12 +309,19 @@ export default function PlatformAdminPage() {
   const [botTemplates, setBotTemplates] = useState<BotTemplate[]>([]);
   const [botInstances, setBotInstances] = useState<BotInstance[]>([]);
   const [botMonitoring, setBotMonitoring] = useState<AdminBotMonitoring>(emptyBotMonitoring);
+  const [botMonitoringView, setBotMonitoringView] = useState<BotMonitoringView>('monitoring');
+  const [adminBotBacktestTrades, setAdminBotBacktestTrades] = useState<AdminBotBacktestTradeItem[]>([]);
+  const [adminBotPaperSignals, setAdminBotPaperSignals] = useState<AdminBotPaperSignalItem[]>([]);
+  const [adminBotLiveOpenOrders, setAdminBotLiveOpenOrders] = useState<BotLiveOrder[]>([]);
+  const [adminBotLiveClosedOrders, setAdminBotLiveClosedOrders] = useState<BotLiveOrder[]>([]);
+  const [botLedgerHasMore, setBotLedgerHasMore] = useState(false);
   const [botMonitoringSignalFilter, setBotMonitoringSignalFilter] = useState('all');
   const [botMonitoringAssetStatusFilter, setBotMonitoringAssetStatusFilter] = useState('all');
   const [botMonitoringPlaybookFilter, setBotMonitoringPlaybookFilter] = useState('all');
   const [selectedBotMonitoringItem, setSelectedBotMonitoringItem] = useState<AdminBotMonitoringItem | null>(null);
   const [selectedBotMonitoringHistory, setSelectedBotMonitoringHistory] = useState<AdminBotMonitoringHistoryItem[]>([]);
   const [isBotMonitoringLoading, setIsBotMonitoringLoading] = useState(false);
+  const [isBotLedgerLoading, setIsBotLedgerLoading] = useState(false);
   const [isBotMonitoringHistoryLoading, setIsBotMonitoringHistoryLoading] = useState(false);
   const [marketScannerResult, setMarketScannerResult] = useState<BotMarketScannerBootstrap | null>(null);
   const [isBootstrappingScanner, setIsBootstrappingScanner] = useState(false);
@@ -649,6 +662,150 @@ export default function PlatformAdminPage() {
     setIsBotMonitoringLoading(false);
   }, [botMonitoringAssetStatusFilter, botMonitoringPlaybookFilter, botMonitoringSignalFilter, selectedOrganizationId, user?.is_superuser]);
 
+  const loadBotTradeLedger = useCallback(async (append = false) => {
+    if (!user?.is_superuser) return;
+    setIsBotLedgerLoading(true);
+    setError(null);
+    if (!append) {
+      setBotLedgerHasMore(false);
+      if (botMonitoringView === 'backtests') setAdminBotBacktestTrades([]);
+      if (botMonitoringView === 'paper') setAdminBotPaperSignals([]);
+      if (botMonitoringView === 'live-open') setAdminBotLiveOpenOrders([]);
+      if (botMonitoringView === 'live-closed') setAdminBotLiveClosedOrders([]);
+    }
+    const currentLength =
+      botMonitoringView === 'backtests'
+        ? adminBotBacktestTrades.length
+        : botMonitoringView === 'paper'
+          ? adminBotPaperSignals.length
+          : botMonitoringView === 'live-open'
+            ? adminBotLiveOpenOrders.length
+            : botMonitoringView === 'live-closed'
+              ? adminBotLiveClosedOrders.length
+              : 0;
+    const params = {
+      organization_id: selectedOrganizationId || undefined,
+      limit: BOT_LEDGER_PAGE_SIZE,
+      offset: append ? currentLength : 0,
+    };
+    if (botMonitoringView === 'backtests') {
+      const result = await api.getAdminBotBacktestTrades(params);
+      if (!result.success || !result.data) {
+        setError(result.error || 'Nao foi possivel carregar trades de backtest');
+        setIsBotLedgerLoading(false);
+        return;
+      }
+      setAdminBotBacktestTrades((previous) => (append ? [...previous, ...result.data] : result.data));
+      setBotLedgerHasMore(result.data.length === BOT_LEDGER_PAGE_SIZE);
+    }
+    if (botMonitoringView === 'paper') {
+      const result = await api.getAdminBotPaperSignals(params);
+      if (!result.success || !result.data) {
+        setError(result.error || 'Nao foi possivel carregar sinais paper');
+        setIsBotLedgerLoading(false);
+        return;
+      }
+      setAdminBotPaperSignals((previous) => (append ? [...previous, ...result.data] : result.data));
+      setBotLedgerHasMore(result.data.length === BOT_LEDGER_PAGE_SIZE);
+    }
+    if (botMonitoringView === 'live-open') {
+      const result = await api.getAdminBotLiveOrders('open', params);
+      if (!result.success || !result.data) {
+        setError(result.error || 'Nao foi possivel carregar ordens live abertas');
+        setIsBotLedgerLoading(false);
+        return;
+      }
+      setAdminBotLiveOpenOrders((previous) => (append ? [...previous, ...result.data] : result.data));
+      setBotLedgerHasMore(result.data.length === BOT_LEDGER_PAGE_SIZE);
+    }
+    if (botMonitoringView === 'live-closed') {
+      const result = await api.getAdminBotLiveOrders('closed', params);
+      if (!result.success || !result.data) {
+        setError(result.error || 'Nao foi possivel carregar ordens live encerradas');
+        setIsBotLedgerLoading(false);
+        return;
+      }
+      setAdminBotLiveClosedOrders((previous) => (append ? [...previous, ...result.data] : result.data));
+      setBotLedgerHasMore(result.data.length === BOT_LEDGER_PAGE_SIZE);
+    }
+    setError(null);
+    setIsBotLedgerLoading(false);
+  }, [
+    adminBotBacktestTrades.length,
+    adminBotLiveClosedOrders.length,
+    adminBotLiveOpenOrders.length,
+    adminBotPaperSignals.length,
+    botMonitoringView,
+    selectedOrganizationId,
+    user?.is_superuser,
+  ]);
+
+  const botMonitoringMetricCards = useMemo(() => {
+    if (botMonitoringView === 'backtests') {
+      const totalPnl = adminBotBacktestTrades.reduce((sum, trade) => sum + Number(trade.net_pnl || 0), 0);
+      const winners = adminBotBacktestTrades.filter((trade) => Number(trade.net_pnl || 0) > 0).length;
+      const losers = adminBotBacktestTrades.filter((trade) => Number(trade.net_pnl || 0) < 0).length;
+      return [
+        ['Trades carregados', adminBotBacktestTrades.length],
+        ['P&L carregado', formatAdminUsd(totalPnl, 2)],
+        ['Vencedores', winners],
+        ['Perdedores', losers],
+        ['Pagina', botLedgerHasMore ? 'mais dados' : 'fim'],
+      ];
+    }
+    if (botMonitoringView === 'paper') {
+      const buys = adminBotPaperSignals.filter((signal) => signal.action === 'buy').length;
+      const sells = adminBotPaperSignals.filter((signal) => signal.action === 'sell').length;
+      const holds = adminBotPaperSignals.filter((signal) => signal.action === 'hold').length;
+      return [
+        ['Sinais carregados', adminBotPaperSignals.length],
+        ['BUY', buys],
+        ['SELL', sells],
+        ['HOLD', holds],
+        ['Pagina', botLedgerHasMore ? 'mais dados' : 'fim'],
+      ];
+    }
+    if (botMonitoringView === 'live-open') {
+      const exposure = adminBotLiveOpenOrders.reduce((sum, order) => sum + Number(order.notional_usd || 0), 0);
+      const open = adminBotLiveOpenOrders.filter((order) => order.status === 'open').length;
+      const pending = adminBotLiveOpenOrders.length - open;
+      return [
+        ['Ordens carregadas', adminBotLiveOpenOrders.length],
+        ['Abertas', open],
+        ['Pendentes', pending],
+        ['Exposicao', formatAdminUsd(exposure, 2)],
+        ['Executor', 'preparado'],
+      ];
+    }
+    if (botMonitoringView === 'live-closed') {
+      const netPnl = adminBotLiveClosedOrders.reduce((sum, order) => sum + Number(order.net_pnl_usd || 0), 0);
+      const closed = adminBotLiveClosedOrders.filter((order) => order.status === 'closed').length;
+      const failed = adminBotLiveClosedOrders.filter((order) => order.status === 'failed' || order.status === 'rejected').length;
+      return [
+        ['Ordens carregadas', adminBotLiveClosedOrders.length],
+        ['Fechadas', closed],
+        ['Falhas/rejeitadas', failed],
+        ['P&L realizado', formatAdminUsd(netPnl, 2)],
+        ['Pagina', botLedgerHasMore ? 'mais dados' : 'fim'],
+      ];
+    }
+    return [
+      ['Ativos historicos', botMonitoring.summary.total_assets],
+      ['Monitoramento real', botMonitoring.summary.live_monitoring_assets],
+      ['Candidatos', botMonitoring.summary.candidate_assets],
+      ['HOLD recentes', botMonitoring.summary.latest_hold_count],
+      ['Alertas de dados', botMonitoring.summary.data_warning_assets + botMonitoring.summary.risk_blocked_assets],
+    ];
+  }, [
+    adminBotBacktestTrades,
+    adminBotLiveClosedOrders,
+    adminBotLiveOpenOrders,
+    adminBotPaperSignals,
+    botLedgerHasMore,
+    botMonitoring.summary,
+    botMonitoringView,
+  ]);
+
   const openBotMonitoringItem = async (item: AdminBotMonitoringItem) => {
     setSelectedBotMonitoringItem(item);
     setSelectedBotMonitoringHistory([]);
@@ -662,9 +819,13 @@ export default function PlatformAdminPage() {
 
   useEffect(() => {
     if (activeTab === 'bot-monitoring') {
-      loadBotMonitoring();
+      if (botMonitoringView === 'monitoring') {
+        loadBotMonitoring();
+        return;
+      }
+      loadBotTradeLedger();
     }
-  }, [activeTab, loadBotMonitoring]);
+  }, [activeTab, botMonitoringView, loadBotMonitoring, loadBotTradeLedger]);
 
   const amountToCents = (value: string) => {
     const normalized = value.replace(/\./g, '').replace(',', '.');
@@ -2710,13 +2871,7 @@ export default function PlatformAdminPage() {
           {activeTab === 'bot-monitoring' && (
             <div className="space-y-6">
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-                {[
-                  ['Ativos historicos', botMonitoring.summary.total_assets],
-                  ['Monitoramento real', botMonitoring.summary.live_monitoring_assets],
-                  ['Candidatos', botMonitoring.summary.candidate_assets],
-                  ['HOLD recentes', botMonitoring.summary.latest_hold_count],
-                  ['Alertas de dados', botMonitoring.summary.data_warning_assets + botMonitoring.summary.risk_blocked_assets],
-                ].map(([label, value]) => (
+                {botMonitoringMetricCards.map(([label, value]) => (
                   <Card key={label}>
                     <CardContent className="p-5">
                       <p className="text-caption text-text-muted">{label}</p>
@@ -2726,6 +2881,32 @@ export default function PlatformAdminPage() {
                 ))}
               </div>
 
+              <div className="flex flex-wrap gap-2 rounded-2xl border border-border-subtle bg-background-secondary/70 p-2">
+                {[
+                  { id: 'monitoring', label: 'Monitoramento atual', caption: 'Ativos aprovados/candidatos e ultimo ciclo' },
+                  { id: 'backtests', label: 'Trades de backtest', caption: 'Entradas e saidas simuladas' },
+                  { id: 'paper', label: 'Paper / sinais', caption: 'Decisoes geradas sem ordem real' },
+                  { id: 'live-open', label: 'Live abertas', caption: 'Ordens testnet/live em andamento' },
+                  { id: 'live-closed', label: 'Live encerradas', caption: 'Ordens finalizadas e reconciliadas' },
+                ].map((view) => (
+                  <button
+                    key={view.id}
+                    type="button"
+                    onClick={() => setBotMonitoringView(view.id as BotMonitoringView)}
+                    className={cn(
+                      'min-w-[180px] flex-1 rounded-xl border px-4 py-3 text-left transition-all',
+                      botMonitoringView === view.id
+                        ? 'border-accent-blue/40 bg-accent-blue/10 text-text-primary shadow-sm'
+                        : 'border-transparent bg-background-primary/60 text-text-secondary hover:border-border-subtle hover:text-text-primary'
+                    )}
+                  >
+                    <span className="block text-body-sm font-semibold">{view.label}</span>
+                    <span className="mt-1 block text-[10px] text-text-muted">{view.caption}</span>
+                  </button>
+                ))}
+              </div>
+
+              {botMonitoringView === 'monitoring' && (
               <Card>
                 <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
@@ -2864,6 +3045,274 @@ export default function PlatformAdminPage() {
                   </div>
                 </CardContent>
               </Card>
+              )}
+
+              {botMonitoringView === 'backtests' && (
+                <Card>
+                  <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <CardTitle>Trades historicos dos backtests</CardTitle>
+                      <p className="mt-1 text-caption text-text-muted">
+                        Entradas, saidas, P&L, ROI e motivo de saida gerados pelo motor institucional de backtest.
+                      </p>
+                    </div>
+                    <Button type="button" variant="secondary" onClick={() => loadBotTradeLedger(false)} disabled={isBotLedgerLoading}>
+                      <RefreshCw className={cn('h-4 w-4', isBotLedgerLoading && 'animate-spin')} />
+                      Atualizar
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto rounded-xl border border-border-subtle">
+                      <table className="min-w-[1180px] w-full text-left text-caption">
+                        <thead className="bg-background-secondary text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                          <tr>
+                            <th className="px-4 py-3">Data</th>
+                            <th className="px-4 py-3">Conta / carteira</th>
+                            <th className="px-4 py-3">Bot</th>
+                            <th className="px-4 py-3">Ativo</th>
+                            <th className="px-4 py-3">Entrada / saida</th>
+                            <th className="px-4 py-3">P&L</th>
+                            <th className="px-4 py-3">MAE / MFE</th>
+                            <th className="px-4 py-3">Motivo</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border-subtle">
+                          {adminBotBacktestTrades.map((trade) => (
+                            <tr key={trade.trade_id} className="hover:bg-background-secondary/70">
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{formatAdminDate(trade.entry_time)}</div>
+                                <div className="text-text-muted">{trade.timeframe} - {trade.backtest_status}</div>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{trade.organization_name || 'Conta'}</div>
+                                <div className="text-text-muted">{trade.client_name || 'Carteira'}</div>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{trade.instance_name}</div>
+                                <div className="text-text-muted">{trade.exchange_label || trade.exchange_type || 'sem exchange'}</div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-text-primary">{trade.symbol}</div>
+                                <Badge variant="purple" size="sm">{trade.side}</Badge>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{formatAdminUsd(trade.entry_price)} -> {formatAdminUsd(trade.exit_price)}</div>
+                                <div className="text-text-muted">{formatAdminDate(trade.exit_time)}</div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className={trade.net_pnl >= 0 ? 'text-status-success' : 'text-status-error'}>{formatAdminUsd(trade.net_pnl, 2)}</div>
+                                <div className={trade.return_percent >= 0 ? 'text-status-success' : 'text-status-error'}>{formatAdminPercent(trade.return_percent)}</div>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                {formatAdminPercent(trade.mae_percent)} / {formatAdminPercent(trade.mfe_percent)}
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">{trade.exit_reason || 'Sem motivo'}</td>
+                            </tr>
+                          ))}
+                          {!adminBotBacktestTrades.length && (
+                            <tr>
+                              <td colSpan={8} className="px-4 py-10 text-center text-text-muted">
+                                Nenhum trade de backtest encontrado para os filtros atuais.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    {botLedgerHasMore && (
+                      <div className="mt-4 flex justify-center">
+                        <Button type="button" variant="secondary" onClick={() => loadBotTradeLedger(true)} disabled={isBotLedgerLoading}>
+                          <RefreshCw className={cn('h-4 w-4', isBotLedgerLoading && 'animate-spin')} />
+                          Carregar mais trades
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {botMonitoringView === 'paper' && (
+                <Card>
+                  <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <CardTitle>Paper trading e sinais</CardTitle>
+                      <p className="mt-1 text-caption text-text-muted">
+                        Historico de decisoes do bot em paper: BUY, SELL, HOLD, gates, candles e motivo operacional.
+                      </p>
+                    </div>
+                    <Button type="button" variant="secondary" onClick={() => loadBotTradeLedger(false)} disabled={isBotLedgerLoading}>
+                      <RefreshCw className={cn('h-4 w-4', isBotLedgerLoading && 'animate-spin')} />
+                      Atualizar
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto rounded-xl border border-border-subtle">
+                      <table className="min-w-[1180px] w-full text-left text-caption">
+                        <thead className="bg-background-secondary text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                          <tr>
+                            <th className="px-4 py-3">Data</th>
+                            <th className="px-4 py-3">Conta / carteira</th>
+                            <th className="px-4 py-3">Bot</th>
+                            <th className="px-4 py-3">Ativo</th>
+                            <th className="px-4 py-3">Sinal</th>
+                            <th className="px-4 py-3">Preco / notional</th>
+                            <th className="px-4 py-3">Gates</th>
+                            <th className="px-4 py-3">Motivo</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border-subtle">
+                          {adminBotPaperSignals.map((signal) => (
+                            <tr key={signal.signal_id} className="hover:bg-background-secondary/70">
+                              <td className="px-4 py-3 text-text-secondary">{formatAdminDate(signal.generated_at)}</td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{signal.organization_name || 'Conta'}</div>
+                                <div className="text-text-muted">{signal.client_name || 'Carteira'}</div>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{signal.instance_name}</div>
+                                <div className="text-text-muted">{signal.exchange_label || signal.exchange_type || 'sem exchange'}</div>
+                              </td>
+                              <td className="px-4 py-3 font-semibold text-text-primary">{signal.symbol || 'N/A'}</td>
+                              <td className="px-4 py-3">
+                                <span className={cn('inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase', signalBadgeClass(signal.action))}>
+                                  {signal.action || 'sem sinal'}
+                                </span>
+                                <div className="mt-1 text-text-muted">conf. {signal.confidence !== null && signal.confidence !== undefined ? formatAdminPercent(signal.confidence * 100) : 'N/A'}</div>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{formatAdminUsd(signal.price_usd)}</div>
+                                <div className="text-text-muted">{formatAdminUsd(signal.notional_usd, 2)}</div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex flex-wrap gap-1">
+                                  <Badge variant={signal.entry_passed ? 'success' : 'yellow'} size="sm">E {gateLabel(signal.entry_passed)}</Badge>
+                                  <Badge variant={signal.exit_passed ? 'success' : 'default'} size="sm">S {gateLabel(signal.exit_passed)}</Badge>
+                                  <Badge variant={signal.risk_blocks.length ? 'error' : 'success'} size="sm">R {signal.risk_blocks.length ? 'block' : 'check'}</Badge>
+                                  <Badge variant={signal.data_warnings.length ? 'yellow' : 'success'} size="sm">D {signal.candle_source || 'wait'}</Badge>
+                                </div>
+                              </td>
+                              <td className="max-w-[260px] px-4 py-3 text-text-secondary">
+                                <span className="line-clamp-2">{signal.reason || 'Sem motivo registrado'}</span>
+                              </td>
+                            </tr>
+                          ))}
+                          {!adminBotPaperSignals.length && (
+                            <tr>
+                              <td colSpan={8} className="px-4 py-10 text-center text-text-muted">
+                                Nenhum sinal paper encontrado para os filtros atuais.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    {botLedgerHasMore && (
+                      <div className="mt-4 flex justify-center">
+                        <Button type="button" variant="secondary" onClick={() => loadBotTradeLedger(true)} disabled={isBotLedgerLoading}>
+                          <RefreshCw className={cn('h-4 w-4', isBotLedgerLoading && 'animate-spin')} />
+                          Carregar mais sinais
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {(botMonitoringView === 'live-open' || botMonitoringView === 'live-closed') && (
+                <Card>
+                  <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <CardTitle>{botMonitoringView === 'live-open' ? 'Trades live/testnet abertos' : 'Trades live/testnet encerrados'}</CardTitle>
+                      <p className="mt-1 text-caption text-text-muted">
+                        Ledger preparado para o executor real/testnet. Enquanto o executor nao gravar ordens, esta tabela fica vazia de forma honesta.
+                      </p>
+                    </div>
+                    <Button type="button" variant="secondary" onClick={() => loadBotTradeLedger(false)} disabled={isBotLedgerLoading}>
+                      <RefreshCw className={cn('h-4 w-4', isBotLedgerLoading && 'animate-spin')} />
+                      Atualizar
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto rounded-xl border border-border-subtle">
+                      <table className="min-w-[1180px] w-full text-left text-caption">
+                        <thead className="bg-background-secondary text-[10px] uppercase tracking-[0.18em] text-text-muted">
+                          <tr>
+                            <th className="px-4 py-3">Data</th>
+                            <th className="px-4 py-3">Conta / carteira</th>
+                            <th className="px-4 py-3">Bot</th>
+                            <th className="px-4 py-3">Ativo</th>
+                            <th className="px-4 py-3">Status</th>
+                            <th className="px-4 py-3">Entrada / saida</th>
+                            <th className="px-4 py-3">Stops</th>
+                            <th className="px-4 py-3">P&L</th>
+                            <th className="px-4 py-3">Motivo</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border-subtle">
+                          {(botMonitoringView === 'live-open' ? adminBotLiveOpenOrders : adminBotLiveClosedOrders).map((order) => (
+                            <tr key={order.id} className="hover:bg-background-secondary/70">
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{formatAdminDate(order.opened_at || order.created_at)}</div>
+                                <div className="text-text-muted">{order.closed_at ? `Fechou ${formatAdminDate(order.closed_at)}` : 'Aberta/pendente'}</div>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{order.organization_name || 'Conta'}</div>
+                                <div className="text-text-muted">{order.client_name || 'Carteira'}</div>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{order.instance_name}</div>
+                                <div className="text-text-muted">{order.exchange_label || order.exchange_type || 'sem exchange'} - {order.strategy_name || 'sem estrategia'}</div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-text-primary">{order.symbol}</div>
+                                <div className="text-text-muted">{order.market_type} / {order.side}</div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <Badge variant={order.status === 'open' ? 'success' : order.status === 'failed' || order.status === 'rejected' ? 'error' : 'yellow'} size="sm">
+                                  {order.status}
+                                </Badge>
+                                <div className="mt-1 text-text-muted">{order.execution_mode}</div>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>{formatAdminUsd(order.entry_price)} -> {formatAdminUsd(order.exit_price)}</div>
+                                <div className="text-text-muted">qty {order.quantity ?? 'N/A'}</div>
+                              </td>
+                              <td className="px-4 py-3 text-text-secondary">
+                                <div>SL {formatAdminUsd(order.stop_price)}</div>
+                                <div className="text-text-muted">TP {formatAdminUsd(order.take_profit_price)}</div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className={(order.net_pnl_usd || 0) >= 0 ? 'text-status-success' : 'text-status-error'}>{formatAdminUsd(order.net_pnl_usd, 2)}</div>
+                                <div className={(order.pnl_percent || 0) >= 0 ? 'text-status-success' : 'text-status-error'}>{formatAdminPercent(order.pnl_percent)}</div>
+                              </td>
+                              <td className="max-w-[240px] px-4 py-3 text-text-secondary">
+                                <span className="line-clamp-2">{order.close_reason || order.error_message || order.client_order_id || 'Sem motivo registrado'}</span>
+                              </td>
+                            </tr>
+                          ))}
+                          {!(botMonitoringView === 'live-open' ? adminBotLiveOpenOrders : adminBotLiveClosedOrders).length && (
+                            <tr>
+                              <td colSpan={9} className="px-4 py-10 text-center text-text-muted">
+                                {botMonitoringView === 'live-open'
+                                  ? 'Nenhuma ordem live/testnet aberta ainda. Quando o executor for habilitado, entradas aprovadas aparecem aqui.'
+                                  : 'Nenhuma ordem live/testnet encerrada ainda. Fechamentos reconciliados aparecem neste historico.'}
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    {botLedgerHasMore && (
+                      <div className="mt-4 flex justify-center">
+                        <Button type="button" variant="secondary" onClick={() => loadBotTradeLedger(true)} disabled={isBotLedgerLoading}>
+                          <RefreshCw className={cn('h-4 w-4', isBotLedgerLoading && 'animate-spin')} />
+                          Carregar mais ordens
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {selectedBotMonitoringItem && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
