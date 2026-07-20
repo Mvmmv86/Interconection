@@ -2396,6 +2396,13 @@ async def queue_bot_instance_backtest(
         str(instance.exchange.exchange if instance.exchange else (strategy.market_config or {}).get("default_exchange") or "bingx")
     )
     market_type = normalize_market_type(resolve_strategy_market_type(strategy, instance))
+    timeframe = str(data.timeframe or resolve_strategy_timeframe(strategy, instance)).lower()
+    allowed_backtest_timeframes = {"1h", "4h", "1d"}
+    if timeframe not in allowed_backtest_timeframes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Backtest timeframe must be one of: 1h, 4h, 1d",
+        )
     engine = BotEngineService(db)
     risk_snapshot = engine._merged_risk_config(strategy, instance=instance, overrides=data.risk_overrides)
     cost_snapshot = {
