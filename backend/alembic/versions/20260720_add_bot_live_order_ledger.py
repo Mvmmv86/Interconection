@@ -27,6 +27,7 @@ bot_live_order_status = postgresql.ENUM(
     "REJECTED",
     "FAILED",
     name="botliveorderstatus",
+    create_type=False,
 )
 
 
