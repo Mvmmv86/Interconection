@@ -67,6 +67,14 @@ BINGX_NON_MARGIN_BALANCE_ACCOUNT_TYPES = {
     "fund",
     "funding",
 }
+BINGX_TRANSFER_DIRECTIONS: dict[str, tuple[str, str]] = {
+    "FUND_SFUTURES": ("fund", "stdFutures"),
+    "SFUTURES_FUND": ("stdFutures", "fund"),
+    "FUND_PFUTURES": ("fund", "USDTMPerp"),
+    "PFUTURES_FUND": ("USDTMPerp", "fund"),
+    "SFUTURES_PFUTURES": ("stdFutures", "USDTMPerp"),
+    "PFUTURES_SFUTURES": ("USDTMPerp", "stdFutures"),
+}
 
 BINGX_KLINE_INTERVALS = {
     "1m": "1m",
@@ -1178,23 +1186,70 @@ class BingXAdapter(BaseExchangeAdapter):
         end_time = int(time.time() * 1000)
         start_time = int((datetime.utcnow() - timedelta(days=90)).timestamp() * 1000)
 
-        account_pairs = [
-            ("fund", "spot"),
-            ("spot", "fund"),
-            ("fund", "USDTMPerp"),
-            ("USDTMPerp", "fund"),
-            ("spot", "USDTMPerp"),
-            ("USDTMPerp", "spot"),
-            ("fund", "stdFutures"),
-            ("stdFutures", "fund"),
-            ("spot", "stdFutures"),
-            ("stdFutures", "spot"),
-        ]
-
-        for from_account, to_account in account_pairs:
+        for transfer_type, (from_account, to_account) in BINGX_TRANSFER_DIRECTIONS.items():
             if len(transactions) >= limit:
                 break
 
+            try:
+                payload = await self._request(
+                    "GET",
+                    "/openApi/api/v3/asset/transfer",
+                    {
+                        "type": transfer_type,
+                        "current": 1,
+                        "size": min(limit, 100),
+                        "startTime": start_time,
+                        "endTime": end_time,
+                    },
+                )
+            except Exception as exc:
+                logger.debug("Failed to load BingX transfer records %s: %s", transfer_type, exc)
+                continue
+
+            for record in _as_list(payload):
+                record_type = str(record.get("type") or transfer_type)
+                resolved_from, resolved_to = BINGX_TRANSFER_DIRECTIONS.get(
+                    record_type,
+                    (from_account, to_account),
+                )
+                record_id = str(record.get("tranId") or record.get("transferId") or record.get("id") or "")
+                if not record_id:
+                    record_id = f"{record_type}-{record.get('asset')}-{record.get('timestamp')}-{record.get('amount')}"
+                if record_id in seen_ids:
+                    continue
+                seen_ids.add(record_id)
+
+                coin = str(record.get("asset") or record.get("coin") or "").upper()
+                amount = safe_decimal(record.get("amount"), "0")
+                price = prices.get(coin, {"price": Decimal("0")})["price"]
+                status_raw = str(record.get("status") or "").lower()
+                status = "completed" if status_raw in {"", "confirmed", "success", "successful"} else status_raw
+                transactions.append(
+                    ExchangeTransaction(
+                        id=f"bingx-transfer-{record_id}",
+                        exchange=self.exchange_name,
+                        type="internal_transfer",
+                        coin=coin,
+                        amount=amount,
+                        fee=Decimal("0"),
+                        value_usd=amount * price,
+                        status=status,
+                        from_account=record.get("fromAccount") or record.get("fromAccountType") or resolved_from,
+                        to_account=record.get("toAccount") or record.get("toAccountType") or resolved_to,
+                        timestamp=self._timestamp_from_record(record),
+                    )
+                )
+
+        if transactions:
+            transactions.sort(key=lambda item: item.timestamp, reverse=True)
+            return transactions[:limit]
+
+        fallback_pairs = [
+            ("fund", "spot"),
+            ("spot", "fund"),
+        ]
+
+        for from_account, to_account in fallback_pairs:
             try:
                 payload = await self._request(
                     "GET",
@@ -1209,7 +1264,7 @@ class BingXAdapter(BaseExchangeAdapter):
                     },
                 )
             except Exception as exc:
-                logger.debug("Failed to load BingX transfer records %s->%s: %s", from_account, to_account, exc)
+                logger.debug("Failed to load BingX spot/fund transfer records %s->%s: %s", from_account, to_account, exc)
                 continue
 
             for record in _as_list(payload):
@@ -1239,40 +1294,7 @@ class BingXAdapter(BaseExchangeAdapter):
                     )
                 )
 
-        if transactions:
-            transactions.sort(key=lambda item: item.timestamp, reverse=True)
-            return transactions[:limit]
-
-        try:
-            payload = await self._request(
-                "GET",
-                "/openApi/api/v3/asset/transfer",
-                {"type": "FUND_SFUTURES", "current": 1, "size": min(limit, 100), "startTime": start_time, "endTime": end_time},
-            )
-        except Exception as exc:
-            logger.debug("Failed to load BingX legacy transfer records: %s", exc)
-            return []
-
-        for record in _as_list(payload)[:limit]:
-            coin = str(record.get("asset") or record.get("coin") or "").upper()
-            amount = safe_decimal(record.get("amount"), "0")
-            price = prices.get(coin, {"price": Decimal("0")})["price"]
-            transactions.append(
-                ExchangeTransaction(
-                    id=str(record.get("tranId") or record.get("id") or f"bingx-transfer-{len(transactions)}"),
-                    exchange=self.exchange_name,
-                    type="internal_transfer",
-                    coin=coin,
-                    amount=amount,
-                    fee=Decimal("0"),
-                    value_usd=amount * price,
-                    status="completed",
-                    from_account=record.get("fromAccount") or record.get("fromAccountType") or record.get("type"),
-                    to_account=record.get("toAccount") or record.get("toAccountType"),
-                    timestamp=self._timestamp_from_record(record),
-                )
-            )
-
+        transactions.sort(key=lambda item: item.timestamp, reverse=True)
         return transactions
 
     async def _get_trade_symbols_for_cost_basis(self) -> list[str]:
