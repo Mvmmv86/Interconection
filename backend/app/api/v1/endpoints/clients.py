@@ -4,7 +4,7 @@ from typing import Annotated, List
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import (
@@ -15,6 +15,34 @@ from app.api.deps import (
     is_scope_specific_enforcement_enabled,
 )
 from app.models.client import Client
+from app.models.ai import AIReport
+from app.models.bot import (
+    BotBacktestRun,
+    BotBacktestTrade,
+    BotInstance,
+    BotInstanceAsset,
+    BotLiveOrder,
+    BotRun,
+    BotSignal,
+)
+from app.models.defi_cache import DefiPositionCache
+from app.models.exchange import Exchange
+from app.models.exchange_balance import (
+    ExchangeBalance,
+    ExchangeEarnPosition,
+    ExchangeFuturesPosition,
+    ExchangeSubaccount,
+)
+from app.models.exchange_transaction import ExchangeTransaction
+from app.models.manual_asset import ManualAsset
+from app.models.membership import MembershipClient, TeamClient
+from app.models.pool_position import PoolPosition
+from app.models.portfolio_snapshot import PortfolioSnapshot
+from app.models.position import Position
+from app.models.staking_position import StakingPosition
+from app.models.transaction import Transaction
+from app.models.wallet import Wallet
+from app.models.wallet_data import WalletToken, WalletTransaction
 from app.schemas.client import (
     ClientCreate,
     ClientUpdate,
@@ -203,8 +231,48 @@ async def delete_client(
             detail="Client not found",
         )
 
+    wallet_ids = select(Wallet.id).where(Wallet.client_id == client_id)
+    exchange_ids = select(Exchange.id).where(Exchange.client_id == client_id)
+    bot_instance_ids = select(BotInstance.id).where(BotInstance.client_id == client_id)
+    bot_backtest_run_ids = select(BotBacktestRun.id).where(
+        BotBacktestRun.instance_id.in_(bot_instance_ids)
+    )
+
     try:
-        await db.delete(client)
+        bulk_deletes = [
+            delete(MembershipClient).where(MembershipClient.client_id == client_id),
+            delete(TeamClient).where(TeamClient.client_id == client_id),
+            delete(ExchangeTransaction).where(ExchangeTransaction.exchange_id.in_(exchange_ids)),
+            delete(ExchangeSubaccount).where(ExchangeSubaccount.exchange_id.in_(exchange_ids)),
+            delete(ExchangeEarnPosition).where(ExchangeEarnPosition.exchange_id.in_(exchange_ids)),
+            delete(ExchangeFuturesPosition).where(ExchangeFuturesPosition.exchange_id.in_(exchange_ids)),
+            delete(ExchangeBalance).where(ExchangeBalance.exchange_id.in_(exchange_ids)),
+            delete(DefiPositionCache).where(DefiPositionCache.wallet_id.in_(wallet_ids)),
+            delete(WalletToken).where(WalletToken.wallet_id.in_(wallet_ids)),
+            delete(WalletTransaction).where(WalletTransaction.wallet_id.in_(wallet_ids)),
+            delete(BotLiveOrder).where(BotLiveOrder.instance_id.in_(bot_instance_ids)),
+            delete(BotBacktestTrade).where(BotBacktestTrade.run_id.in_(bot_backtest_run_ids)),
+            delete(BotInstanceAsset).where(BotInstanceAsset.instance_id.in_(bot_instance_ids)),
+            delete(BotSignal).where(BotSignal.instance_id.in_(bot_instance_ids)),
+            delete(BotRun).where(BotRun.instance_id.in_(bot_instance_ids)),
+            delete(BotBacktestRun).where(BotBacktestRun.instance_id.in_(bot_instance_ids)),
+            delete(BotInstance).where(BotInstance.client_id == client_id),
+            delete(Transaction).where(Transaction.client_id == client_id),
+            delete(Position).where(Position.client_id == client_id),
+            delete(ManualAsset).where(ManualAsset.client_id == client_id),
+            delete(StakingPosition).where(StakingPosition.client_id == client_id),
+            delete(PoolPosition).where(PoolPosition.client_id == client_id),
+            delete(PortfolioSnapshot).where(PortfolioSnapshot.client_id == client_id),
+            delete(AIReport).where(AIReport.client_id == client_id),
+            delete(Exchange).where(Exchange.client_id == client_id),
+            delete(Wallet).where(Wallet.client_id == client_id),
+            delete(Client).where(
+                Client.id == client_id,
+                Client.organization_id == permission_ctx.organization_id,
+            ),
+        ]
+        for statement in bulk_deletes:
+            await db.execute(statement.execution_options(synchronize_session=False))
         await db.flush()
     except IntegrityError as exc:
         await db.rollback()
