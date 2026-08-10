@@ -3,6 +3,7 @@
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.client import Client
+from app.models.client_observation import ClientObservation
 from app.models.wallet import Wallet
 from app.models.exchange import Exchange
 from app.models.asset import Asset
@@ -86,6 +87,7 @@ __all__ = [
     "Organization",
     "User",
     "Client",
+    "ClientObservation",
     "Wallet",
     "Exchange",
     "Asset",

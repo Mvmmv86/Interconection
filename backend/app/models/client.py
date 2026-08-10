@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from app.models.pool_position import PoolPosition
     from app.models.membership import Membership, Team
     from app.models.bot import BotInstance
+    from app.models.client_observation import ClientObservation
 
 
 class Client(Base, UUIDMixin, TimestampMixin):
@@ -85,6 +86,11 @@ class Client(Base, UUIDMixin, TimestampMixin):
         back_populates="client",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    observations: Mapped[List["ClientObservation"]] = relationship(
+        "ClientObservation",
+        back_populates="client",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:

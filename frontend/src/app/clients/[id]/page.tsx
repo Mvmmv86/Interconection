@@ -17,6 +17,7 @@ import {
   Percent,
   DollarSign,
   BarChart3,
+  ClipboardList,
 } from 'lucide-react';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
@@ -24,6 +25,11 @@ import { cn } from '@/lib/utils';
 import { useClients } from '@/contexts/client-context';
 import { useTheme } from '@/contexts/theme-context';
 import { useAuth } from '@/contexts/auth-context';
+import {
+  api,
+  type ClientObservation,
+  type ClientObservationCreateData,
+} from '@/lib/api/client';
 import {
   ClientWallet,
   ClientExchange,
@@ -1483,6 +1489,390 @@ function PositionRow({
   );
 }
 
+function getTodayInputDate() {
+  const now = new Date();
+  const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 10);
+}
+
+function parseOptionalNumber(value: string): number | null {
+  const normalized = value.trim().replace(',', '.');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : Number.NaN;
+}
+
+function ObservationModal({
+  isOpen,
+  onClose,
+  clientId,
+  clientName,
+  exchanges,
+  isDark,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  clientId: string;
+  clientName: string;
+  exchanges: ClientExchange[];
+  isDark: boolean;
+}) {
+  const [observations, setObservations] = useState<ClientObservation[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showNewRow, setShowNewRow] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [observedAt, setObservedAt] = useState(getTodayInputDate());
+  const [location, setLocation] = useState(clientName);
+  const [assetType, setAssetType] = useState('Cripto');
+  const [assetSymbol, setAssetSymbol] = useState('');
+  const [amount, setAmount] = useState('');
+  const [valueUsd, setValueUsd] = useState('');
+  const [note, setNote] = useState('');
+
+  const locationOptions = Array.from(new Set([
+    clientName,
+    ...exchanges.map((exchange) => exchange.label || exchange.exchange),
+  ].filter(Boolean)));
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let isMounted = true;
+    const fetchObservations = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const result = await api.getClientObservations(clientId);
+        if (!result.success || !result.data) {
+          throw new Error(result.error || 'Nao foi possivel carregar as observacoes.');
+        }
+        if (isMounted) {
+          setObservations(result.data);
+        }
+      } catch (err) {
+        if (isMounted) {
+          setError(err instanceof Error ? err.message : 'Erro ao carregar observacoes.');
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    fetchObservations();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [clientId, isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setLocation(clientName);
+    }
+  }, [clientName, isOpen]);
+
+  if (!isOpen) return null;
+
+  const resetForm = () => {
+    setObservedAt(getTodayInputDate());
+    setLocation(clientName);
+    setAssetType('Cripto');
+    setAssetSymbol('');
+    setAmount('');
+    setValueUsd('');
+    setNote('');
+  };
+
+  const formatDate = (value: string) => {
+    const date = new Date(`${value}T00:00:00`);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('pt-BR');
+  };
+
+  const formatAmount = (value: string | number | null) => {
+    if (value === null || value === undefined || value === '') return '-';
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+    return new Intl.NumberFormat('en-US', { maximumFractionDigits: 8 }).format(numeric);
+  };
+
+  const formatUsd = (value: string | number | null) => {
+    if (value === null || value === undefined || value === '') return '-';
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(numeric);
+  };
+
+  const handleSave = async () => {
+    const parsedAmount = parseOptionalNumber(amount);
+    const parsedValueUsd = parseOptionalNumber(valueUsd);
+    const trimmedNote = note.trim();
+
+    if (!observedAt) {
+      setError('Informe a data da observacao.');
+      return;
+    }
+    if (Number.isNaN(parsedAmount) || Number.isNaN(parsedValueUsd)) {
+      setError('Quantidade e valor precisam ser numeros positivos.');
+      return;
+    }
+    if (!trimmedNote) {
+      setError('Escreva a observacao antes de salvar.');
+      return;
+    }
+
+    const payload: ClientObservationCreateData = {
+      observed_at: observedAt,
+      location: location.trim() || null,
+      asset_type: assetType.trim() || null,
+      asset_symbol: assetSymbol.trim() || null,
+      amount: parsedAmount,
+      value_usd: parsedValueUsd,
+      note: trimmedNote,
+    };
+
+    setIsSaving(true);
+    setError(null);
+    try {
+      const result = await api.createClientObservation(clientId, payload);
+      if (!result.success || !result.data) {
+        throw new Error(result.error || 'Nao foi possivel salvar a observacao.');
+      }
+      setObservations((current) => [result.data!, ...current]);
+      setShowNewRow(false);
+      resetForm();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao salvar observacao.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div
+        className={cn("absolute inset-0 backdrop-blur-sm", isDark ? "bg-black/60" : "bg-black/40")}
+        onClick={onClose}
+      />
+      <div
+        className="relative w-[min(1180px,calc(100vw-32px))] max-h-[86vh] rounded-xl shadow-2xl overflow-hidden"
+        style={{
+          background: isDark
+            ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.98) 0%, rgba(18, 21, 30, 0.98) 100%)'
+            : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+          border: isDark
+            ? '1px solid rgba(255, 255, 255, 0.08)'
+            : '1px solid rgba(203, 213, 225, 0.7)',
+        }}
+      >
+        <div className={cn("flex items-center justify-between gap-4 px-5 py-4 border-b", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-accent-blue/10 flex items-center justify-center">
+              <ClipboardList className="w-4 h-4 text-accent-blue" />
+            </div>
+            <div>
+              <h3 className={cn("text-base font-semibold", isDark ? "text-white" : "text-gray-900")}>
+                Observacoes - {clientName}
+              </h3>
+              <p className={cn("text-[11px] mt-0.5", isDark ? "text-white/45" : "text-gray-500")}>
+                Linhas manuais para contexto, saldos informados e entradas do gestor.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowNewRow(true);
+                setError(null);
+              }}
+              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-accent-blue text-white text-[11px] font-medium hover:bg-accent-blue/90 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Nova linha
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className={cn(
+                "h-9 px-3 rounded-lg text-[11px] font-medium transition-colors",
+                isDark
+                  ? "text-white/70 bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04]"
+                  : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+              )}
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mx-5 mt-4 rounded-lg border border-status-error/20 bg-status-error/10 px-3 py-2">
+            <p className="text-xs text-status-error">{error}</p>
+          </div>
+        )}
+
+        <div className="p-5 overflow-auto max-h-[calc(86vh-92px)]">
+          <table className="min-w-[1040px] w-full border-separate border-spacing-0 text-left">
+            <thead>
+              <tr className={cn("text-[10px] uppercase tracking-wider", isDark ? "text-white/40" : "text-gray-500")}>
+                {['Data', 'Local/Conta', 'Tipo', 'Ativo', 'Quantidade/Saldo', 'Valor USD', 'Observacao'].map((header) => (
+                  <th
+                    key={header}
+                    className={cn("sticky top-0 z-10 border-b px-3 py-2 font-semibold", isDark ? "bg-[#151923] border-white/[0.06]" : "bg-slate-50 border-gray-200")}
+                  >
+                    {header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className={cn("text-xs", isDark ? "text-white/80" : "text-gray-700")}>
+              {showNewRow && (
+                <tr className={isDark ? "bg-accent-blue/5" : "bg-blue-50/70"}>
+                  <td className={cn("border-b px-2 py-2", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                    <input
+                      type="date"
+                      value={observedAt}
+                      onChange={(event) => setObservedAt(event.target.value)}
+                      className={cn("h-8 w-full rounded-md px-2 text-xs focus:outline-none focus:border-accent-blue/50", isDark ? "bg-white/[0.03] border border-white/[0.08] text-white" : "bg-white border border-gray-200 text-gray-900")}
+                    />
+                  </td>
+                  <td className={cn("border-b px-2 py-2", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                    <select
+                      value={location}
+                      onChange={(event) => setLocation(event.target.value)}
+                      className={cn("h-8 w-full rounded-md px-2 text-xs focus:outline-none focus:border-accent-blue/50", isDark ? "bg-[#151923] border border-white/[0.08] text-white" : "bg-white border border-gray-200 text-gray-900")}
+                    >
+                      {locationOptions.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                      <option value="Manual">Manual</option>
+                    </select>
+                  </td>
+                  <td className={cn("border-b px-2 py-2", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                    <select
+                      value={assetType}
+                      onChange={(event) => setAssetType(event.target.value)}
+                      className={cn("h-8 w-full rounded-md px-2 text-xs focus:outline-none focus:border-accent-blue/50", isDark ? "bg-[#151923] border border-white/[0.08] text-white" : "bg-white border border-gray-200 text-gray-900")}
+                    >
+                      <option value="Cripto">Cripto</option>
+                      <option value="Fiat">Fiat</option>
+                      <option value="Outro">Outro</option>
+                    </select>
+                  </td>
+                  <td className={cn("border-b px-2 py-2", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                    <input
+                      value={assetSymbol}
+                      onChange={(event) => setAssetSymbol(event.target.value.toUpperCase())}
+                      placeholder="USDT"
+                      className={cn("h-8 w-full rounded-md px-2 text-xs focus:outline-none focus:border-accent-blue/50", isDark ? "bg-white/[0.03] border border-white/[0.08] text-white placeholder:text-white/25" : "bg-white border border-gray-200 text-gray-900 placeholder:text-gray-400")}
+                    />
+                  </td>
+                  <td className={cn("border-b px-2 py-2", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                    <input
+                      value={amount}
+                      onChange={(event) => setAmount(event.target.value)}
+                      placeholder="10000"
+                      inputMode="decimal"
+                      className={cn("h-8 w-full rounded-md px-2 text-xs tabular-nums focus:outline-none focus:border-accent-blue/50", isDark ? "bg-white/[0.03] border border-white/[0.08] text-white placeholder:text-white/25" : "bg-white border border-gray-200 text-gray-900 placeholder:text-gray-400")}
+                    />
+                  </td>
+                  <td className={cn("border-b px-2 py-2", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                    <input
+                      value={valueUsd}
+                      onChange={(event) => setValueUsd(event.target.value)}
+                      placeholder="10000"
+                      inputMode="decimal"
+                      className={cn("h-8 w-full rounded-md px-2 text-xs tabular-nums focus:outline-none focus:border-accent-blue/50", isDark ? "bg-white/[0.03] border border-white/[0.08] text-white placeholder:text-white/25" : "bg-white border border-gray-200 text-gray-900 placeholder:text-gray-400")}
+                    />
+                  </td>
+                  <td className={cn("border-b px-2 py-2 min-w-[320px]", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={note}
+                        onChange={(event) => setNote(event.target.value)}
+                        placeholder="Descreva o que entrou, onde e por que..."
+                        className={cn("h-8 flex-1 rounded-md px-2 text-xs focus:outline-none focus:border-accent-blue/50", isDark ? "bg-white/[0.03] border border-white/[0.08] text-white placeholder:text-white/25" : "bg-white border border-gray-200 text-gray-900 placeholder:text-gray-400")}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowNewRow(false);
+                          resetForm();
+                          setError(null);
+                        }}
+                        disabled={isSaving}
+                        className={cn("h-8 px-2 rounded-md text-[11px] transition-colors disabled:opacity-50", isDark ? "text-white/60 hover:bg-white/[0.05]" : "text-gray-500 hover:bg-gray-100")}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSave}
+                        disabled={isSaving}
+                        className="h-8 px-3 rounded-md bg-accent-blue text-white text-[11px] font-medium hover:bg-accent-blue/90 transition-colors disabled:opacity-50"
+                      >
+                        {isSaving ? 'Salvando...' : 'Salvar'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className={cn("px-3 py-8 text-center", isDark ? "text-white/40" : "text-gray-500")}>
+                    Carregando observacoes...
+                  </td>
+                </tr>
+              ) : observations.length === 0 && !showNewRow ? (
+                <tr>
+                  <td colSpan={7} className={cn("px-3 py-8 text-center", isDark ? "text-white/40" : "text-gray-500")}>
+                    Nenhuma observacao salva para esta conta.
+                  </td>
+                </tr>
+              ) : (
+                observations.map((observation) => (
+                  <tr key={observation.id} className={isDark ? "hover:bg-white/[0.02]" : "hover:bg-gray-50"}>
+                    <td className={cn("border-b px-3 py-3 whitespace-nowrap", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                      {formatDate(observation.observed_at)}
+                    </td>
+                    <td className={cn("border-b px-3 py-3", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                      {observation.location || '-'}
+                    </td>
+                    <td className={cn("border-b px-3 py-3", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                      {observation.asset_type || '-'}
+                    </td>
+                    <td className={cn("border-b px-3 py-3 font-medium", isDark ? "border-white/[0.06] text-white" : "border-gray-200 text-gray-900")}>
+                      {observation.asset_symbol || '-'}
+                    </td>
+                    <td className={cn("border-b px-3 py-3 tabular-nums", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                      {formatAmount(observation.amount)}
+                    </td>
+                    <td className={cn("border-b px-3 py-3 tabular-nums font-medium", isDark ? "border-white/[0.06] text-white" : "border-gray-200 text-gray-900")}>
+                      {formatUsd(observation.value_usd)}
+                    </td>
+                    <td className={cn("border-b px-3 py-3 min-w-[320px]", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                      {observation.note}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ClientDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -1516,6 +1906,7 @@ export default function ClientDetailPage() {
   const [showAddWallet, setShowAddWallet] = useState(false);
   const [showAddExchange, setShowAddExchange] = useState(false);
   const [showAddAsset, setShowAddAsset] = useState(false);
+  const [showObservations, setShowObservations] = useState(false);
 
   // Select client on mount to trigger portfolio fetch
   useEffect(() => {
@@ -1737,19 +2128,33 @@ export default function ClientDetailPage() {
               </div>
             </div>
 
-            <button
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              className={cn(
-                "flex items-center gap-2 h-9 px-4 text-[11px] font-medium rounded-lg transition-colors disabled:opacity-50",
-                isDark
-                  ? "text-white/70 bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04]"
-                  : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
-              )}
-            >
-              <RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
-              Atualizar Dados
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowObservations(true)}
+                className={cn(
+                  "flex items-center gap-2 h-9 px-4 text-[11px] font-medium rounded-lg transition-colors",
+                  isDark
+                    ? "text-white/70 bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04]"
+                    : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                )}
+              >
+                <ClipboardList className="w-4 h-4" />
+                Observacoes
+              </button>
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className={cn(
+                  "flex items-center gap-2 h-9 px-4 text-[11px] font-medium rounded-lg transition-colors disabled:opacity-50",
+                  isDark
+                    ? "text-white/70 bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04]"
+                    : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                )}
+              >
+                <RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
+                Atualizar Dados
+              </button>
+            </div>
           </div>
 
           {/* Summary Cards */}
@@ -2080,6 +2485,15 @@ export default function ClientDetailPage() {
               setIsActionLoading(false);
             }}
             isLoading={isActionLoading}
+            isDark={isDark}
+          />
+
+          <ObservationModal
+            isOpen={showObservations}
+            onClose={() => setShowObservations(false)}
+            clientId={clientId}
+            clientName={client.name}
+            exchanges={exchanges}
             isDark={isDark}
           />
         </main>

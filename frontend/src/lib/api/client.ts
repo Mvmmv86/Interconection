@@ -102,6 +102,32 @@ interface ClientListItem {
   average_apy: number | string;
 }
 
+interface ClientObservation {
+  id: string;
+  organization_id: string;
+  client_id: string;
+  created_by_user_id: string | null;
+  observed_at: string;
+  location: string | null;
+  asset_type: string | null;
+  asset_symbol: string | null;
+  amount: number | string | null;
+  value_usd: number | string | null;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ClientObservationCreateData {
+  observed_at: string;
+  location?: string | null;
+  asset_type?: string | null;
+  asset_symbol?: string | null;
+  amount?: number | null;
+  value_usd?: number | null;
+  note: string;
+}
+
 // Full portfolio (from GET /clients/{id}/portfolio)
 interface ClientPortfolioData {
   client: {
@@ -2235,6 +2261,22 @@ class ApiClient {
     return this.request<ClientPortfolioData>(`/api/v1/clients/${clientId}/portfolio`);
   }
 
+  /** Get manual observation rows for a client */
+  async getClientObservations(clientId: string): Promise<ApiResponse<ClientObservation[]>> {
+    return this.request<ClientObservation[]>(`/api/v1/clients/${clientId}/observations`);
+  }
+
+  /** Create a manual observation row for a client */
+  async createClientObservation(
+    clientId: string,
+    data: ClientObservationCreateData
+  ): Promise<ApiResponse<ClientObservation>> {
+    return this.request<ClientObservation>(`/api/v1/clients/${clientId}/observations`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   // ========================
   // Wallet methods
   // ========================
@@ -2420,6 +2462,8 @@ export type {
   WalletData,
   ClientData,
   ClientListItem,
+  ClientObservation,
+  ClientObservationCreateData,
   ClientPortfolioData,
   ExchangeCreateData,
   ExchangeSyncResult,

@@ -15,6 +15,7 @@ from app.api.deps import (
     is_scope_specific_enforcement_enabled,
 )
 from app.models.client import Client
+from app.models.client_observation import ClientObservation
 from app.models.ai import AIReport
 from app.models.bot import (
     BotBacktestRun,
@@ -48,6 +49,10 @@ from app.schemas.client import (
     ClientUpdate,
     ClientResponse,
 )
+from app.schemas.client_observation import (
+    ClientObservationCreate,
+    ClientObservationResponse,
+)
 from app.schemas.common import SuccessResponse
 from app.schemas.client_portfolio import (
     ClientPortfolio,
@@ -57,6 +62,38 @@ from app.services.client_service import ClientService
 from app.services.plan_limits import enforce_plan_limit
 
 router = APIRouter(dependencies=[Depends(rbac_route_guard("clients"))])
+
+
+async def verify_client_access(
+    client_id: UUID,
+    permission_ctx: MembershipAuthContext,
+    db,
+) -> Client:
+    """Verify the current membership can access the requested client."""
+    if (
+        is_scope_specific_enforcement_enabled("clients")
+        and not permission_ctx.can_access_client(client_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden by membership client scope",
+        )
+
+    result = await db.execute(
+        select(Client).where(
+            Client.id == client_id,
+            Client.organization_id == permission_ctx.organization_id,
+        )
+    )
+    client = result.scalar_one_or_none()
+
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found",
+        )
+
+    return client
 
 
 @router.get("", response_model=List[ClientPortfolioListItem])
@@ -259,6 +296,7 @@ async def delete_client(
             delete(BotInstance).where(BotInstance.client_id == client_id),
             delete(Transaction).where(Transaction.client_id == client_id),
             delete(Position).where(Position.client_id == client_id),
+            delete(ClientObservation).where(ClientObservation.client_id == client_id),
             delete(ManualAsset).where(ManualAsset.client_id == client_id),
             delete(StakingPosition).where(StakingPosition.client_id == client_id),
             delete(PoolPosition).where(PoolPosition.client_id == client_id),
@@ -286,6 +324,70 @@ async def delete_client(
         ) from exc
 
     return SuccessResponse(message="Client deleted successfully")
+
+
+@router.get("/{client_id}/observations", response_model=List[ClientObservationResponse])
+async def list_client_observations(
+    client_id: UUID,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("clients:list", route_key="clients")),
+    ],
+    db: DBSession,
+) -> List[ClientObservationResponse]:
+    """List manual observation rows for a client."""
+    await verify_client_access(client_id, permission_ctx, db)
+
+    result = await db.execute(
+        select(ClientObservation)
+        .where(
+            ClientObservation.client_id == client_id,
+            ClientObservation.organization_id == permission_ctx.organization_id,
+        )
+        .order_by(ClientObservation.observed_at.desc(), ClientObservation.created_at.desc())
+    )
+    observations = result.scalars().all()
+
+    return [ClientObservationResponse.model_validate(observation) for observation in observations]
+
+
+@router.post("/{client_id}/observations", response_model=ClientObservationResponse, status_code=status.HTTP_201_CREATED)
+async def create_client_observation(
+    client_id: UUID,
+    data: ClientObservationCreate,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("clients:edit", route_key="clients")),
+    ],
+    db: DBSession,
+) -> ClientObservationResponse:
+    """Create a manual observation row for a client."""
+    client = await verify_client_access(client_id, permission_ctx, db)
+    note = data.note.strip()
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Observation note cannot be empty",
+        )
+
+    observation = ClientObservation(
+        id=uuid4(),
+        organization_id=client.organization_id,
+        client_id=client.id,
+        created_by_user_id=permission_ctx.user.id,
+        observed_at=data.observed_at,
+        location=data.location.strip() if data.location else None,
+        asset_type=data.asset_type.strip() if data.asset_type else None,
+        asset_symbol=data.asset_symbol.strip().upper() if data.asset_symbol else None,
+        amount=data.amount,
+        value_usd=data.value_usd,
+        note=note,
+    )
+    db.add(observation)
+    await db.flush()
+    await db.refresh(observation)
+
+    return ClientObservationResponse.model_validate(observation)
 
 
 @router.get("/{client_id}/portfolio", response_model=ClientPortfolio)
