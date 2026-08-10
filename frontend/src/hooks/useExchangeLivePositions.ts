@@ -37,6 +37,7 @@ function transformLiveResponse(apiData: Record<string, unknown>): ExchangeLiveDa
 
   const spotBalances = (apiData.spot_balances as Array<Record<string, unknown>> || []).map((bal) => ({
     asset: bal.asset as string,
+    accountType: bal.account_type as string | undefined,
     free: Number(bal.free),
     locked: Number(bal.locked),
     total: Number(bal.total),
@@ -47,6 +48,18 @@ function transformLiveResponse(apiData: Record<string, unknown>): ExchangeLiveDa
 
   const fundingBalances = (apiData.funding_balances as Array<Record<string, unknown>> || []).map((bal) => ({
     asset: bal.asset as string,
+    accountType: bal.account_type as string | undefined,
+    free: Number(bal.free),
+    locked: Number(bal.locked),
+    total: Number(bal.total),
+    valueUsd: Number(bal.value_usd),
+    priceUsd: Number(bal.price_usd),
+    transferable: Number(bal.transferable || 0),
+  }));
+
+  const futuresBalances = (apiData.futures_balances as Array<Record<string, unknown>> || []).map((bal) => ({
+    asset: bal.asset as string,
+    accountType: bal.account_type as string | undefined,
     free: Number(bal.free),
     locked: Number(bal.locked),
     total: Number(bal.total),
@@ -68,6 +81,7 @@ function transformLiveResponse(apiData: Record<string, unknown>): ExchangeLiveDa
     }
     return {
       asset: bal.asset as string,
+      accountType: bal.account_type as string | undefined,
       free: Number(bal.free || 0),
       locked: Number(bal.locked || 0),
       total,
@@ -117,15 +131,18 @@ function transformLiveResponse(apiData: Record<string, unknown>): ExchangeLiveDa
     totalValueUsd: Number(apiData.total_value_usd || 0),
     totalSpotUsd: Number(apiData.total_spot_usd || 0),
     totalFundingUsd: Number(apiData.total_funding_usd || 0),
+    totalFuturesBalanceUsd: Number(apiData.total_futures_balance_usd || 0),
     totalMarginUsd: Number(apiData.total_margin_usd || 0),
     totalFuturesUsd: Number(apiData.total_futures_usd || 0),
     totalEarnUsd: Number(apiData.total_earn_usd || 0),
     spotCount: spotBalances.length,
     fundingCount: fundingBalances.length,
     marginCount: marginBalances.length,
-    futuresCount: futuresPositions.length,
+    futuresCount: futuresPositions.length + futuresBalances.length,
+    futuresBalanceCount: futuresBalances.length,
     earnCount: earnPositions.length,
     futuresPositions,
+    futuresBalances,
     spotBalances,
     fundingBalances,
     marginBalances,

@@ -229,8 +229,31 @@ export function useAllPositions(): AllPositionsData {
           });
         }
 
+        const hasFuturesAccountBalance = liveData.futuresBalances.length > 0;
+
+        // === FUTURES ACCOUNT BALANCES (real account equity) ===
+        for (const bal of liveData.futuresBalances) {
+          if (bal.valueUsd < 1) continue;
+          positions.push({
+            id: `exchange-${exchange.id}-${bal.accountType || 'futures-balance'}-${bal.asset}`,
+            asset: bal.asset,
+            symbol: bal.asset,
+            quantity: bal.total,
+            currentPrice: bal.priceUsd,
+            value: bal.valueUsd,
+            allocation: 0,
+            location: exchange.name,
+            locationType: 'exchange',
+            chain: 'CEX',
+            category: 'futures',
+            accountType: bal.accountType || 'futures_balance',
+            updatedAt: liveData.lastSync,
+          });
+        }
+
         // === FUTURES POSITIONS (with entry price, P&L, leverage, side) ===
         for (const fut of liveData.futuresPositions) {
+          const futuresEquityValue = Math.max((fut.margin || 0) + (fut.unrealizedPnl || 0), 0);
           positions.push({
             id: `exchange-${exchange.id}-futures-${fut.symbol}`,
             asset: fut.symbol,
@@ -238,7 +261,7 @@ export function useAllPositions(): AllPositionsData {
             quantity: fut.size,
             currentPrice: fut.markPrice,
             entryPrice: fut.entryPrice,
-            value: fut.positionValue,
+            value: hasFuturesAccountBalance ? 0 : futuresEquityValue,
             allocation: 0,
             location: exchange.name,
             locationType: 'exchange',

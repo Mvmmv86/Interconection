@@ -311,8 +311,25 @@ export default function ExchangeDetailPage() {
                 {/* Tab Content */}
                 <div className="p-4">
                   {activeTab === 'futures' && (
-                    data.futuresPositions.length > 0 ? (
-                      <FuturesPositionsTable positions={data.futuresPositions} />
+                    data.futuresPositions.length > 0 || data.futuresBalances.length > 0 ? (
+                      <div className="space-y-5">
+                        {data.futuresBalances.length > 0 && (
+                          <div className="space-y-2">
+                            <p className={cn("text-[11px] font-medium uppercase", isDark ? "text-white/40" : "text-gray-500")}>
+                              Account Equity
+                            </p>
+                            <SpotBalancesTable balances={data.futuresBalances} />
+                          </div>
+                        )}
+                        {data.futuresPositions.length > 0 && (
+                          <div className="space-y-2">
+                            <p className={cn("text-[11px] font-medium uppercase", isDark ? "text-white/40" : "text-gray-500")}>
+                              Open Positions
+                            </p>
+                            <FuturesPositionsTable positions={data.futuresPositions} />
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <EmptyTabState
                         isDark={isDark}

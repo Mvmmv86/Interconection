@@ -26,6 +26,7 @@ export interface FuturesPosition {
 // Spot balance interface
 export interface SpotBalance {
   asset: string;
+  accountType?: string;
   free: number;
   locked: number;
   total: number;
@@ -37,6 +38,7 @@ export interface SpotBalance {
 // Margin balance interface
 export interface MarginBalance {
   asset: string;
+  accountType?: string;
   free: number;
   locked: number;
   total: number;
@@ -64,6 +66,7 @@ export interface EarnPosition {
 // Funding balance interface
 export interface FundingBalance {
   asset: string;
+  accountType?: string;
   free: number;
   locked: number;
   total: number;
@@ -71,6 +74,8 @@ export interface FundingBalance {
   priceUsd: number;
   transferable: number;
 }
+
+export type FuturesBalance = FundingBalance;
 
 // Sub-account balance interface
 export interface SubAccountBalance {
@@ -114,6 +119,7 @@ export interface ExchangeLiveData {
   totalValueUsd: number;
   totalSpotUsd: number;
   totalFundingUsd: number;
+  totalFuturesBalanceUsd: number;
   totalMarginUsd: number;
   totalFuturesUsd: number;
   totalEarnUsd: number;
@@ -123,10 +129,12 @@ export interface ExchangeLiveData {
   fundingCount: number;
   marginCount: number;
   futuresCount: number;
+  futuresBalanceCount: number;
   earnCount: number;
 
   // Detailed positions
   futuresPositions: FuturesPosition[];
+  futuresBalances: FuturesBalance[];
   spotBalances: SpotBalance[];
   fundingBalances: FundingBalance[];
   marginBalances: MarginBalance[];
@@ -169,6 +177,7 @@ function transformApiResponse(apiData: Record<string, unknown>): ExchangeLiveDat
 
   const spotBalances = (apiData.spot_balances as Array<Record<string, unknown>> || []).map((bal) => ({
     asset: bal.asset as string,
+    accountType: bal.account_type as string | undefined,
     free: Number(bal.free),
     locked: Number(bal.locked),
     total: Number(bal.total),
@@ -179,6 +188,18 @@ function transformApiResponse(apiData: Record<string, unknown>): ExchangeLiveDat
 
   const fundingBalances = (apiData.funding_balances as Array<Record<string, unknown>> || []).map((bal) => ({
     asset: bal.asset as string,
+    accountType: bal.account_type as string | undefined,
+    free: Number(bal.free),
+    locked: Number(bal.locked),
+    total: Number(bal.total),
+    valueUsd: Number(bal.value_usd),
+    priceUsd: Number(bal.price_usd),
+    transferable: Number(bal.transferable || 0),
+  }));
+
+  const futuresBalances = (apiData.futures_balances as Array<Record<string, unknown>> || []).map((bal) => ({
+    asset: bal.asset as string,
+    accountType: bal.account_type as string | undefined,
     free: Number(bal.free),
     locked: Number(bal.locked),
     total: Number(bal.total),
@@ -201,6 +222,7 @@ function transformApiResponse(apiData: Record<string, unknown>): ExchangeLiveDat
     }
     return {
       asset: bal.asset as string,
+      accountType: bal.account_type as string | undefined,
       free: Number(bal.free || 0),
       locked: Number(bal.locked || 0),
       total,
@@ -263,6 +285,7 @@ function transformApiResponse(apiData: Record<string, unknown>): ExchangeLiveDat
     totalValueUsd: Number(apiData.total_value_usd || 0),
     totalSpotUsd: Number(apiData.total_spot_usd || 0),
     totalFundingUsd: Number(apiData.total_funding_usd || 0),
+    totalFuturesBalanceUsd: Number(apiData.total_futures_balance_usd || 0),
     totalMarginUsd: Number(apiData.total_margin_usd || 0),
     totalFuturesUsd: Number(apiData.total_futures_usd || 0),
     totalEarnUsd: Number(apiData.total_earn_usd || 0),
@@ -270,10 +293,12 @@ function transformApiResponse(apiData: Record<string, unknown>): ExchangeLiveDat
     spotCount: spotBalances.length,
     fundingCount: fundingBalances.length,
     marginCount: marginBalances.length,
-    futuresCount: futuresPositions.length,
+    futuresCount: futuresPositions.length + futuresBalances.length,
+    futuresBalanceCount: futuresBalances.length,
     earnCount: earnPositions.length,
 
     futuresPositions,
+    futuresBalances,
     spotBalances,
     fundingBalances,
     marginBalances,
@@ -353,6 +378,7 @@ export const mockExchangeDetail: ExchangeLiveData = {
   totalValueUsd: 635167.12,
   totalSpotUsd: 169000,
   totalFundingUsd: 0,
+  totalFuturesBalanceUsd: 0,
   totalMarginUsd: 0,
   totalFuturesUsd: 466000,
   totalEarnUsd: 0,
@@ -361,6 +387,7 @@ export const mockExchangeDetail: ExchangeLiveData = {
   fundingCount: 0,
   marginCount: 0,
   futuresCount: 4,
+  futuresBalanceCount: 0,
   earnCount: 0,
 
   futuresPositions: [
@@ -414,6 +441,7 @@ export const mockExchangeDetail: ExchangeLiveData = {
     },
   ],
 
+  futuresBalances: [],
   spotBalances: [
     {
       asset: 'BTC',

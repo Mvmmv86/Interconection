@@ -1398,7 +1398,7 @@ function PositionRow({
   const formatAccountType = (value?: string | null) => {
     const normalized = (value || '').toLowerCase();
     if (normalized === 'spot_fund') return 'Spot/Funds';
-    if (normalized === 'futures_balance') return 'Saldo Futuro';
+    if (normalized === 'futures_balance' || normalized.startsWith('futures_')) return 'Saldo Futuro';
     if (normalized === 'futures_position') return 'Operação Futura';
     if (normalized.includes('fund')) return 'Funds';
     if (normalized.includes('margin')) return 'Margem';

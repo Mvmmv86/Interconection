@@ -55,6 +55,18 @@ STABLECOIN_PRICES = {
 
 BINGX_FUTURES_ACCOUNT_TYPES = {"usdtmperp", "stdfutures", "coinmperp"}
 BINGX_SPOT_FUND_ACCOUNT_TYPES = {"spot", "sopt"}
+BINGX_MARGIN_ACCOUNT_TYPES = {"margin", "crossmargin", "isolatedmargin"}
+BINGX_NON_MARGIN_BALANCE_ACCOUNT_TYPES = {
+    "copytrading",
+    "grid",
+    "eran",
+    "earn",
+    "wealth",
+    "wealthmanagement",
+    "c2c",
+    "fund",
+    "funding",
+}
 
 BINGX_KLINE_INTERVALS = {
     "1m": "1m",
@@ -120,7 +132,7 @@ class BingXAdapter(BaseExchangeAdapter):
     supports_spot = True
     supports_margin = True
     supports_futures = True
-    supports_funding = False
+    supports_funding = True
     supports_earn = False
     supports_subaccounts = False
 
@@ -163,6 +175,18 @@ class BingXAdapter(BaseExchangeAdapter):
             if normalized.endswith(quote):
                 return normalized[: -len(quote)]
         return normalized
+
+    def _normalize_account_type(self, account_type: Any) -> str:
+        return str(account_type or "").strip().replace("_", "").replace("-", "").lower()
+
+    def _price_info_for_asset(
+        self,
+        prices: dict[str, dict[str, Decimal]],
+        asset: str,
+    ) -> dict[str, Decimal]:
+        if asset in STABLECOIN_PRICES:
+            return STABLECOIN_PRICES[asset]
+        return prices.get(asset, {"price": Decimal("0"), "change_24h": Decimal("0")})
 
     def _bingx_symbol(self, symbol: str, category: str = "spot") -> str:
         _ = category
@@ -399,11 +423,11 @@ class BingXAdapter(BaseExchangeAdapter):
 
         BingX can return zero balances from the detailed spot endpoint while
         the aggregated account endpoint exposes the real spot USDT equivalent
-        under accountType=sopt. We use this only as a fallback to avoid
-        double-counting detailed asset balances.
+        under accountType=sopt. We also use the accountType buckets to keep
+        funding/copy/grid, margin and futures equity separated.
         """
         now = time.time()
-        if self._account_balance_cache and (now - self._account_balance_cache_time) < self._account_balance_cache_ttl:
+        if self._account_balance_cache_time and (now - self._account_balance_cache_time) < self._account_balance_cache_ttl:
             return self._account_balance_cache
 
         try:
@@ -419,8 +443,8 @@ class BingXAdapter(BaseExchangeAdapter):
     async def _get_spot_usdt_equivalent(self) -> Decimal:
         total = Decimal("0")
         for account in await self._get_all_account_balances():
-            account_type = str(account.get("accountType") or "").lower()
-            if account_type in {"spot", "sopt"}:
+            account_type = self._normalize_account_type(account.get("accountType"))
+            if account_type in BINGX_SPOT_FUND_ACCOUNT_TYPES:
                 total += safe_decimal(account.get("usdtBalance"), "0")
         return total
 
@@ -516,6 +540,8 @@ class BingXAdapter(BaseExchangeAdapter):
     async def get_futures_balances(self) -> list[FundingBalance]:
         """Get BingX futures account equity without treating notional as balance."""
         balances: list[FundingBalance] = []
+        prices = await self._get_ticker_prices()
+        seen_futures_account_types: set[str] = set()
 
         try:
             payload = await self._request("GET", "/openApi/swap/v3/user/balance")
@@ -536,6 +562,12 @@ class BingXAdapter(BaseExchangeAdapter):
             if equity <= 0:
                 continue
 
+            account_type = self._normalize_account_type(
+                item.get("accountType") or item.get("account_type") or "usdtmperp"
+            )
+            if account_type not in BINGX_FUTURES_ACCOUNT_TYPES:
+                account_type = "usdtmperp"
+
             available = safe_decimal(
                 item.get("availableMargin")
                 or item.get("availableBalance")
@@ -544,31 +576,38 @@ class BingXAdapter(BaseExchangeAdapter):
                 "0",
             )
             locked = max(equity - available, Decimal("0"))
+            price_info = self._price_info_for_asset(prices, asset)
+            price_usd = price_info["price"]
+            seen_futures_account_types.add(account_type)
             balances.append(
                 FundingBalance(
                     asset=asset,
-                    account_type="futures_balance",
+                    account_type=f"futures_{account_type}",
                     free=available if available > 0 else equity,
                     locked=locked,
                     total=equity,
                     transferable=available if available > 0 else Decimal("0"),
-                    price_usd=Decimal("1") if asset in STABLECOIN_PRICES else Decimal("0"),
-                    value_usd=equity if asset in STABLECOIN_PRICES else Decimal("0"),
-                    change_24h=Decimal("0"),
+                    price_usd=price_usd,
+                    value_usd=equity * price_usd,
+                    change_24h=price_info["change_24h"],
                 )
             )
 
         for account in await self._get_all_account_balances():
-            account_type = str(account.get("accountType") or "").lower()
+            account_type = self._normalize_account_type(account.get("accountType"))
             if account_type not in BINGX_FUTURES_ACCOUNT_TYPES:
                 continue
-            total = safe_decimal(account.get("usdtBalance"), "0")
-            if total <= 0 or any(balance.account_type == "futures_balance" for balance in balances):
+            if account_type in seen_futures_account_types:
                 continue
+
+            total = safe_decimal(account.get("usdtBalance"), "0")
+            if total <= 0:
+                continue
+            seen_futures_account_types.add(account_type)
             balances.append(
                 FundingBalance(
                     asset="USDT",
-                    account_type="futures_balance",
+                    account_type=f"futures_{account_type}",
                     free=total,
                     locked=Decimal("0"),
                     total=total,
@@ -579,25 +618,72 @@ class BingXAdapter(BaseExchangeAdapter):
                 )
             )
 
+        balances.sort(key=lambda balance: balance.value_usd, reverse=True)
         return balances
 
-    async def get_margin_balances(self) -> list[MarginBalance]:
+    async def get_funding_balances(self) -> list[FundingBalance]:
         """
-        Get non-spot BingX account balances as margin-equivalent holdings.
+        Get account-level BingX balances that are real equity but not margin.
 
-        BingX exposes account-type USDT equivalents for derivatives/copy/grid
-        accounts through allAccountBalance. These are not open futures
-        positions, but they are real exchange equity and must be counted in
-        portfolio totals even when there is no active position.
+        The aggregated endpoint returns copy trading, grid, wealth management
+        and C2C buckets as USDT equivalents. They should count as portfolio
+        value, but not be labeled as margin or open futures operation volume.
         """
-        balances: list[MarginBalance] = []
+        balances: list[FundingBalance] = []
+
         for account in await self._get_all_account_balances():
-            account_type = str(account.get("accountType") or "").lower()
-            if account_type in BINGX_SPOT_FUND_ACCOUNT_TYPES or account_type in BINGX_FUTURES_ACCOUNT_TYPES:
+            account_type = self._normalize_account_type(account.get("accountType"))
+            if account_type in BINGX_SPOT_FUND_ACCOUNT_TYPES:
+                continue
+            if account_type in BINGX_FUTURES_ACCOUNT_TYPES:
+                continue
+            if account_type in BINGX_MARGIN_ACCOUNT_TYPES or "margin" in account_type:
                 continue
 
             total = safe_decimal(account.get("usdtBalance"), "0")
             if total <= 0:
+                continue
+
+            balances.append(
+                FundingBalance(
+                    asset="USDT",
+                    account_type=account_type or "funding",
+                    free=total,
+                    locked=Decimal("0"),
+                    total=total,
+                    transferable=total,
+                    price_usd=Decimal("1"),
+                    value_usd=total,
+                    change_24h=Decimal("0"),
+                )
+            )
+
+        balances.sort(key=lambda balance: balance.value_usd, reverse=True)
+        return balances
+
+    async def get_margin_balances(self) -> list[MarginBalance]:
+        """
+        Get BingX margin balances only when the account type is margin-like.
+
+        Other account-level buckets are handled by get_funding_balances so
+        copy/grid/wealth values do not appear as margin.
+        """
+        balances: list[MarginBalance] = []
+        for account in await self._get_all_account_balances():
+            account_type = self._normalize_account_type(account.get("accountType"))
+            if account_type in BINGX_SPOT_FUND_ACCOUNT_TYPES:
+                continue
+            if account_type in BINGX_FUTURES_ACCOUNT_TYPES:
+                continue
+            if account_type in BINGX_NON_MARGIN_BALANCE_ACCOUNT_TYPES:
+                continue
+
+            total = safe_decimal(account.get("usdtBalance"), "0")
+            if total <= 0:
+                continue
+
+            if account_type not in BINGX_MARGIN_ACCOUNT_TYPES and "margin" not in account_type:
+                logger.debug("Treating BingX account type %s as funding, not margin", account_type or "unknown")
                 continue
 
             balances.append(
@@ -1339,9 +1425,12 @@ class BingXAdapter(BaseExchangeAdapter):
     async def get_account_summary(self, include_subaccounts: bool = False) -> ExchangeAccountSummary:
         """Fetch BingX spot and futures data with graceful partial failure."""
         _ = include_subaccounts
+        await self._get_all_account_balances()
+
         results = await asyncio.gather(
             self.get_spot_balances(),
             self.get_futures_balances(),
+            self.get_funding_balances(),
             self.get_margin_balances(),
             self.get_futures_positions(),
             return_exceptions=True,
@@ -1349,17 +1438,20 @@ class BingXAdapter(BaseExchangeAdapter):
 
         spot_balances = results[0] if not isinstance(results[0], Exception) else []
         futures_balances = results[1] if not isinstance(results[1], Exception) else []
-        margin_balances = results[2] if not isinstance(results[2], Exception) else []
-        futures_positions = results[3] if not isinstance(results[3], Exception) else []
+        funding_balances = results[2] if not isinstance(results[2], Exception) else []
+        margin_balances = results[3] if not isinstance(results[3], Exception) else []
+        futures_positions = results[4] if not isinstance(results[4], Exception) else []
 
         if isinstance(results[0], Exception):
             logger.warning("Failed to get BingX spot balances: %s", results[0])
         if isinstance(results[1], Exception):
             logger.warning("Failed to get BingX futures balance: %s", results[1])
         if isinstance(results[2], Exception):
-            logger.warning("Failed to get BingX account balances: %s", results[2])
+            logger.warning("Failed to get BingX funding balances: %s", results[2])
         if isinstance(results[3], Exception):
-            logger.warning("Failed to get BingX futures positions: %s", results[3])
+            logger.warning("Failed to get BingX margin balances: %s", results[3])
+        if isinstance(results[4], Exception):
+            logger.warning("Failed to get BingX futures positions: %s", results[4])
         if all(isinstance(result, Exception) for result in results):
             for result in results:
                 if isinstance(result, ExchangeAuthError):
@@ -1370,11 +1462,13 @@ class BingXAdapter(BaseExchangeAdapter):
                 message=(
                     "Failed to load BingX account data: "
                     f"spot={results[0]}; futures_balance={results[1]}; "
-                    f"margin={results[2]}; futures_positions={results[3]}"
+                    f"funding={results[2]}; margin={results[3]}; "
+                    f"futures_positions={results[4]}"
                 ),
             )
 
         total_spot = sum(balance.value_usd for balance in spot_balances)
+        total_funding = sum(balance.value_usd for balance in funding_balances)
         total_futures_balance = sum(balance.value_usd for balance in futures_balances)
         total_margin = sum(balance.value_usd for balance in margin_balances)
         open_futures_equity = sum(position.margin + position.unrealized_pnl for position in futures_positions)
@@ -1383,16 +1477,24 @@ class BingXAdapter(BaseExchangeAdapter):
 
         return ExchangeAccountSummary(
             spot_balances=spot_balances,
+            funding_balances=funding_balances,
             futures_balances=futures_balances,
             margin_balances=margin_balances,
             futures_positions=futures_positions,
             total_spot_usd=total_spot,
+            total_funding_usd=total_funding,
             total_futures_balance_usd=total_futures_balance,
             total_margin_usd=total_margin,
             total_futures_usd=total_futures,
-            total_value_usd=total_spot + total_margin + total_futures,
+            total_value_usd=total_spot + total_funding + total_margin + total_futures,
             total_unrealized_pnl=total_unrealized_pnl,
-            position_count=len(spot_balances) + len(futures_balances) + len(margin_balances) + len(futures_positions),
+            position_count=(
+                len(spot_balances)
+                + len(funding_balances)
+                + len(futures_balances)
+                + len(margin_balances)
+                + len(futures_positions)
+            ),
         )
 
     async def close(self) -> None:
