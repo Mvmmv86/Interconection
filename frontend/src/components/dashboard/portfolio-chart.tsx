@@ -1,25 +1,15 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import dynamic from 'next/dynamic';
-import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { ThemedCard, useThemedText } from '@/components/ui/themed-card';
-import { SYMBOL_TO_COINGECKO } from '@/lib/risk/risk-types';
+import { usePortfolioPerformance, type PortfolioPeriod } from '@/hooks/usePortfolioPerformance';
 import type { UnifiedPosition } from '@/types/positions';
 
 const Chart = dynamic(() => import('react-apexcharts'), { ssr: false });
 
-type Period = '24h' | '7d' | '30d' | '90d' | '1y';
-const periods: Period[] = ['24h', '7d', '30d', '90d', '1y'];
-
-const periodToDays: Record<Period, string> = {
-  '24h': '1',
-  '7d': '7',
-  '30d': '30',
-  '90d': '90',
-  '1y': '365',
-};
+const periods: PortfolioPeriod[] = ['24h', '7d', '30d', '90d', '1y'];
 
 interface PortfolioChartProps {
   positions: UnifiedPosition[];
@@ -28,93 +18,14 @@ interface PortfolioChartProps {
 }
 
 export function PortfolioChart({ positions, totalValue, isLoading: isLoadingPositions }: PortfolioChartProps) {
-  const [period, setPeriod] = useState<Period>('30d');
+  const [period, setPeriod] = useState<PortfolioPeriod>('30d');
   const { isDark, label } = useThemedText();
+  const {
+    series: seriesData,
+    isLoading: isLoadingChart,
+    isFetching: isFetchingChart,
+  } = usePortfolioPerformance(positions, totalValue, period);
 
-  // Get top spot-like positions with known symbols for price history
-  // Exclude futures (their value isn't simply quantity * price)
-  const topAssets = useMemo(() => {
-    if (!positions || positions.length === 0) return [];
-    const spotPositions = positions
-      .filter(p => p.symbol && SYMBOL_TO_COINGECKO[p.symbol.toUpperCase()])
-      .filter(p => p.category !== 'futures')
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10);
-
-    return spotPositions.map(p => ({
-      symbol: p.symbol.toUpperCase(),
-      quantity: p.quantity,
-      value: p.value,
-    }));
-  }, [positions]);
-
-  const symbolsKey = topAssets.map(a => a.symbol).join(',');
-
-  // Fetch price history from CoinGecko via our API route
-  const { data: chartData, isLoading: isLoadingChart } = useQuery({
-    queryKey: ['portfolio-chart', symbolsKey, period],
-    queryFn: async () => {
-      if (!symbolsKey) return null;
-      const days = periodToDays[period];
-      const response = await fetch(`/api/prices/history?symbols=${symbolsKey}&days=${days}`);
-      if (!response.ok) return null;
-      return response.json();
-    },
-    enabled: topAssets.length > 0,
-    staleTime: 60 * 60 * 1000, // 1h cache
-    refetchOnWindowFocus: false,
-  });
-
-  // Build portfolio time series from price history
-  const seriesData = useMemo(() => {
-    if (!chartData?.data || topAssets.length === 0) return [];
-
-    // Get all timestamps from the first coin that has data
-    const firstCoinId = Object.keys(chartData.data)[0];
-    if (!firstCoinId) return [];
-    const timestamps: number[] = chartData.data[firstCoinId]?.prices?.map((p: [number, number]) => p[0]) || [];
-    if (timestamps.length === 0) return [];
-
-    // Derive effective quantities: if quantity is 0, use value / latest CoinGecko price
-    const assetsWithQuantity = topAssets.map(asset => {
-      if (asset.quantity > 0) return asset;
-      // Derive quantity from the latest price in the chart data
-      const coinId = SYMBOL_TO_COINGECKO[asset.symbol];
-      const coinData = chartData.data[coinId];
-      if (!coinData?.prices?.length) return asset;
-      const latestPrice = coinData.prices[coinData.prices.length - 1][1];
-      if (latestPrice <= 0) return asset;
-      return { ...asset, quantity: asset.value / latestPrice };
-    });
-
-    // Value of assets without price history (stablecoins, DeFi, etc.)
-    const trackedValue = assetsWithQuantity
-      .filter(a => a.quantity > 0)
-      .reduce((sum, a) => sum + a.value, 0);
-    const untrackedValue = Math.max(0, totalValue - trackedValue);
-
-    // For each timestamp, calculate total portfolio value
-    return timestamps.map((ts: number) => {
-      let portfolioValue = untrackedValue; // Add untracked value as constant
-
-      for (const asset of assetsWithQuantity) {
-        if (asset.quantity <= 0) continue;
-        const coinId = SYMBOL_TO_COINGECKO[asset.symbol];
-        const coinData = chartData.data[coinId];
-        if (!coinData?.prices) continue;
-
-        // Find closest price point to this timestamp
-        const pricePoint = coinData.prices.find((p: [number, number]) => p[0] === ts);
-        if (pricePoint) {
-          portfolioValue += pricePoint[1] * asset.quantity;
-        }
-      }
-
-      return { x: ts, y: Math.round(portfolioValue) };
-    });
-  }, [chartData, topAssets, totalValue]);
-
-  // Format Y axis based on portfolio size
   const formatYAxis = (value: number) => {
     if (value >= 1000000) return `$${(value / 1000000).toFixed(2)}M`;
     if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
@@ -179,7 +90,7 @@ export function PortfolioChart({ positions, totalValue, isLoading: isLoadingPosi
     },
     tooltip: {
       theme: isDark ? 'dark' : 'light',
-      x: { format: 'MMM dd, yyyy' },
+      x: { format: 'MMM dd, yyyy HH:mm' },
       y: { formatter: (value: number) => `$${value.toLocaleString()}` },
       style: { fontSize: '11px', fontFamily: 'Inter' },
     },
@@ -187,10 +98,11 @@ export function PortfolioChart({ positions, totalValue, isLoading: isLoadingPosi
   };
 
   const chartSeries = [{ name: 'Portfolio', data: seriesData }];
+  const isChartLoading = (isLoadingPositions || isLoadingChart || isFetchingChart) && seriesData.length === 0;
+  const isChartEmpty = !isLoadingPositions && !isLoadingChart && seriesData.length === 0;
 
   return (
     <ThemedCard className="col-span-2 flex flex-col h-[480px]">
-      {/* Header */}
       <div className="flex items-center justify-between mb-2 relative z-10 flex-shrink-0">
         <span className={cn('text-[11px] font-semibold uppercase tracking-wider', label)}>
           Portfolio Evolution
@@ -207,55 +119,46 @@ export function PortfolioChart({ positions, totalValue, isLoading: isLoadingPosi
             boxShadow: isDark ? 'none' : 'inset 0 1px 2px rgba(0, 0, 0, 0.04)',
           }}
         >
-          {periods.map((p) => (
+          {periods.map((option) => (
             <button
-              key={p}
-              onClick={() => setPeriod(p)}
+              key={option}
+              onClick={() => setPeriod(option)}
               className={cn(
                 'px-2.5 py-1 text-[10px] font-semibold rounded-md transition-all',
-                period === p
+                period === option
                   ? 'text-white'
                   : isDark
                     ? 'text-white/30 hover:text-white/70'
                     : 'text-slate-500 hover:text-slate-900'
               )}
-              style={period === p ? {
+              style={period === option ? {
                 background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
                 boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)',
               } : undefined}
             >
-              {p}
+              {option}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Chart - fills remaining vertical space */}
       <div className="flex-1 min-h-0 -mx-2 -mb-2">
-        {(isLoadingPositions || isLoadingChart) && seriesData.length === 0 ? (
+        {isChartLoading ? (
           <div className="w-full h-full flex items-center justify-center">
-            <div className={cn(
-              'text-[11px]',
-              isDark ? 'text-white/30' : 'text-slate-400'
-            )}>
+            <div className={cn('text-[11px]', isDark ? 'text-white/30' : 'text-slate-400')}>
               Loading chart data...
             </div>
           </div>
-        ) : !isLoadingPositions && !isLoadingChart && seriesData.length === 0 ? (
+        ) : isChartEmpty ? (
           <div className="w-full h-full flex flex-col items-center justify-center gap-1 px-6 text-center">
             <div className={cn(
               'text-[12px] font-medium',
               isDark ? 'text-white/50' : 'text-slate-500'
             )}>
-              Sem histórico para exibir
+              Sem historico para exibir
             </div>
-            <div className={cn(
-              'text-[10px]',
-              isDark ? 'text-white/30' : 'text-slate-400'
-            )}>
-              {topAssets.length === 0
-                ? 'Nenhum ativo spot rastreável encontrado'
-                : 'Não foi possível carregar preços históricos'}
+            <div className={cn('text-[10px]', isDark ? 'text-white/30' : 'text-slate-400')}>
+              Nao foi possivel carregar precos historicos
             </div>
           </div>
         ) : (

@@ -98,8 +98,12 @@ export const SYMBOL_TO_COINGECKO: Record<string, string> = {
   'COMP': 'compound-governance-token', 'SUSHI': 'sushi',
   'JUP': 'jupiter-exchange-solana', 'RAY': 'raydium',
   'ORCA': 'orca', 'BONK': 'bonk', 'WIF': 'dogwifcoin',
-  'LDO': 'lido-dao', 'PEPE': 'pepe', 'SUI': 'sui',
-  'APT': 'aptos', 'STX': 'blockstack', 'GRT': 'the-graph',
+  'LDO': 'lido-dao', 'RPL': 'rocket-pool', 'PEPE': 'pepe',
+  'RENDER': 'render-token', 'INJ': 'injective-protocol',
+  'TIA': 'celestia', 'SEI': 'sei-network', 'SUI': 'sui',
+  'APT': 'aptos', 'STX': 'blockstack', 'FIL': 'filecoin',
+  'GRT': 'the-graph', 'IMX': 'immutable-x', 'ARKM': 'arkham',
+  'PENDLE': 'pendle',
 };
 
 // localStorage key para thresholds customizados

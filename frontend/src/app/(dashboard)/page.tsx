@@ -17,6 +17,7 @@ import { useAllPositions } from '@/hooks/useAllPositions';
 import { usePortfolioRisk } from '@/hooks/usePortfolioRisk';
 import { useWalletTransactions } from '@/hooks/useWalletTransactions';
 import { useExchangeTransactions } from '@/hooks/useExchangeTransactions';
+import { usePortfolioPerformance } from '@/hooks/usePortfolioPerformance';
 
 export default function DashboardPage() {
   const {
@@ -41,15 +42,16 @@ export default function DashboardPage() {
     isLoading: isLoadingExchangeTx,
   } = useExchangeTransactions({ limit: 10 });
 
+  const dayPerformance = usePortfolioPerformance(positions, summary.totalValue, '24h');
+  const monthPerformance = usePortfolioPerformance(positions, summary.totalValue, '30d');
+
   const derivedMetrics = useMemo(() => {
-    const pnlToday = positions.reduce((sum, p) => sum + (p.pnl || 0), 0);
-    const pnlTodayPercent = summary.totalValue > 0
-      ? (pnlToday / summary.totalValue) * 100 : 0;
-    const pnlMonth = pnlToday * 30;
-    const pnlMonthPercent = summary.totalValue > 0
-      ? (pnlMonth / summary.totalValue) * 100 : 0;
+    const pnlToday = dayPerformance.changeUsd;
+    const pnlTodayPercent = dayPerformance.changePercent;
+    const pnlMonth = monthPerformance.changeUsd;
+    const pnlMonthPercent = monthPerformance.changePercent;
     return { pnlToday, pnlTodayPercent, pnlMonth, pnlMonthPercent };
-  }, [positions, summary]);
+  }, [dayPerformance.changePercent, dayPerformance.changeUsd, monthPerformance.changePercent, monthPerformance.changeUsd]);
 
   return (
     <PageContainer>
