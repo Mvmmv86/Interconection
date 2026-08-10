@@ -26,6 +26,7 @@ from app.schemas.exchange import (
     ExchangeCreate,
     ExchangeResponse,
     ExchangeSyncResult,
+    ExchangeUpdate,
     SupportedExchangeInfo,
     ExchangePositionsSummary,
     ExchangeTestConnectionRequest,
@@ -255,6 +256,92 @@ async def get_exchange(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Exchange not found",
         )
+
+    return ExchangeResponse.model_validate(exchange)
+
+
+@router.patch("/{exchange_id}", response_model=ExchangeResponse)
+async def update_exchange(
+    client_id: UUID,
+    exchange_id: UUID,
+    data: ExchangeUpdate,
+    permission_ctx: Annotated[
+        MembershipAuthContext,
+        Depends(require_permission("exchanges:edit", route_key="exchange")),
+    ],
+    db: DBSession,
+    request: Request,
+) -> ExchangeResponse:
+    """Update editable metadata for an exchange connection."""
+    await verify_client_access(client_id, permission_ctx, db)
+
+    result = await db.execute(
+        select(Exchange).where(
+            Exchange.id == exchange_id,
+            Exchange.client_id == client_id,
+        )
+    )
+    exchange = result.scalar_one_or_none()
+
+    if not exchange:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Exchange not found",
+        )
+
+    update_data = data.model_dump(exclude_unset=True)
+    old_values = {
+        "label": exchange.label,
+        "initial_balance_usd": (
+            str(exchange.initial_balance_usd)
+            if exchange.initial_balance_usd is not None
+            else None
+        ),
+    }
+
+    if "label" in update_data:
+        label = update_data["label"].strip() if update_data["label"] else ""
+        if not label:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Exchange label cannot be empty",
+            )
+        exchange.label = label
+
+    if "initial_balance_usd" in update_data:
+        exchange.initial_balance_usd = update_data["initial_balance_usd"]
+        exchange.initial_balance_set_at = (
+            datetime.now(timezone.utc)
+            if update_data["initial_balance_usd"] is not None
+            else None
+        )
+
+    await db.flush()
+    await db.refresh(exchange)
+
+    await record_audit_event(
+        db,
+        organization_id=permission_ctx.organization_id,
+        user_id=permission_ctx.user.id,
+        action=AuditAction.UPDATE,
+        resource_type="exchange",
+        resource_id=exchange.id,
+        description="Exchange metadata updated",
+        metadata={
+            "client_id": client_id,
+            "exchange": exchange.exchange,
+            "old_values": old_values,
+            "new_values": {
+                "label": exchange.label,
+                "initial_balance_usd": (
+                    str(exchange.initial_balance_usd)
+                    if exchange.initial_balance_usd is not None
+                    else None
+                ),
+            },
+        },
+        request=request,
+    )
 
     return ExchangeResponse.model_validate(exchange)
 

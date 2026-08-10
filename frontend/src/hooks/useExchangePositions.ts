@@ -25,6 +25,10 @@ export interface ExchangeAccount {
   marginValue: number;
   futuresValue: number;
   pnl24h: number;
+  initialBalanceUsd?: number | null;
+  initialBalanceSetAt?: string | null;
+  initialBalanceDeltaUsd?: number | null;
+  initialBalanceDeltaPercent?: number | null;
   positions: number;
   topAssets: TopAsset[];
 }
@@ -82,6 +86,10 @@ function transformApiResponse(apiData: {
     margin_value: string | number;
     futures_value: string | number;
     pnl_24h: string | number;
+    initial_balance_usd?: string | number | null;
+    initial_balance_set_at?: string | null;
+    initial_balance_delta_usd?: string | number | null;
+    initial_balance_delta_percent?: string | number | null;
     positions: number;
     top_assets: Array<{
       symbol: string;
@@ -109,6 +117,10 @@ function transformApiResponse(apiData: {
       marginValue: Number(ex.margin_value),
       futuresValue: Number(ex.futures_value),
       pnl24h: Number(ex.pnl_24h),
+      initialBalanceUsd: ex.initial_balance_usd == null ? null : Number(ex.initial_balance_usd),
+      initialBalanceSetAt: ex.initial_balance_set_at ?? null,
+      initialBalanceDeltaUsd: ex.initial_balance_delta_usd == null ? null : Number(ex.initial_balance_delta_usd),
+      initialBalanceDeltaPercent: ex.initial_balance_delta_percent == null ? null : Number(ex.initial_balance_delta_percent),
       positions: ex.positions,
       topAssets: ex.top_assets.map((asset) => ({
         symbol: asset.symbol,
@@ -155,6 +167,10 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
           margin_value: string | number;
           futures_value: string | number;
           pnl_24h: string | number;
+          initial_balance_usd?: string | number | null;
+          initial_balance_set_at?: string | null;
+          initial_balance_delta_usd?: string | number | null;
+          initial_balance_delta_percent?: string | number | null;
           positions: number;
           top_assets: Array<{
             symbol: string;
@@ -260,6 +276,10 @@ export function useExchangePositions(clientId?: string): UseExchangePositionsRet
           margin_value: string | number;
           futures_value: string | number;
           pnl_24h: string | number;
+          initial_balance_usd?: string | number | null;
+          initial_balance_set_at?: string | null;
+          initial_balance_delta_usd?: string | number | null;
+          initial_balance_delta_percent?: string | number | null;
           positions: number;
           top_assets: Array<{
             symbol: string;

@@ -1,10 +1,11 @@
 """Exchange model."""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, UUIDMixin
@@ -36,6 +37,8 @@ class Exchange(Base, UUIDMixin):
     )
     last_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     sync_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    initial_balance_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 2), nullable=True)
+    initial_balance_set_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     client: Mapped["Client"] = relationship(

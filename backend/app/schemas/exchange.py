@@ -31,6 +31,13 @@ class ExchangeCreate(ExchangeBase):
     api_secret: str = Field(min_length=10)
 
 
+class ExchangeUpdate(BaseSchema):
+    """Schema for updating editable exchange metadata."""
+
+    label: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    initial_balance_usd: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
+
+
 class ExchangeResponse(ExchangeBase):
     """Exchange response schema."""
 
@@ -41,6 +48,8 @@ class ExchangeResponse(ExchangeBase):
     added_at: datetime
     last_sync_at: Optional[datetime] = None
     sync_error: Optional[str] = None
+    initial_balance_usd: Optional[Decimal] = None
+    initial_balance_set_at: Optional[datetime] = None
 
 
 class ExchangeBalance(BaseSchema):
@@ -196,6 +205,10 @@ class ExchangeAccountData(BaseSchema):
     earn_value: Decimal = Decimal("0")
     pnl_24h: Decimal = Decimal("0")  # 24h P&L percentage
     unrealized_pnl: Decimal = Decimal("0")
+    initial_balance_usd: Optional[Decimal] = None
+    initial_balance_set_at: Optional[datetime] = None
+    initial_balance_delta_usd: Optional[Decimal] = None
+    initial_balance_delta_percent: Optional[Decimal] = None
     positions: int  # Number of positions
     top_assets: List[TopAsset] = Field(default_factory=list)
     subaccounts_count: int = 0

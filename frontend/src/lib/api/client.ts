@@ -224,6 +224,11 @@ interface ExchangeCreateData {
   api_secret: string;
 }
 
+interface ExchangeUpdateData {
+  label?: string;
+  initial_balance_usd?: number | null;
+}
+
 interface ExchangeSyncResult {
   exchange_id: string;
   assets_synced: number;
@@ -2272,6 +2277,14 @@ class ApiClient {
   async createClientExchange(clientId: string, data: ExchangeCreateData): Promise<ApiResponse<Record<string, unknown>>> {
     return this.request(`/api/v1/clients/${clientId}/exchanges`, {
       method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /** Update editable exchange metadata */
+  async updateClientExchange(clientId: string, exchangeId: string, data: ExchangeUpdateData): Promise<ApiResponse<Record<string, unknown>>> {
+    return this.request(`/api/v1/clients/${clientId}/exchanges/${exchangeId}`, {
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   }

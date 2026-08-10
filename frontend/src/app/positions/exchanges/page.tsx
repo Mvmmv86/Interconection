@@ -47,6 +47,24 @@ function isSyncStale(lastSync: string): boolean {
   return false;
 }
 
+function formatUsd(value: number, maximumFractionDigits = 0): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits,
+  }).format(value);
+}
+
+function formatSignedUsd(value: number, maximumFractionDigits = 0): string {
+  const sign = value >= 0 ? '+' : '-';
+  return `${sign}${formatUsd(Math.abs(value), maximumFractionDigits)}`;
+}
+
+function formatSignedPercent(value: number): string {
+  const sign = value >= 0 ? '+' : '';
+  return `${sign}${value.toFixed(2)}%`;
+}
+
 // Use mock data in development mode when backend is not available
 const USE_MOCK_DATA = process.env.NODE_ENV === 'development';
 
@@ -61,6 +79,11 @@ export default function ExchangesPage() {
   const [deletingExchange, setDeletingExchange] = useState<ExchangeAccount | null>(null);
   const [isDeletingExchange, setIsDeletingExchange] = useState(false);
   const [exchangeActionError, setExchangeActionError] = useState<string | null>(null);
+  const [configuringExchange, setConfiguringExchange] = useState<ExchangeAccount | null>(null);
+  const [configLabel, setConfigLabel] = useState('');
+  const [configInitialBalance, setConfigInitialBalance] = useState('');
+  const [isSavingExchangeConfig, setIsSavingExchangeConfig] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
 
   // Fetch or create default client for exchange association (wait for auth)
   useEffect(() => {
@@ -134,6 +157,92 @@ export default function ExchangesPage() {
       setIsDeletingExchange(false);
     }
   };
+
+  const openConfigureModal = (exchange: ExchangeAccount) => {
+    setOpenMenuId(null);
+    setExchangeActionError(null);
+    setConfigError(null);
+    setConfiguringExchange(exchange);
+    setConfigLabel(exchange.label || exchange.name);
+    setConfigInitialBalance(
+      exchange.initialBalanceUsd == null ? '' : String(exchange.initialBalanceUsd)
+    );
+  };
+
+  const closeConfigureModal = () => {
+    if (isSavingExchangeConfig) return;
+    setConfiguringExchange(null);
+    setConfigError(null);
+  };
+
+  const parseInitialBalanceInput = (): number | null => {
+    const rawValue = configInitialBalance.trim().replace(',', '.');
+    if (!rawValue) {
+      return null;
+    }
+    const value = Number(rawValue);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error('Informe um saldo inicial valido ou deixe o campo em branco.');
+    }
+    return value;
+  };
+
+  const handleSaveExchangeConfig = async () => {
+    if (!configuringExchange) return;
+
+    const targetClientId = configuringExchange.clientId || clientId;
+    if (!targetClientId) {
+      setConfigError('Nao foi possivel identificar a conta vinculada a esta exchange.');
+      return;
+    }
+
+    const label = configLabel.trim();
+    if (!label) {
+      setConfigError('Informe um nome para a exchange.');
+      return;
+    }
+
+    let initialBalance: number | null;
+    try {
+      initialBalance = parseInitialBalanceInput();
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : 'Saldo inicial invalido.');
+      return;
+    }
+
+    setIsSavingExchangeConfig(true);
+    setConfigError(null);
+    try {
+      const result = await api.updateClientExchange(targetClientId, configuringExchange.id, {
+        label,
+        initial_balance_usd: initialBalance,
+      });
+      if (!result.success) {
+        throw new Error(result.error || 'Nao foi possivel salvar a configuracao.');
+      }
+      setConfiguringExchange(null);
+      await refresh();
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : 'Erro ao salvar configuracao.');
+    } finally {
+      setIsSavingExchangeConfig(false);
+    }
+  };
+
+  const configInitialBalancePreview = (() => {
+    const rawValue = configInitialBalance.trim().replace(',', '.');
+    if (!rawValue) return null;
+    const value = Number(rawValue);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  })();
+  const configDeltaUsd =
+    configuringExchange && configInitialBalancePreview != null
+      ? configuringExchange.totalValue - configInitialBalancePreview
+      : null;
+  const configDeltaPercent =
+    configDeltaUsd != null && configInitialBalancePreview != null && configInitialBalancePreview > 0
+      ? (configDeltaUsd / configInitialBalancePreview) * 100
+      : null;
 
   // Loading skeleton
   const LoadingSkeleton = () => (
@@ -372,6 +481,18 @@ export default function ExchangesPage() {
               {filteredExchanges.map((exchange) => {
                 const status = statusConfig[exchange.status] || statusConfig.pending;
                 const StatusIcon = status.icon;
+                const initialBalanceDeltaUsd =
+                  exchange.initialBalanceUsd == null
+                    ? null
+                    : exchange.initialBalanceDeltaUsd ?? exchange.totalValue - exchange.initialBalanceUsd;
+                const initialBalanceDeltaPercent =
+                  exchange.initialBalanceUsd == null || initialBalanceDeltaUsd == null
+                    ? null
+                    : exchange.initialBalanceDeltaPercent ?? (
+                        exchange.initialBalanceUsd > 0
+                          ? (initialBalanceDeltaUsd / exchange.initialBalanceUsd) * 100
+                          : 0
+                      );
 
                 return (
                   <div
@@ -472,6 +593,22 @@ export default function ExchangesPage() {
                           >
                             {exchange.pnl24h >= 0 ? '+' : ''}{exchange.pnl24h}% 24h
                           </span>
+                          {exchange.initialBalanceUsd != null && initialBalanceDeltaUsd != null && (
+                            <div className="mt-1 flex flex-col items-end gap-0.5">
+                              <span className={cn("text-[10px] tabular-nums", isDark ? "text-white/35" : "text-gray-500")}>
+                                Inicial {formatUsd(exchange.initialBalanceUsd)}
+                              </span>
+                              <span
+                                className={cn(
+                                  "text-[10px] font-medium tabular-nums",
+                                  initialBalanceDeltaUsd >= 0 ? "text-status-success" : "text-status-error"
+                                )}
+                              >
+                                {formatSignedUsd(initialBalanceDeltaUsd)}
+                                {initialBalanceDeltaPercent != null && ` (${formatSignedPercent(initialBalanceDeltaPercent)})`}
+                              </span>
+                            </div>
+                          )}
                         </div>
                         <div className="relative">
                           <button
@@ -505,19 +642,19 @@ export default function ExchangesPage() {
                                     : '1px solid rgba(203, 213, 225, 0.7)',
                                 }}
                               >
-                                <Link
-                                  href={`/positions/exchanges/${exchange.id}`}
+                                <button
+                                  type="button"
                                   className={cn(
                                     "flex w-full items-center gap-2 px-3 py-2 text-xs transition-colors",
                                     isDark
                                       ? "text-white/70 hover:text-white hover:bg-white/[0.05]"
                                       : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
                                   )}
-                                  onClick={() => setOpenMenuId(null)}
+                                  onClick={() => openConfigureModal(exchange)}
                                 >
                                   <Settings className="w-3.5 h-3.5" />
                                   Configurar
-                                </Link>
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -602,6 +739,168 @@ export default function ExchangesPage() {
           clientId={clientId}
           onSuccess={handleAddExchangeSuccess}
         />
+      )}
+
+      {configuringExchange && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className={cn(
+              "absolute inset-0 backdrop-blur-sm",
+              isDark ? "bg-black/60" : "bg-black/40"
+            )}
+            onClick={closeConfigureModal}
+          />
+          <div
+            className="relative w-full max-w-md mx-4 rounded-xl shadow-2xl overflow-hidden"
+            style={{
+              background: isDark
+                ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.98) 0%, rgba(18, 21, 30, 0.98) 100%)'
+                : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+              border: isDark
+                ? '1px solid rgba(255, 255, 255, 0.08)'
+                : '1px solid rgba(203, 213, 225, 0.7)',
+            }}
+          >
+            <div className={cn("border-b px-6 py-5", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-accent-purple/10 flex items-center justify-center">
+                  <Settings className="w-5 h-5 text-accent-purple" />
+                </div>
+                <div>
+                  <h3 className={cn("text-base font-semibold", isDark ? "text-white" : "text-gray-900")}>
+                    Configurar Exchange
+                  </h3>
+                  <p className={cn("text-xs mt-0.5", isDark ? "text-white/45" : "text-gray-500")}>
+                    {configuringExchange.name}
+                    {configuringExchange.clientName ? ` - ${configuringExchange.clientName}` : ''}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label
+                  htmlFor="exchange-label"
+                  className={cn("block text-[11px] font-medium mb-2", isDark ? "text-white/60" : "text-gray-600")}
+                >
+                  Nome / label
+                </label>
+                <input
+                  id="exchange-label"
+                  type="text"
+                  value={configLabel}
+                  onChange={(event) => setConfigLabel(event.target.value)}
+                  className={cn(
+                    "w-full h-10 px-3 rounded-lg text-sm focus:outline-none focus:border-accent-purple/50",
+                    isDark
+                      ? "bg-white/[0.03] border border-white/[0.08] text-white placeholder:text-white/30"
+                      : "bg-white border border-gray-200 text-gray-900 placeholder:text-gray-400"
+                  )}
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="exchange-initial-balance"
+                  className={cn("block text-[11px] font-medium mb-2", isDark ? "text-white/60" : "text-gray-600")}
+                >
+                  Saldo inicial (USD)
+                </label>
+                <input
+                  id="exchange-initial-balance"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={configInitialBalance}
+                  onChange={(event) => setConfigInitialBalance(event.target.value)}
+                  placeholder="0.00"
+                  className={cn(
+                    "w-full h-10 px-3 rounded-lg text-sm tabular-nums focus:outline-none focus:border-accent-purple/50",
+                    isDark
+                      ? "bg-white/[0.03] border border-white/[0.08] text-white placeholder:text-white/30"
+                      : "bg-white border border-gray-200 text-gray-900 placeholder:text-gray-400"
+                  )}
+                />
+              </div>
+
+              <div className={cn("grid grid-cols-3 gap-3 border-t pt-4", isDark ? "border-white/[0.06]" : "border-gray-200")}>
+                <div>
+                  <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>
+                    Atual
+                  </p>
+                  <p className={cn("text-sm font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
+                    {formatUsd(configuringExchange.totalValue)}
+                  </p>
+                </div>
+                <div>
+                  <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>
+                    Inicial
+                  </p>
+                  <p className={cn("text-sm font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
+                    {configInitialBalancePreview == null ? '-' : formatUsd(configInitialBalancePreview)}
+                  </p>
+                </div>
+                <div>
+                  <p className={cn("text-[9px] uppercase tracking-wider mb-1", isDark ? "text-white/30" : "text-gray-500")}>
+                    Resultado
+                  </p>
+                  <p
+                    className={cn(
+                      "text-sm font-semibold tabular-nums",
+                      configDeltaUsd == null
+                        ? isDark ? "text-white/40" : "text-gray-500"
+                        : configDeltaUsd >= 0
+                          ? "text-status-success"
+                          : "text-status-error"
+                    )}
+                  >
+                    {configDeltaUsd == null ? '-' : formatSignedUsd(configDeltaUsd)}
+                  </p>
+                  {configDeltaPercent != null && (
+                    <p className={cn(
+                      "text-[10px] tabular-nums",
+                      configDeltaPercent >= 0 ? "text-status-success" : "text-status-error"
+                    )}>
+                      {formatSignedPercent(configDeltaPercent)}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {configError && (
+                <div className="rounded-lg border border-status-error/20 bg-status-error/10 px-3 py-2">
+                  <p className="text-xs text-status-error">{configError}</p>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={closeConfigureModal}
+                  disabled={isSavingExchangeConfig}
+                  className={cn(
+                    "flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+                    isDark
+                      ? "text-white/70 bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04]"
+                      : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                  )}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveExchangeConfig}
+                  disabled={isSavingExchangeConfig}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-accent-purple rounded-lg hover:bg-accent-purple/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isSavingExchangeConfig && <RefreshCw className="w-4 h-4 animate-spin" />}
+                  Salvar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {deletingExchange && (

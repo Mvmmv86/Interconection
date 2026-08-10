@@ -780,6 +780,16 @@ class ExchangeService:
 
             # Calculate totals for this exchange
             ex_total = spot_value + funding_value + margin_value + futures_value + earn_value
+            initial_balance_delta = None
+            initial_balance_delta_percent = None
+            if exchange.initial_balance_usd is not None:
+                initial_balance_delta = ex_total - exchange.initial_balance_usd
+                if exchange.initial_balance_usd > 0:
+                    initial_balance_delta_percent = (
+                        initial_balance_delta / exchange.initial_balance_usd
+                    ) * Decimal("100")
+                else:
+                    initial_balance_delta_percent = Decimal("0")
 
             # Determine status
             status = "connected"
@@ -818,6 +828,10 @@ class ExchangeService:
                 "earn_value": earn_value,
                 "unrealized_pnl": unrealized_pnl,
                 "pnl_24h": Decimal("0"),  # TODO: Calculate from historical data
+                "initial_balance_usd": exchange.initial_balance_usd,
+                "initial_balance_set_at": exchange.initial_balance_set_at,
+                "initial_balance_delta_usd": initial_balance_delta,
+                "initial_balance_delta_percent": initial_balance_delta_percent,
                 "positions": len(positions),
                 "top_assets": top_assets,
             })
