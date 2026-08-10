@@ -34,6 +34,26 @@ from app.schemas.exchange import ExchangeBalance
 logger = logging.getLogger(__name__)
 
 
+def metadata_decimal(metadata: dict, key: str) -> Optional[Decimal]:
+    value = metadata.get(key) if metadata else None
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def metadata_int(metadata: dict, key: str) -> Optional[int]:
+    value = metadata.get(key) if metadata else None
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
 class ClientService:
     """Service for client portfolio operations."""
 
@@ -246,9 +266,11 @@ class ClientService:
 
             balances = []
             for pos in positions:
+                metadata = pos.position_metadata or {}
                 balances.append(
                     ExchangeBalance(
                         asset=pos.asset.symbol if pos.asset else "???",
+                        account_type=metadata.get("account_type"),
                         free=pos.quantity,
                         locked=Decimal("0"),
                         total=pos.quantity,
@@ -261,6 +283,13 @@ class ClientService:
                         unrealized_pnl_percent=pos.unrealized_pnl_percent or Decimal("0"),
                         apy=pos.apy,
                         position_type=pos.position_type.value if pos.position_type else "spot",
+                        operation_value_usd=metadata_decimal(metadata, "operation_value_usd"),
+                        margin_usd=metadata_decimal(metadata, "margin_usd") or metadata_decimal(metadata, "margin"),
+                        leverage=metadata_int(metadata, "leverage"),
+                        side=metadata.get("side"),
+                        liquidation_price=metadata_decimal(metadata, "liquidation_price"),
+                        realized_pnl=metadata_decimal(metadata, "realized_pnl"),
+                        portfolio_value_basis=metadata.get("portfolio_value_basis"),
                     )
                 )
             # Sort by value desc

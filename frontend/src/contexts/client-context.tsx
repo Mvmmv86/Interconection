@@ -93,6 +93,7 @@ function transformPortfolio(data: ClientPortfolioData): ClientPortfolio {
     assetCount: e.asset_count,
     balances: e.balances.map((b) => ({
       asset: b.asset,
+      accountType: b.account_type,
       free: Number(b.free),
       locked: Number(b.locked),
       total: Number(b.total),
@@ -105,6 +106,13 @@ function transformPortfolio(data: ClientPortfolioData): ClientPortfolio {
       unrealizedPnlPercent: Number(b.unrealized_pnl_percent || 0),
       apy: b.apy ? Number(b.apy) : null,
       positionType: b.position_type || 'spot',
+      operationValueUsd: b.operation_value_usd != null ? Number(b.operation_value_usd) : null,
+      marginUsd: b.margin_usd != null ? Number(b.margin_usd) : null,
+      leverage: b.leverage != null ? Number(b.leverage) : null,
+      side: b.side,
+      liquidationPrice: b.liquidation_price != null ? Number(b.liquidation_price) : null,
+      realizedPnl: b.realized_pnl != null ? Number(b.realized_pnl) : null,
+      portfolioValueBasis: b.portfolio_value_basis,
     })),
   }));
 

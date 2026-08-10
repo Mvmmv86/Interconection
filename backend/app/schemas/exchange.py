@@ -56,6 +56,7 @@ class ExchangeBalance(BaseSchema):
     """Balance in exchange."""
 
     asset: str
+    account_type: Optional[str] = None
     free: Decimal
     locked: Decimal
     total: Decimal
@@ -70,6 +71,13 @@ class ExchangeBalance(BaseSchema):
     # Yield fields
     apy: Optional[Decimal] = None
     position_type: Optional[str] = None  # "spot", "staking", "earn"
+    operation_value_usd: Optional[Decimal] = None
+    margin_usd: Optional[Decimal] = None
+    leverage: Optional[int] = None
+    side: Optional[str] = None
+    liquidation_price: Optional[Decimal] = None
+    realized_pnl: Optional[Decimal] = None
+    portfolio_value_basis: Optional[str] = None
 
 
 class FundingBalance(ExchangeBalance):

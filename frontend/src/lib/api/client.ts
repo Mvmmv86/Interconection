@@ -40,6 +40,20 @@ function stringifyApiErrorValue(value: unknown): string | null {
 
   if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>;
+    if (record.message === 'Plan limit reached' && record.resource && record.limit != null) {
+      const usage = record.usage != null ? ` (${record.usage}/${record.limit})` : '';
+      const resourceLabels: Record<string, string> = {
+        exchanges: 'exchanges',
+        wallets: 'wallets',
+        portfolios: 'contas',
+        members: 'membros',
+        teams: 'times',
+        bots: 'bots',
+        strategies: 'estrategias',
+      };
+      const resource = resourceLabels[String(record.resource)] || String(record.resource);
+      return `Limite do plano atingido para ${resource}${usage}.`;
+    }
     const nested = stringifyApiErrorValue(record.message || record.detail || record.error || record.msg);
     if (nested) return nested;
 
@@ -177,6 +191,7 @@ interface ClientPortfolioData {
     asset_count: number;
     balances: Array<{
       asset: string;
+      account_type: string | null;
       free: number | string;
       locked: number | string;
       total: number | string;
@@ -189,6 +204,13 @@ interface ClientPortfolioData {
       unrealized_pnl_percent: number | string;
       apy: number | string | null;
       position_type: string | null;
+      operation_value_usd: number | string | null;
+      margin_usd: number | string | null;
+      leverage: number | string | null;
+      side: string | null;
+      liquidation_price: number | string | null;
+      realized_pnl: number | string | null;
+      portfolio_value_basis: string | null;
     }>;
   }>;
   manual_assets: Array<{

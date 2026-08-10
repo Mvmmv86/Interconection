@@ -37,6 +37,7 @@ export interface ClientWallet {
 
 export interface ExchangeBalance {
   asset: string;
+  accountType?: string | null;
   free: number;
   locked: number;
   total: number;
@@ -51,6 +52,13 @@ export interface ExchangeBalance {
   // Yield fields
   apy?: number | null;
   positionType?: string; // "spot", "staking", "earn"
+  operationValueUsd?: number | null;
+  marginUsd?: number | null;
+  leverage?: number | null;
+  side?: string | null;
+  liquidationPrice?: number | null;
+  realizedPnl?: number | null;
+  portfolioValueBasis?: string | null;
 }
 
 export interface ClientExchange {
@@ -120,11 +128,17 @@ export interface UnifiedPosition {
   source: 'wallet' | 'exchange' | 'manual';
   sourceId: string;
   sourceName: string; // e.g., "Bybit", "Main Wallet", "Manual"
-  type: 'holding' | 'staking' | 'lending' | 'lp';
+  type: 'holding' | 'staking' | 'lending' | 'lp' | 'futures' | 'margin' | 'funding';
   pnl?: number;
   pnlPercent?: number;
   apy?: number;
   logoUrl?: string | null;
+  accountType?: string | null;
+  operationValueUsd?: number | null;
+  marginUsd?: number | null;
+  leverage?: number | null;
+  side?: string | null;
+  liquidationPrice?: number | null;
 }
 
 export interface ClientPortfolioSummary {

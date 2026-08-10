@@ -461,21 +461,27 @@ function AddExchangeModal({
   const [label, setLabel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onSave({
-      exchange,
-      label,
-      apiKey,
-      apiSecret,
-    });
-    setLabel('');
-    setApiKey('');
-    setApiSecret('');
-    onClose();
+    setError(null);
+    try {
+      await onSave({
+        exchange,
+        label,
+        apiKey,
+        apiSecret,
+      });
+      setLabel('');
+      setApiKey('');
+      setApiSecret('');
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nao foi possivel conectar a exchange.');
+    }
   };
 
   const exchangeNames: Record<string, string> = {
@@ -630,6 +636,12 @@ function AddExchangeModal({
           )}>
             Use permissões apenas de leitura na sua API. Nunca habilite trading ou saque.
           </p>
+
+          {error && (
+            <div className="rounded-lg border border-status-error/20 bg-status-error/10 px-3 py-2">
+              <p className="text-xs text-status-error">{error}</p>
+            </div>
+          )}
 
           <div className="flex gap-3 pt-2">
             <button
@@ -1286,7 +1298,7 @@ function combineAllPositions(
         }
 
         positions.push({
-          id: `exchange-${exchange.id}-${balance.asset}`,
+          id: `exchange-${exchange.id}-${balance.accountType || balance.positionType || 'spot'}-${balance.asset}-${balance.side || 'balance'}`,
           symbol: balance.asset,
           name: balance.asset,
           quantity: balance.total,
@@ -1296,11 +1308,27 @@ function combineAllPositions(
           source: 'exchange',
           sourceId: exchange.id,
           sourceName: exchange.label || exchange.exchange,
-          type: (balance.positionType as 'holding' | 'staking' | 'lending' | 'lp') || 'holding',
+          type: (() => {
+            const accountType = (balance.accountType || '').toLowerCase();
+            const positionType = (balance.positionType || '').toLowerCase();
+            if (accountType.includes('futures') || positionType === 'futures') return 'futures';
+            if (accountType.includes('margin') || positionType === 'margin') return 'margin';
+            if (accountType.includes('fund')) return 'funding';
+            if (positionType === 'staking') return 'staking';
+            if (positionType === 'lending') return 'lending';
+            if (positionType === 'lp') return 'lp';
+            return 'holding';
+          })(),
           pnl,
           pnlPercent,
           // Include APY from earn/staking positions
           apy: balance.apy || undefined,
+          accountType: balance.accountType,
+          operationValueUsd: balance.operationValueUsd,
+          marginUsd: balance.marginUsd,
+          leverage: balance.leverage,
+          side: balance.side,
+          liquidationPrice: balance.liquidationPrice,
         });
       }
     }
@@ -1367,6 +1395,29 @@ function PositionRow({
     return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   };
 
+  const formatAccountType = (value?: string | null) => {
+    const normalized = (value || '').toLowerCase();
+    if (normalized === 'spot_fund') return 'Spot/Funds';
+    if (normalized === 'futures_balance') return 'Saldo Futuro';
+    if (normalized === 'futures_position') return 'Operação Futura';
+    if (normalized.includes('fund')) return 'Funds';
+    if (normalized.includes('margin')) return 'Margem';
+    if (normalized.includes('copy')) return 'Copy Trading';
+    if (normalized.includes('grid')) return 'Grid';
+    if (normalized.includes('earn') || normalized.includes('eran')) return 'Earn';
+    if (position.type === 'futures') return 'Futuros';
+    if (position.type === 'margin') return 'Margem';
+    return 'Spot';
+  };
+
+  const renderOptionalCurrency = (value?: number | null) => (
+    value != null && Number.isFinite(value) && Math.abs(value) > 0.005 ? (
+      <span className={cn("text-sm", isDark ? "text-white" : "text-gray-900")}>{formatCurrency(value)}</span>
+    ) : (
+      <span className={cn("text-xs", isDark ? "text-white/30" : "text-gray-400")}>-</span>
+    )
+  );
+
   const sourceColors = {
     wallet: 'bg-accent-blue/10 text-accent-blue',
     exchange: 'bg-accent-orange/10 text-accent-orange',
@@ -1426,6 +1477,29 @@ function PositionRow({
           </span>
         </div>
       </td>
+      <td className="py-3 px-4">
+        <div className="flex flex-col items-start gap-1">
+          <span className={cn(
+            "text-xs px-2 py-0.5 rounded-full font-medium",
+            position.type === 'futures'
+              ? "bg-accent-purple/10 text-accent-purple"
+              : position.type === 'margin'
+                ? "bg-accent-orange/10 text-accent-orange"
+                : position.type === 'funding'
+                  ? "bg-accent-blue/10 text-accent-blue"
+                  : isDark
+                    ? "bg-white/[0.04] text-white/60"
+                    : "bg-gray-100 text-gray-600"
+          )}>
+            {formatAccountType(position.accountType)}
+          </span>
+          {position.side && (
+            <span className={cn("text-[10px] uppercase", position.side === 'short' ? "text-status-error" : "text-status-success")}>
+              {position.side}
+            </span>
+          )}
+        </div>
+      </td>
       <td className="py-3 px-4 text-right">
         <p className={cn("text-sm", isDark ? "text-white" : "text-gray-900")}>{formatQuantity(position.quantity)}</p>
       </td>
@@ -1441,7 +1515,29 @@ function PositionRow({
         )}
       </td>
       <td className="py-3 px-4 text-right">
-        <p className={cn("text-sm font-medium", isDark ? "text-white" : "text-gray-900")}>{formatCurrency(position.valueUsd)}</p>
+        {renderOptionalCurrency(position.valueUsd)}
+      </td>
+      <td className="py-3 px-4 text-right">
+        {renderOptionalCurrency(position.operationValueUsd)}
+      </td>
+      <td className="py-3 px-4 text-right">
+        {renderOptionalCurrency(position.marginUsd)}
+      </td>
+      <td className="py-3 px-4 text-right">
+        {position.leverage ? (
+          <span className={cn(
+            "text-xs px-2 py-0.5 rounded-full font-semibold",
+            position.leverage >= 20
+              ? "bg-status-error/10 text-status-error"
+              : position.leverage >= 10
+                ? "bg-accent-orange/10 text-accent-orange"
+                : "bg-accent-purple/10 text-accent-purple"
+          )}>
+            {position.leverage}x
+          </span>
+        ) : (
+          <span className={cn("text-xs", isDark ? "text-white/30" : "text-gray-400")}>-</span>
+        )}
       </td>
       <td className="py-3 px-4 text-right">
         {position.pnl !== undefined ? (
@@ -2396,9 +2492,13 @@ export default function ClientDetailPage() {
                         )}>
                           <th className={cn("py-2 px-4 text-left text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Token</th>
                           <th className={cn("py-2 px-4 text-left text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Origem</th>
+                          <th className={cn("py-2 px-4 text-left text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Conta</th>
                           <th className={cn("py-2 px-4 text-right text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Quantidade</th>
                           <th className={cn("py-2 px-4 text-right text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Preço</th>
-                          <th className={cn("py-2 px-4 text-right text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Valor</th>
+                          <th className={cn("py-2 px-4 text-right text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Saldo/Valor</th>
+                          <th className={cn("py-2 px-4 text-right text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Volume Op.</th>
+                          <th className={cn("py-2 px-4 text-right text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Margem</th>
+                          <th className={cn("py-2 px-4 text-right text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>Alav.</th>
                           <th className={cn("py-2 px-4 text-right text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>PnL</th>
                           <th className={cn("py-2 px-4 text-right text-xs font-medium", isDark ? "text-white/50" : "text-gray-500")}>APY</th>
                           <th className="py-2 px-4 w-10"></th>
@@ -2457,8 +2557,11 @@ export default function ClientDetailPage() {
             onClose={() => setShowAddWallet(false)}
             onSave={async (wallet) => {
               setIsActionLoading(true);
-              await addWallet(clientId, wallet);
-              setIsActionLoading(false);
+              try {
+                await addWallet(clientId, wallet);
+              } finally {
+                setIsActionLoading(false);
+              }
             }}
             isLoading={isActionLoading}
             isDark={isDark}
@@ -2469,8 +2572,11 @@ export default function ClientDetailPage() {
             onClose={() => setShowAddExchange(false)}
             onSave={async (exchange) => {
               setIsActionLoading(true);
-              await addExchange(clientId, exchange);
-              setIsActionLoading(false);
+              try {
+                await addExchange(clientId, exchange);
+              } finally {
+                setIsActionLoading(false);
+              }
             }}
             isLoading={isActionLoading}
             isDark={isDark}
@@ -2481,8 +2587,11 @@ export default function ClientDetailPage() {
             onClose={() => setShowAddAsset(false)}
             onSave={async (asset) => {
               setIsActionLoading(true);
-              await addManualAsset(clientId, asset);
-              setIsActionLoading(false);
+              try {
+                await addManualAsset(clientId, asset);
+              } finally {
+                setIsActionLoading(false);
+              }
             }}
             isLoading={isActionLoading}
             isDark={isDark}

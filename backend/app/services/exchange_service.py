@@ -398,6 +398,8 @@ class ExchangeService:
             asset_symbols.add(balance.asset.upper())
         for balance in summary.funding_balances:
             asset_symbols.add(balance.asset.upper())
+        for balance in summary.futures_balances:
+            asset_symbols.add(balance.asset.upper())
         for balance in summary.margin_balances:
             asset_symbols.add(balance.asset.upper())
         for futures in summary.futures_positions:
@@ -491,7 +493,7 @@ class ExchangeService:
                 unrealized_pnl_percent=unrealized_pnl_percent,
                 position_metadata={
                     "exchange": exchange.exchange,
-                    "account_type": "unified",
+                    "account_type": balance.account_type or "spot",
                     "free": str(balance.free),
                     "locked": str(balance.locked),
                 },
@@ -542,10 +544,45 @@ class ExchangeService:
                 unrealized_pnl_percent=unrealized_pnl_percent,
                 position_metadata={
                     "exchange": exchange.exchange,
-                    "account_type": "funding",
+                    "account_type": balance.account_type or "funding",
                     "free": str(balance.free),
                     "locked": str(balance.locked),
                     "transferable": str(balance.transferable),
+                },
+            )
+            self.db.add(position)
+            positions_count += 1
+
+        # Store futures account balances/equity. These rows are the real
+        # portfolio value for futures accounts; open positions below keep their
+        # notional exposure separate to avoid counting operation volume as equity.
+        for balance in summary.futures_balances:
+            asset = await get_asset(
+                symbol=balance.asset,
+                price_usd=balance.price_usd,
+                change_24h=balance.change_24h,
+            )
+
+            position = Position(
+                organization_id=exchange.client.organization_id,
+                client_id=exchange.client_id,
+                asset_id=asset.id,
+                source_type=SourceType.EXCHANGE,
+                source_id=exchange.id,
+                position_type=PositionType.FUTURES,
+                quantity=balance.total,
+                current_price=balance.price_usd,
+                current_value_usd=balance.value_usd,
+                unrealized_pnl=Decimal("0"),
+                unrealized_pnl_percent=Decimal("0"),
+                position_metadata={
+                    "exchange": exchange.exchange,
+                    "account_type": balance.account_type or "futures_balance",
+                    "free": str(balance.free),
+                    "locked": str(balance.locked),
+                    "transferable": str(balance.transferable),
+                    "is_account_balance": True,
+                    "portfolio_value_basis": "futures_account_equity",
                 },
             )
             self.db.add(position)
@@ -573,7 +610,7 @@ class ExchangeService:
                 unrealized_pnl_percent=Decimal("0"),
                 position_metadata={
                     "exchange": exchange.exchange,
-                    "account_type": "margin",
+                    "account_type": balance.account_type or "margin",
                     "borrowed": str(balance.borrowed),
                     "interest": str(balance.interest),
                     "net_asset": str(balance.net_asset),
@@ -581,6 +618,8 @@ class ExchangeService:
             )
             self.db.add(position)
             positions_count += 1
+
+        has_futures_account_balance = bool(summary.futures_balances)
 
         # Store futures positions
         for futures in summary.futures_positions:
@@ -598,6 +637,11 @@ class ExchangeService:
                 symbol=base_asset,
                 price_usd=futures.mark_price,
             )
+            futures_equity_value = max(
+                futures.margin + futures.unrealized_pnl,
+                Decimal("0"),
+            )
+            portfolio_value = Decimal("0") if has_futures_account_balance else futures_equity_value
 
             position = Position(
                 organization_id=exchange.client.organization_id,
@@ -609,11 +653,12 @@ class ExchangeService:
                 quantity=futures.size,
                 entry_price=futures.entry_price,
                 current_price=futures.mark_price,
-                current_value_usd=futures.position_value,
+                current_value_usd=portfolio_value,
                 unrealized_pnl=futures.unrealized_pnl,
                 unrealized_pnl_percent=futures.unrealized_pnl_percent,
                 position_metadata={
                     "exchange": exchange.exchange,
+                    "account_type": "futures_position",
                     "symbol": futures.symbol,
                     "side": futures.side,
                     "leverage": futures.leverage,
@@ -621,7 +666,15 @@ class ExchangeService:
                     "settle_coin": futures.settle_coin,
                     "liquidation_price": str(futures.liquidation_price) if futures.liquidation_price else None,
                     "margin": str(futures.margin),
+                    "margin_usd": str(futures.margin),
+                    "operation_value_usd": str(futures.position_value),
                     "realized_pnl": str(futures.realized_pnl),
+                    "is_account_balance": False,
+                    "portfolio_value_basis": (
+                        "included_in_futures_account_equity"
+                        if has_futures_account_balance
+                        else "margin_plus_unrealized_pnl"
+                    ),
                 },
             )
             self.db.add(position)
@@ -930,6 +983,7 @@ class ExchangeService:
             "spot_balances": [
                 {
                     "asset": b.asset,
+                    "account_type": b.account_type,
                     "free": float(b.free),
                     "locked": float(b.locked),
                     "total": float(b.total),
@@ -942,6 +996,7 @@ class ExchangeService:
             "funding_balances": [
                 {
                     "asset": b.asset,
+                    "account_type": b.account_type,
                     "free": float(b.free),
                     "locked": float(b.locked),
                     "total": float(b.total),
@@ -952,9 +1007,24 @@ class ExchangeService:
                 }
                 for b in summary.funding_balances
             ],
+            "futures_balances": [
+                {
+                    "asset": b.asset,
+                    "account_type": b.account_type,
+                    "free": float(b.free),
+                    "locked": float(b.locked),
+                    "total": float(b.total),
+                    "transferable": float(b.transferable),
+                    "value_usd": float(b.value_usd),
+                    "price_usd": float(b.price_usd),
+                    "change_24h": float(b.change_24h),
+                }
+                for b in summary.futures_balances
+            ],
             "margin_balances": [
                 {
                     "asset": b.asset,
+                    "account_type": b.account_type,
                     "free": float(b.free),
                     "locked": float(b.locked),
                     "total": float(b.total),
@@ -1002,6 +1072,7 @@ class ExchangeService:
             # Totals
             "total_spot_usd": float(summary.total_spot_usd),
             "total_funding_usd": float(summary.total_funding_usd),
+            "total_futures_balance_usd": float(summary.total_futures_balance_usd),
             "total_margin_usd": float(summary.total_margin_usd),
             "total_futures_usd": float(summary.total_futures_usd),
             "total_earn_usd": float(summary.total_earn_usd),

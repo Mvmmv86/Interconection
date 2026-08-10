@@ -35,6 +35,7 @@ from app.integrations.exchanges.base import (
     ExchangeOrderType,
     ExchangeRateLimitError,
     ExchangeTransaction,
+    FundingBalance,
     FuturesPosition,
     MarginBalance,
     MarketCandleData,
@@ -51,6 +52,9 @@ STABLECOIN_PRICES = {
     "BUSD": {"price": Decimal("1"), "change_24h": Decimal("0")},
     "FDUSD": {"price": Decimal("1"), "change_24h": Decimal("0")},
 }
+
+BINGX_FUTURES_ACCOUNT_TYPES = {"usdtmperp", "stdfutures", "coinmperp"}
+BINGX_SPOT_FUND_ACCOUNT_TYPES = {"spot", "sopt"}
 
 BINGX_KLINE_INTERVALS = {
     "1m": "1m",
@@ -448,6 +452,7 @@ class BingXAdapter(BaseExchangeAdapter):
             balances.append(
                 SpotBalance(
                     asset=asset,
+                    account_type="spot_fund",
                     free=free,
                     locked=locked,
                     total=total,
@@ -471,6 +476,7 @@ class BingXAdapter(BaseExchangeAdapter):
                 balances.append(
                     SpotBalance(
                         asset="USDT",
+                        account_type="spot_fund",
                         free=spot_usdt_equivalent,
                         locked=Decimal("0"),
                         total=spot_usdt_equivalent,
@@ -481,6 +487,98 @@ class BingXAdapter(BaseExchangeAdapter):
                 )
 
         balances.sort(key=lambda balance: balance.value_usd, reverse=True)
+        return balances
+
+    def _account_records_from_balance_payload(self, payload: Any) -> list[dict]:
+        if isinstance(payload, dict):
+            for key in ("balance", "balances", "list", "rows", "data"):
+                value = payload.get(key)
+                if isinstance(value, dict):
+                    return [value]
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+            if any(
+                key in payload
+                for key in (
+                    "asset",
+                    "coin",
+                    "currency",
+                    "equity",
+                    "balance",
+                    "walletBalance",
+                    "accountEquity",
+                    "marginBalance",
+                )
+            ):
+                return [payload]
+        return _as_list(payload)
+
+    async def get_futures_balances(self) -> list[FundingBalance]:
+        """Get BingX futures account equity without treating notional as balance."""
+        balances: list[FundingBalance] = []
+
+        try:
+            payload = await self._request("GET", "/openApi/swap/v3/user/balance")
+        except Exception as exc:
+            logger.debug("Failed to load BingX futures account balance: %s", exc)
+            payload = None
+
+        for item in self._account_records_from_balance_payload(payload):
+            asset = str(item.get("asset") or item.get("coin") or item.get("currency") or "USDT").upper()
+            equity = safe_decimal(
+                item.get("equity")
+                or item.get("accountEquity")
+                or item.get("marginBalance")
+                or item.get("balance")
+                or item.get("walletBalance"),
+                "0",
+            )
+            if equity <= 0:
+                continue
+
+            available = safe_decimal(
+                item.get("availableMargin")
+                or item.get("availableBalance")
+                or item.get("available")
+                or item.get("free"),
+                "0",
+            )
+            locked = max(equity - available, Decimal("0"))
+            balances.append(
+                FundingBalance(
+                    asset=asset,
+                    account_type="futures_balance",
+                    free=available if available > 0 else equity,
+                    locked=locked,
+                    total=equity,
+                    transferable=available if available > 0 else Decimal("0"),
+                    price_usd=Decimal("1") if asset in STABLECOIN_PRICES else Decimal("0"),
+                    value_usd=equity if asset in STABLECOIN_PRICES else Decimal("0"),
+                    change_24h=Decimal("0"),
+                )
+            )
+
+        for account in await self._get_all_account_balances():
+            account_type = str(account.get("accountType") or "").lower()
+            if account_type not in BINGX_FUTURES_ACCOUNT_TYPES:
+                continue
+            total = safe_decimal(account.get("usdtBalance"), "0")
+            if total <= 0 or any(balance.account_type == "futures_balance" for balance in balances):
+                continue
+            balances.append(
+                FundingBalance(
+                    asset="USDT",
+                    account_type="futures_balance",
+                    free=total,
+                    locked=Decimal("0"),
+                    total=total,
+                    transferable=total,
+                    price_usd=Decimal("1"),
+                    value_usd=total,
+                    change_24h=Decimal("0"),
+                )
+            )
+
         return balances
 
     async def get_margin_balances(self) -> list[MarginBalance]:
@@ -495,7 +593,7 @@ class BingXAdapter(BaseExchangeAdapter):
         balances: list[MarginBalance] = []
         for account in await self._get_all_account_balances():
             account_type = str(account.get("accountType") or "").lower()
-            if account_type in {"spot", "sopt"}:
+            if account_type in BINGX_SPOT_FUND_ACCOUNT_TYPES or account_type in BINGX_FUTURES_ACCOUNT_TYPES:
                 continue
 
             total = safe_decimal(account.get("usdtBalance"), "0")
@@ -505,6 +603,7 @@ class BingXAdapter(BaseExchangeAdapter):
             balances.append(
                 MarginBalance(
                     asset="USDT",
+                    account_type=account_type or "other_balance",
                     free=total,
                     locked=Decimal("0"),
                     total=total,
@@ -1242,49 +1341,58 @@ class BingXAdapter(BaseExchangeAdapter):
         _ = include_subaccounts
         results = await asyncio.gather(
             self.get_spot_balances(),
+            self.get_futures_balances(),
             self.get_margin_balances(),
             self.get_futures_positions(),
             return_exceptions=True,
         )
 
         spot_balances = results[0] if not isinstance(results[0], Exception) else []
-        margin_balances = results[1] if not isinstance(results[1], Exception) else []
-        futures_positions = results[2] if not isinstance(results[2], Exception) else []
+        futures_balances = results[1] if not isinstance(results[1], Exception) else []
+        margin_balances = results[2] if not isinstance(results[2], Exception) else []
+        futures_positions = results[3] if not isinstance(results[3], Exception) else []
 
         if isinstance(results[0], Exception):
             logger.warning("Failed to get BingX spot balances: %s", results[0])
         if isinstance(results[1], Exception):
-            logger.warning("Failed to get BingX account balances: %s", results[1])
+            logger.warning("Failed to get BingX futures balance: %s", results[1])
         if isinstance(results[2], Exception):
-            logger.warning("Failed to get BingX futures positions: %s", results[2])
-        if isinstance(results[0], Exception) and isinstance(results[1], Exception) and isinstance(results[2], Exception):
-            if isinstance(results[0], ExchangeAuthError):
-                raise results[0]
-            if isinstance(results[1], ExchangeAuthError):
-                raise results[1]
-            if isinstance(results[2], ExchangeAuthError):
-                raise results[2]
+            logger.warning("Failed to get BingX account balances: %s", results[2])
+        if isinstance(results[3], Exception):
+            logger.warning("Failed to get BingX futures positions: %s", results[3])
+        if all(isinstance(result, Exception) for result in results):
+            for result in results:
+                if isinstance(result, ExchangeAuthError):
+                    raise result
             raise ExchangeAPIError(
                 exchange=self.exchange_name,
                 status_code=502,
-                message=f"Failed to load BingX account data: spot={results[0]}; margin={results[1]}; futures={results[2]}",
+                message=(
+                    "Failed to load BingX account data: "
+                    f"spot={results[0]}; futures_balance={results[1]}; "
+                    f"margin={results[2]}; futures_positions={results[3]}"
+                ),
             )
 
         total_spot = sum(balance.value_usd for balance in spot_balances)
+        total_futures_balance = sum(balance.value_usd for balance in futures_balances)
         total_margin = sum(balance.value_usd for balance in margin_balances)
-        total_futures = sum(position.margin + position.unrealized_pnl for position in futures_positions)
+        open_futures_equity = sum(position.margin + position.unrealized_pnl for position in futures_positions)
+        total_futures = total_futures_balance if total_futures_balance > 0 else open_futures_equity
         total_unrealized_pnl = sum(position.unrealized_pnl for position in futures_positions)
 
         return ExchangeAccountSummary(
             spot_balances=spot_balances,
+            futures_balances=futures_balances,
             margin_balances=margin_balances,
             futures_positions=futures_positions,
             total_spot_usd=total_spot,
+            total_futures_balance_usd=total_futures_balance,
             total_margin_usd=total_margin,
             total_futures_usd=total_futures,
             total_value_usd=total_spot + total_margin + total_futures,
             total_unrealized_pnl=total_unrealized_pnl,
-            position_count=len(spot_balances) + len(margin_balances) + len(futures_positions),
+            position_count=len(spot_balances) + len(futures_balances) + len(margin_balances) + len(futures_positions),
         )
 
     async def close(self) -> None:

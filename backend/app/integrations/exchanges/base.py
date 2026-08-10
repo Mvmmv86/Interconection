@@ -49,6 +49,7 @@ class ExchangeBalance(BaseModel):
     """Base balance model for exchange assets."""
 
     asset: str
+    account_type: Optional[str] = None
     free: Decimal = Field(default=Decimal("0"))
     locked: Decimal = Field(default=Decimal("0"))
     total: Decimal = Field(default=Decimal("0"))
@@ -205,6 +206,7 @@ class ExchangeAccountSummary(BaseModel):
     # Balances by account type
     spot_balances: List[SpotBalance] = Field(default_factory=list)
     funding_balances: List[FundingBalance] = Field(default_factory=list)
+    futures_balances: List[FundingBalance] = Field(default_factory=list)
     margin_balances: List[MarginBalance] = Field(default_factory=list)
     futures_positions: List[FuturesPosition] = Field(default_factory=list)
     earn_positions: List[EarnPosition] = Field(default_factory=list)
@@ -212,6 +214,7 @@ class ExchangeAccountSummary(BaseModel):
     # Totals in USD
     total_spot_usd: Decimal = Field(default=Decimal("0"))
     total_funding_usd: Decimal = Field(default=Decimal("0"))
+    total_futures_balance_usd: Decimal = Field(default=Decimal("0"))
     total_margin_usd: Decimal = Field(default=Decimal("0"))
     total_futures_usd: Decimal = Field(default=Decimal("0"))
     total_earn_usd: Decimal = Field(default=Decimal("0"))
@@ -451,6 +454,7 @@ class BaseExchangeAdapter(ABC):
         # Calculate totals
         total_spot = sum(b.value_usd for b in spot_balances)
         total_funding = sum(b.value_usd for b in funding_balances)
+        total_futures_balance = Decimal("0")
         total_margin = sum(b.value_usd for b in margin_balances)
         total_futures = sum(p.margin + p.unrealized_pnl for p in futures_positions)
         total_earn = sum(p.value_usd for p in earn_positions)
@@ -485,15 +489,17 @@ class BaseExchangeAdapter(ABC):
         return ExchangeAccountSummary(
             spot_balances=spot_balances,
             funding_balances=funding_balances,
+            futures_balances=[],
             margin_balances=margin_balances,
             futures_positions=futures_positions,
             earn_positions=earn_positions,
             total_spot_usd=total_spot,
             total_funding_usd=total_funding,
+            total_futures_balance_usd=total_futures_balance,
             total_margin_usd=total_margin,
             total_futures_usd=total_futures,
             total_earn_usd=total_earn,
-            total_value_usd=total_spot + total_funding + total_margin + total_futures + total_earn,
+            total_value_usd=total_spot + total_funding + total_futures_balance + total_margin + total_futures + total_earn,
             total_unrealized_pnl=total_unrealized_pnl,
             position_count=position_count,
             subaccounts=subaccount_summaries,
