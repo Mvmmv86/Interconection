@@ -4,9 +4,12 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+import logging
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class AccountType(str, Enum):
@@ -361,8 +364,6 @@ class BaseExchangeAdapter(ABC):
         Combines results from all transaction methods and sorts by timestamp.
         """
         import asyncio
-        import logging
-        _logger = logging.getLogger(__name__)
 
         results = await asyncio.gather(
             self.get_deposit_history(limit),
@@ -371,14 +372,13 @@ class BaseExchangeAdapter(ABC):
             return_exceptions=True,
         )
 
-        import sys
         labels = ["deposits", "withdrawals", "transfers"]
         transactions: List[ExchangeTransaction] = []
         for label, result in zip(labels, results):
             if isinstance(result, Exception):
-                print(f"[TX-DEBUG] [{self.exchange_name}] Failed to get {label}: {result}", file=sys.stderr, flush=True)
+                logger.debug("[%s] Failed to get %s: %s", self.exchange_name, label, result)
                 continue
-            print(f"[TX-DEBUG] [{self.exchange_name}] Got {len(result)} {label}", file=sys.stderr, flush=True)
+            logger.debug("[%s] Got %s %s", self.exchange_name, len(result), label)
             transactions.extend(result)
 
         # Sort by timestamp descending
