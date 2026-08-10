@@ -451,7 +451,7 @@ function AddExchangeModal({
   isLoading: boolean;
   isDark: boolean;
 }) {
-  const [exchange, setExchange] = useState<typeof SUPPORTED_EXCHANGES[number]>('binance');
+  const [exchange, setExchange] = useState<typeof SUPPORTED_EXCHANGES[number]>('bybit');
   const [label, setLabel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
@@ -477,6 +477,7 @@ function AddExchangeModal({
     coinbase: 'Coinbase',
     kraken: 'Kraken',
     bybit: 'Bybit',
+    bingx: 'BingX',
     okx: 'OKX',
     kucoin: 'KuCoin',
     gateio: 'Gate.io',
@@ -527,6 +528,9 @@ function AddExchangeModal({
             <select
               value={exchange}
               onChange={(e) => setExchange(e.target.value as typeof SUPPORTED_EXCHANGES[number])}
+              style={{
+                colorScheme: isDark ? 'dark' : 'light',
+              }}
               className={cn(
                 "w-full px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-accent-blue/50",
                 isDark
@@ -535,7 +539,14 @@ function AddExchangeModal({
               )}
             >
               {SUPPORTED_EXCHANGES.map((ex) => (
-                <option key={ex} value={ex}>
+                <option
+                  key={ex}
+                  value={ex}
+                  style={{
+                    backgroundColor: isDark ? '#111827' : '#ffffff',
+                    color: isDark ? '#ffffff' : '#111827',
+                  }}
+                >
                   {exchangeNames[ex] || ex}
                 </option>
               ))}
@@ -553,7 +564,7 @@ function AddExchangeModal({
               type="text"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Ex: Binance Principal"
+              placeholder="Ex: Bybit Principal ou BingX Subconta"
               className={cn(
                 "w-full px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-accent-blue/50",
                 isDark
@@ -1093,6 +1104,7 @@ function ExchangeCard({
     coinbase: 'Coinbase',
     kraken: 'Kraken',
     bybit: 'Bybit',
+    bingx: 'BingX',
     okx: 'OKX',
     kucoin: 'KuCoin',
     gateio: 'Gate.io',

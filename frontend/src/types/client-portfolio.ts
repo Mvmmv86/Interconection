@@ -257,14 +257,8 @@ export function getRandomClientColor(): string {
 
 // Supported exchanges
 export const SUPPORTED_EXCHANGES = [
-  'binance',
-  'coinbase',
-  'kraken',
   'bybit',
-  'okx',
-  'kucoin',
-  'gateio',
-  'mexc',
+  'bingx',
 ] as const;
 
 export type SupportedExchange = typeof SUPPORTED_EXCHANGES[number];
