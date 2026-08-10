@@ -71,6 +71,34 @@ function formatCurrency(value: number): string {
   return `$${value.toFixed(2)}`;
 }
 
+function getLocationDisplay(position: {
+  location: string;
+  parentAccountName?: string;
+  exchangeLabel?: string;
+}) {
+  const parentAccountName = position.parentAccountName?.trim();
+  const exchangeLabel = position.exchangeLabel?.trim();
+  const secondaryParts: string[] = [];
+
+  if (parentAccountName) {
+    secondaryParts.push(position.location);
+    if (
+      exchangeLabel &&
+      exchangeLabel !== position.location &&
+      exchangeLabel !== parentAccountName
+    ) {
+      secondaryParts.push(exchangeLabel);
+    }
+  } else if (exchangeLabel && exchangeLabel !== position.location) {
+    secondaryParts.push(position.location);
+  }
+
+  return {
+    primary: parentAccountName || exchangeLabel || position.location,
+    secondary: secondaryParts.join(' · '),
+  };
+}
+
 export function PositionsTable() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
@@ -89,7 +117,9 @@ export function PositionsTable() {
         const matchesSearch =
           p.asset.toLowerCase().includes(searchTerm.toLowerCase()) ||
           p.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          p.location.toLowerCase().includes(searchTerm.toLowerCase());
+          p.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (p.parentAccountName?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
+          (p.exchangeLabel?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false);
 
         const matchesFilter =
           filterType === 'all' ||
@@ -292,6 +322,7 @@ export function PositionsTable() {
                 {filteredPositions.map((position) => {
                   const LocationIcon = locationIcons[position.locationType] || Wallet;
                   const hasPnl = position.pnl !== undefined && position.pnl !== 0;
+                  const locationDisplay = getLocationDisplay(position);
 
                   return (
                     <tr
@@ -405,7 +436,16 @@ export function PositionsTable() {
                           <div className={cn('w-5 h-5 rounded flex items-center justify-center', locationColors[position.locationType] || locationColors.wallet)}>
                             <LocationIcon className="w-3 h-3" />
                           </div>
-                          <span className={cn('text-[10px]', isDark ? 'text-white/70' : 'text-gray-700')}>{position.location}</span>
+                          <div className="min-w-0">
+                            <div className={cn('text-[10px] leading-tight truncate max-w-[150px]', isDark ? 'text-white/70' : 'text-gray-700')}>
+                              {locationDisplay.primary}
+                            </div>
+                            {locationDisplay.secondary && (
+                              <div className={cn('text-[8px] leading-tight truncate max-w-[150px]', isDark ? 'text-white/30' : 'text-gray-500')}>
+                                {locationDisplay.secondary}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="py-3">

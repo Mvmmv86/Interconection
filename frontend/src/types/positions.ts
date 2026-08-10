@@ -33,6 +33,8 @@ export interface UnifiedPosition {
 
   // Location
   location: string; // e.g., "Binance", "Aave V3", "Ledger"
+  parentAccountName?: string; // e.g., client/account that owns an exchange connection
+  exchangeLabel?: string; // e.g., exchange connection label/subaccount name
   locationType: PositionLocationType;
 
   // Chain

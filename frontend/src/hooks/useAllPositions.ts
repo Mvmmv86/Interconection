@@ -85,6 +85,21 @@ function getChainColor(chain: string): string {
   return CHAIN_COLORS[normalizedChain] || CHAIN_COLORS['default'];
 }
 
+function getExchangeLocationFields(exchange: {
+  name: string;
+  label?: string | null;
+  clientName?: string | null;
+}) {
+  const parentAccountName = exchange.clientName?.trim() || undefined;
+  const exchangeLabel = exchange.label?.trim() || undefined;
+
+  return {
+    location: exchange.name,
+    parentAccountName,
+    exchangeLabel,
+  };
+}
+
 /**
  * Hook to aggregate all positions from different sources
  * Combines DeFi positions (EVM + Solana), Solana wallet tokens, and Exchange positions
@@ -206,6 +221,7 @@ export function useAllPositions(): AllPositionsData {
     for (const exchange of exchangeAccounts) {
       const decision = effectiveByExchange.get(exchange.id);
       const liveData = decision?.liveData;
+      const exchangeLocation = getExchangeLocationFields(exchange);
 
       if (liveData) {
         // === SPOT BALANCES (with real quantity, price, 24h change) ===
@@ -219,7 +235,7 @@ export function useAllPositions(): AllPositionsData {
             currentPrice: bal.priceUsd,
             value: bal.valueUsd,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'spot',
@@ -242,7 +258,7 @@ export function useAllPositions(): AllPositionsData {
             currentPrice: bal.priceUsd,
             value: bal.valueUsd,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'futures',
@@ -263,7 +279,7 @@ export function useAllPositions(): AllPositionsData {
             entryPrice: fut.entryPrice,
             value: hasFuturesAccountBalance ? 0 : futuresEquityValue,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'futures',
@@ -289,7 +305,7 @@ export function useAllPositions(): AllPositionsData {
             currentPrice: bal.priceUsd,
             value: bal.valueUsd,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'funding',
@@ -309,7 +325,7 @@ export function useAllPositions(): AllPositionsData {
             currentPrice: bal.priceUsd,
             value: bal.valueUsd,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'margin',
@@ -330,7 +346,7 @@ export function useAllPositions(): AllPositionsData {
             currentPrice: earn.valueUsd / (earn.amount || 1),
             value: earn.valueUsd,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'earn',
@@ -352,7 +368,7 @@ export function useAllPositions(): AllPositionsData {
             currentPrice: 0,
             value: asset.value,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'spot',
@@ -373,7 +389,7 @@ export function useAllPositions(): AllPositionsData {
             currentPrice: 0,
             value: remainingSpot,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'spot',
@@ -390,7 +406,7 @@ export function useAllPositions(): AllPositionsData {
             currentPrice: 0,
             value: exchange.futuresValue,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'futures',
@@ -407,7 +423,7 @@ export function useAllPositions(): AllPositionsData {
             currentPrice: 0,
             value: exchange.marginValue,
             allocation: 0,
-            location: exchange.name,
+            ...exchangeLocation,
             locationType: 'exchange',
             chain: 'CEX',
             category: 'margin',
