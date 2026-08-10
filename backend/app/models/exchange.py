@@ -45,6 +45,7 @@ class Exchange(Base, UUIDMixin):
     bot_instances: Mapped[List["BotInstance"]] = relationship(
         "BotInstance",
         back_populates="exchange",
+        passive_deletes=True,
     )
 
     def __repr__(self) -> str:

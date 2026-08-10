@@ -195,6 +195,7 @@ function DeleteModal({
   clientName,
   isLoading,
   isDark,
+  error,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -202,6 +203,7 @@ function DeleteModal({
   clientName: string;
   isLoading: boolean;
   isDark: boolean;
+  error?: string | null;
 }) {
   if (!isOpen) return null;
 
@@ -238,6 +240,11 @@ function DeleteModal({
           )}>
             Tem certeza que deseja excluir <span className={cn("font-medium", isDark ? "text-white" : "text-gray-900")}>{clientName}</span>? Esta ação não pode ser desfeita e todos os dados serão perdidos.
           </p>
+          {error && (
+            <div className="mb-4 rounded-lg border border-status-error/20 bg-status-error/10 px-3 py-2 text-left">
+              <p className="text-xs text-status-error">{error}</p>
+            </div>
+          )}
           <div className="flex gap-3">
             <button
               onClick={onClose}
@@ -597,9 +604,12 @@ export default function ClientsPage() {
   const handleUpdate = async (data: { name: string; email?: string; notes?: string }) => {
     if (!editingClient) return;
     setIsLoading(true);
+    setActionError(null);
     try {
       await updateClient(editingClient.id, data);
       setEditingClient(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Erro ao atualizar conta.');
     } finally {
       setIsLoading(false);
     }
@@ -608,9 +618,12 @@ export default function ClientsPage() {
   const handleDelete = async () => {
     if (!deletingClient) return;
     setIsLoading(true);
+    setActionError(null);
     try {
       await deleteClient(deletingClient.id);
       setDeletingClient(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Erro ao excluir conta.');
     } finally {
       setIsLoading(false);
     }
@@ -662,7 +675,7 @@ export default function ClientsPage() {
             </div>
 
             <button
-              onClick={() => setIsCreateModalOpen(true)}
+              onClick={() => { setActionError(null); setIsCreateModalOpen(true); }}
               className="flex items-center gap-2 h-9 px-4 rounded-lg bg-accent-blue text-white text-[11px] font-medium hover:bg-accent-blue/90 transition-colors"
             >
               <Plus className="w-4 h-4" />
@@ -739,7 +752,7 @@ export default function ClientsPage() {
                 </p>
                 {!searchQuery && (
                   <button
-                    onClick={() => setIsCreateModalOpen(true)}
+                    onClick={() => { setActionError(null); setIsCreateModalOpen(true); }}
                     className="inline-flex items-center gap-2 px-4 py-2 bg-accent-blue text-white text-sm font-medium rounded-lg hover:bg-accent-blue/90 transition-colors"
                   >
                     <Plus className="w-4 h-4" />
@@ -754,8 +767,8 @@ export default function ClientsPage() {
                     key={client.id}
                     client={client}
                     summary={summaryMap.get(client.id) || defaultSummary}
-                    onEdit={() => setEditingClient(client)}
-                    onDelete={() => setDeletingClient(client)}
+                    onEdit={() => { setActionError(null); setEditingClient(client); }}
+                    onDelete={() => { setActionError(null); setDeletingClient(client); }}
                     isDark={isDark}
                   />
                 ))}
@@ -775,20 +788,22 @@ export default function ClientsPage() {
 
           <ClientModal
             isOpen={!!editingClient}
-            onClose={() => setEditingClient(null)}
+            onClose={() => { setEditingClient(null); setActionError(null); }}
             client={editingClient || undefined}
             onSave={handleUpdate}
             isLoading={isLoading}
             isDark={isDark}
+            error={actionError}
           />
 
           <DeleteModal
             isOpen={!!deletingClient}
-            onClose={() => setDeletingClient(null)}
+            onClose={() => { setDeletingClient(null); setActionError(null); }}
             onConfirm={handleDelete}
             clientName={deletingClient?.name || ''}
             isLoading={isLoading}
             isDark={isDark}
+            error={actionError}
           />
         </main>
       </div>

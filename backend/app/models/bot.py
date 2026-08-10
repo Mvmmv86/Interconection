@@ -359,13 +359,29 @@ class BotInstance(Base, UUIDMixin, TimestampMixin):
     client: Mapped["Client"] = relationship("Client", back_populates="bot_instances")
     exchange: Mapped[Optional["Exchange"]] = relationship("Exchange", back_populates="bot_instances")
     created_by: Mapped[Optional["User"]] = relationship("User")
-    runs: Mapped[List["BotRun"]] = relationship("BotRun", back_populates="instance")
-    signals: Mapped[List["BotSignal"]] = relationship("BotSignal", back_populates="instance")
-    backtest_runs: Mapped[List["BotBacktestRun"]] = relationship("BotBacktestRun", back_populates="instance")
+    runs: Mapped[List["BotRun"]] = relationship(
+        "BotRun",
+        back_populates="instance",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    signals: Mapped[List["BotSignal"]] = relationship(
+        "BotSignal",
+        back_populates="instance",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    backtest_runs: Mapped[List["BotBacktestRun"]] = relationship(
+        "BotBacktestRun",
+        back_populates="instance",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     assets: Mapped[List["BotInstanceAsset"]] = relationship(
         "BotInstanceAsset",
         back_populates="instance",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         order_by="BotInstanceAsset.symbol",
     )
 
@@ -450,7 +466,11 @@ class BotRun(Base, UUIDMixin, TimestampMixin):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     instance: Mapped["BotInstance"] = relationship("BotInstance", back_populates="runs")
-    signals: Mapped[List["BotSignal"]] = relationship("BotSignal", back_populates="run")
+    signals: Mapped[List["BotSignal"]] = relationship(
+        "BotSignal",
+        back_populates="run",
+        passive_deletes=True,
+    )
 
 
 class BotSignal(Base, UUIDMixin, TimestampMixin):
@@ -536,6 +556,7 @@ class BotBacktestRun(Base, UUIDMixin, TimestampMixin):
         "BotBacktestTrade",
         back_populates="run",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         order_by="BotBacktestTrade.entry_time",
     )
     user: Mapped[Optional["User"]] = relationship("User")

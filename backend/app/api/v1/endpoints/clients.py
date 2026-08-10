@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import (
     DBSession,
@@ -202,8 +203,19 @@ async def delete_client(
             detail="Client not found",
         )
 
-    await db.delete(client)
-    await db.flush()
+    try:
+        await db.delete(client)
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Não foi possível excluir esta conta porque ainda existem dados "
+                "vinculados a ela. Remova conexões, carteiras ou bots ligados à "
+                "conta e tente novamente."
+            ),
+        ) from exc
 
     return SuccessResponse(message="Client deleted successfully")
 

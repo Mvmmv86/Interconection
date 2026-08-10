@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import (
@@ -301,8 +302,18 @@ async def delete_exchange(
         },
         request=request,
     )
-    await db.delete(exchange)
-    await db.flush()
+    try:
+        await db.delete(exchange)
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Não foi possível excluir esta exchange porque ainda existem "
+                "dados vinculados a ela."
+            ),
+        ) from exc
 
     return SuccessResponse(message="Exchange deleted successfully")
 

@@ -111,6 +111,7 @@ class Organization(Base, UUIDMixin, TimestampMixin):
         "BotInstance",
         back_populates="organization",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     def __repr__(self) -> str:

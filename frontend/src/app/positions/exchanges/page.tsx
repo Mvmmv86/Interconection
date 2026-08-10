@@ -17,12 +17,16 @@ import {
   ChevronRight,
   Clock,
   ArrowRight,
+  MoreHorizontal,
+  Settings,
+  Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AddExchangeModal } from '@/components/exchanges/add-exchange-modal';
 import {
   useExchangePositions,
   mockExchangeData,
+  type ExchangeAccount,
 } from '@/hooks/useExchangePositions';
 
 const statusConfig = {
@@ -53,6 +57,10 @@ export default function ExchangesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [deletingExchange, setDeletingExchange] = useState<ExchangeAccount | null>(null);
+  const [isDeletingExchange, setIsDeletingExchange] = useState(false);
+  const [exchangeActionError, setExchangeActionError] = useState<string | null>(null);
 
   // Fetch or create default client for exchange association (wait for auth)
   useEffect(() => {
@@ -100,6 +108,31 @@ export default function ExchangesPage() {
   const handleAddExchangeSuccess = () => {
     setIsAddModalOpen(false);
     refresh();
+  };
+
+  const handleDeleteExchange = async () => {
+    if (!deletingExchange) return;
+
+    const targetClientId = deletingExchange.clientId || clientId;
+    if (!targetClientId) {
+      setExchangeActionError('Não foi possível identificar a conta vinculada a esta exchange.');
+      return;
+    }
+
+    setIsDeletingExchange(true);
+    setExchangeActionError(null);
+    try {
+      const result = await api.deleteClientExchange(targetClientId, deletingExchange.id);
+      if (!result.success) {
+        throw new Error(result.error || 'Não foi possível excluir a exchange.');
+      }
+      setDeletingExchange(null);
+      await refresh();
+    } catch (err) {
+      setExchangeActionError(err instanceof Error ? err.message : 'Erro ao excluir exchange.');
+    } finally {
+      setIsDeletingExchange(false);
+    }
   };
 
   // Loading skeleton
@@ -343,7 +376,7 @@ export default function ExchangesPage() {
                 return (
                   <div
                     key={exchange.id}
-                    className="rounded-xl p-4 relative overflow-hidden"
+                    className="rounded-xl p-4 relative overflow-visible"
                     style={{
                       background: isDark
                         ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.95) 0%, rgba(18, 21, 30, 0.9) 50%, rgba(20, 23, 32, 0.95) 100%)'
@@ -426,18 +459,81 @@ export default function ExchangesPage() {
                           </div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className={cn("text-[18px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
-                          ${exchange.totalValue.toLocaleString()}
-                        </p>
-                        <span
-                          className={cn(
-                            'text-[11px] font-medium tabular-nums',
-                            exchange.pnl24h >= 0 ? 'text-status-success' : 'text-status-error'
+                      <div className="flex items-start gap-2">
+                        <div className="text-right">
+                          <p className={cn("text-[18px] font-semibold tabular-nums", isDark ? "text-white" : "text-gray-900")}>
+                            ${exchange.totalValue.toLocaleString()}
+                          </p>
+                          <span
+                            className={cn(
+                              'text-[11px] font-medium tabular-nums',
+                              exchange.pnl24h >= 0 ? 'text-status-success' : 'text-status-error'
+                            )}
+                          >
+                            {exchange.pnl24h >= 0 ? '+' : ''}{exchange.pnl24h}% 24h
+                          </span>
+                        </div>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setOpenMenuId(openMenuId === exchange.id ? null : exchange.id)}
+                            className={cn(
+                              "h-8 w-8 rounded-lg flex items-center justify-center transition-colors",
+                              isDark
+                                ? "text-white/45 hover:text-white hover:bg-white/[0.06]"
+                                : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                            )}
+                            aria-label={`Ações da exchange ${exchange.label || exchange.name}`}
+                          >
+                            <MoreHorizontal className="w-4 h-4" />
+                          </button>
+
+                          {openMenuId === exchange.id && (
+                            <>
+                              <div
+                                className="fixed inset-0 z-20"
+                                onClick={() => setOpenMenuId(null)}
+                              />
+                              <div
+                                className="absolute right-0 top-full z-30 mt-1 w-40 rounded-lg py-1 shadow-xl overflow-hidden"
+                                style={{
+                                  background: isDark
+                                    ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.98) 0%, rgba(18, 21, 30, 0.98) 100%)'
+                                    : 'linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)',
+                                  border: isDark
+                                    ? '1px solid rgba(255, 255, 255, 0.08)'
+                                    : '1px solid rgba(203, 213, 225, 0.7)',
+                                }}
+                              >
+                                <Link
+                                  href={`/positions/exchanges/${exchange.id}`}
+                                  className={cn(
+                                    "flex w-full items-center gap-2 px-3 py-2 text-xs transition-colors",
+                                    isDark
+                                      ? "text-white/70 hover:text-white hover:bg-white/[0.05]"
+                                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                                  )}
+                                  onClick={() => setOpenMenuId(null)}
+                                >
+                                  <Settings className="w-3.5 h-3.5" />
+                                  Configurar
+                                </Link>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenMenuId(null);
+                                    setExchangeActionError(null);
+                                    setDeletingExchange(exchange);
+                                  }}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-xs text-status-error/80 transition-colors hover:bg-status-error/5 hover:text-status-error"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Excluir
+                                </button>
+                              </div>
+                            </>
                           )}
-                        >
-                          {exchange.pnl24h >= 0 ? '+' : ''}{exchange.pnl24h}% 24h
-                        </span>
+                        </div>
                       </div>
                     </div>
 
@@ -506,6 +602,79 @@ export default function ExchangesPage() {
           clientId={clientId}
           onSuccess={handleAddExchangeSuccess}
         />
+      )}
+
+      {deletingExchange && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className={cn(
+              "absolute inset-0 backdrop-blur-sm",
+              isDark ? "bg-black/60" : "bg-black/40"
+            )}
+            onClick={() => {
+              setDeletingExchange(null);
+              setExchangeActionError(null);
+            }}
+          />
+          <div
+            className="relative w-full max-w-sm mx-4 rounded-xl shadow-2xl overflow-hidden"
+            style={{
+              background: isDark
+                ? 'linear-gradient(145deg, rgba(22, 25, 35, 0.98) 0%, rgba(18, 21, 30, 0.98) 100%)'
+                : 'linear-gradient(145deg, #f8fafc 0%, #f1f5f9 40%, #e8ecf1 70%, #e2e8f0 100%)',
+              border: isDark
+                ? '1px solid rgba(255, 255, 255, 0.08)'
+                : '1px solid rgba(203, 213, 225, 0.7)',
+            }}
+          >
+            <div className="p-6 text-center">
+              <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-status-error/10 flex items-center justify-center">
+                <Trash2 className="w-6 h-6 text-status-error" />
+              </div>
+              <h3 className={cn("text-base font-semibold mb-2", isDark ? "text-white" : "text-gray-900")}>
+                Excluir Exchange
+              </h3>
+              <p className={cn("text-sm mb-5", isDark ? "text-white/50" : "text-gray-500")}>
+                Tem certeza que deseja excluir{' '}
+                <span className={cn("font-medium", isDark ? "text-white" : "text-gray-900")}>
+                  {deletingExchange.label || deletingExchange.name}
+                </span>
+                {deletingExchange.clientName ? ` de ${deletingExchange.clientName}` : ''}? Esta ação remove a conexão e seus dados vinculados.
+              </p>
+              {exchangeActionError && (
+                <div className="mb-4 rounded-lg border border-status-error/20 bg-status-error/10 px-3 py-2 text-left">
+                  <p className="text-xs text-status-error">{exchangeActionError}</p>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeletingExchange(null);
+                    setExchangeActionError(null);
+                  }}
+                  className={cn(
+                    "flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors",
+                    isDark
+                      ? "text-white/70 bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04]"
+                      : "text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                  )}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteExchange}
+                  disabled={isDeletingExchange}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-status-error rounded-lg hover:bg-status-error/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isDeletingExchange && <RefreshCw className="w-4 h-4 animate-spin" />}
+                  Excluir
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
